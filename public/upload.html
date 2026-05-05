@@ -43,12 +43,17 @@
       <p class="upload-hint">Paste your plain-text report below, or upload a <code>.txt</code> file. Optionally attach a CSV for org stats.</p>
 
       <form id="uploadForm" novalidate>
-        <label class="form-label" for="reportTextarea">Report Text</label>
+        <div class="form-row">
+          <label class="form-label" for="weekDate">Week Commencing</label>
+          <input type="date" id="weekDate" name="weekDate" required />
+        </div>
+
+        <label class="form-label" for="reportTextarea">Report Text <span class="form-hint">(no need to include the Week Commencing line)</span></label>
         <textarea
           id="reportTextarea"
           name="report"
           rows="14"
-          placeholder="Week Commencing: 28 April 2025&#10;&#10;Priority 1: ..."
+          placeholder="Priority 1: ..."
         ></textarea>
 
         <div class="upload-file-row">

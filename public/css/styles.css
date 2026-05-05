@@ -189,6 +189,33 @@ a { color: var(--blue); }
   margin-bottom: 0.35rem;
 }
 
+.form-row {
+  margin-bottom: 1rem;
+}
+
+.form-hint {
+  font-size: 0.75rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  opacity: 0.7;
+  margin-left: 0.4rem;
+}
+
+input[type="date"] {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.85rem;
+  padding: 0.45rem 0.7rem;
+  outline: none;
+  transition: border-color .15s;
+  color-scheme: dark;
+}
+input[type="date"]:focus { border-color: var(--blue); }
+
 textarea {
   width: 100%;
   background: var(--surface2);

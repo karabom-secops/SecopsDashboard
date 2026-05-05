@@ -34,17 +34,26 @@
 
     const fd = new FormData();
 
+    // Validate date picker
+    const weekDateInput = document.getElementById('weekDate');
+    const weekDateVal = weekDateInput ? weekDateInput.value.trim() : '';
+    if (!weekDateVal) {
+      showError('Please select the Week Commencing date.');
+      return;
+    }
+    const weekPrefix = `Week Commencing: ${weekDateVal}`;
+
     // Prefer textarea text; fall back to file
     const pastedText = reportTextarea.value.trim();
     const fileInput  = reportFile.files[0];
 
     if (pastedText) {
-      fd.append('report', pastedText);
+      fd.append('report', weekPrefix + '\n\n' + pastedText);
     } else if (fileInput) {
       // Read file as text and send as field (server reads req.body.report first)
       try {
         const text = await readFileAsText(fileInput);
-        fd.append('report', text);
+        fd.append('report', weekPrefix + '\n\n' + text);
       } catch {
         showError('Could not read the uploaded file.');
         return;
