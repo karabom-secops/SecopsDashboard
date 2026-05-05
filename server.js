@@ -1,5 +1,7 @@
 'use strict';
 
+require('dotenv').config();
+
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
@@ -36,8 +38,27 @@ function recomputeMetrics() {
   return metrics;
 }
 
+// ── Basic Auth ────────────────────────────────────────────────────────────────
+
+const AUTH_USER = process.env.AUTH_USER || 'admin';
+const AUTH_PASS = process.env.AUTH_PASS || 'secops';
+
+function basicAuth(req, res, next) {
+  const authHeader = req.headers['authorization'] || '';
+  const b64 = authHeader.startsWith('Basic ') ? authHeader.slice(6) : '';
+  const [user, pass] = Buffer.from(b64, 'base64').toString().split(':');
+
+  if (user === AUTH_USER && pass === AUTH_PASS) {
+    return next();
+  }
+
+  res.set('WWW-Authenticate', 'Basic realm="SecOps Dashboard"');
+  return res.status(401).json({ statusCode: 401, error: 'Unauthorized', message: 'Authentication required' });
+}
+
 // ── Middleware ────────────────────────────────────────────────────────────────
 
+app.use(basicAuth);
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
