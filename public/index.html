@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SecOps Dashboard</title>
+  <base href="/secops/" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <!-- ── Header ───────────────────────────────────────────────────────────── -->
+  <header class="site-header">
+    <div class="header-left">
+      <!-- Reflex interlocked-link logo -->
+      <svg class="header-logo-svg" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1" y="1" width="38" height="38" rx="10" fill="#030b14" stroke="#0d2640" stroke-width="1.5"/>
+        <defs>
+          <linearGradient id="rlh" x1="6" y1="20" x2="34" y2="20" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#0077b6"/><stop offset="1" stop-color="#00c8e8"/>
+          </linearGradient>
+          <linearGradient id="rlv" x1="20" y1="6" x2="20" y2="34" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#00e5ff"/><stop offset="1" stop-color="#0090b0"/>
+          </linearGradient>
+        </defs>
+        <!-- V pill bottom (behind H) -->
+        <path d="M15 20 L15 29 A5 5 0 0 1 25 29 L25 20" stroke="url(#rlv)" stroke-width="2.5" stroke-linecap="round"/>
+        <!-- H pill -->
+        <rect x="6" y="15" width="28" height="10" rx="5" stroke="url(#rlh)" stroke-width="2.5"/>
+        <!-- Cover H center so V top can overdraw -->
+        <rect x="15" y="13.5" width="10" height="13" fill="#030b14"/>
+        <!-- Redraw H left cap -->
+        <path d="M15 15 Q6 15 6 20 Q6 25 15 25" stroke="url(#rlh)" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+        <!-- Redraw H right cap -->
+        <path d="M25 25 Q34 25 34 20 Q34 15 25 15" stroke="url(#rlh)" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+        <!-- V pill top (in front of H) -->
+        <path d="M15 20 L15 11 A5 5 0 0 0 25 11 L25 20" stroke="url(#rlv)" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <div class="header-brand">
+        <span class="brand-reflex">reflex</span><span class="brand-secops">SECOPS</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <select id="weekSelect" title="Select a week">
+        <option value="">— Select week —</option>
+      </select>
+      <a href="/upload.html" class="btn btn-primary">Upload New Report</a>
+    </div>
+  </header>
+
+  <!-- ── Dashboard ────────────────────────────────────────────────────────── -->
+  <div id="dashboard">
+    <nav class="tab-nav" role="tablist">
+      <button class="tab-btn active" data-tab="priorities" role="tab" aria-selected="true">
+        Priorities
+      </button>
+      <button class="tab-btn" data-tab="orgs" role="tab" aria-selected="false">
+        Organisations
+      </button>
+      <button class="tab-btn" data-tab="metrics" role="tab" aria-selected="false">
+        Metrics &amp; Trends
+      </button>
+    </nav>
+
+    <!-- Tab: Priorities -->
+    <section id="tab-priorities" class="tab-panel" role="tabpanel">
+      <div id="priorities-stat-cards" class="stat-grid"></div>
+      <div id="priority-filters" class="filter-chips"></div>
+      <div id="priority-list" class="priority-list"></div>
+    </section>
+
+    <!-- Tab: Orgs -->
+    <section id="tab-orgs" class="tab-panel" hidden role="tabpanel">
+      <div id="orgs-stat-cards" class="stat-grid"></div>
+      <div class="table-wrapper">
+        <table id="orgs-table" class="data-table">
+          <thead>
+            <tr>
+              <th data-sort="orgName">Org Name <span class="sort-arrow"></span></th>
+              <th data-sort="alerts">Alerts <span class="sort-arrow"></span></th>
+              <th data-sort="escalated">Escalated <span class="sort-arrow"></span></th>
+              <th data-sort="escalationPct">Esc% <span class="sort-arrow"></span></th>
+              <th data-sort="coverageScore">Coverage <span class="sort-arrow"></span></th>
+              <th data-sort="irPlan">IR Plan <span class="sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="orgs-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Tab: Metrics -->
+    <section id="tab-metrics" class="tab-panel" hidden role="tabpanel">
+      <div id="metrics-stat-cards" class="stat-grid"></div>
+
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h3 class="chart-title">Open vs Escalated Alerts (12 weeks)</h3>
+          <div class="chart-wrap">
+            <canvas id="chartAlerts"></canvas>
+            <div id="tooltipAlerts" class="chart-tooltip" hidden></div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <h3 class="chart-title">Resolution Rate % (12 weeks)</h3>
+          <div class="chart-wrap">
+            <canvas id="chartResolution"></canvas>
+            <div id="tooltipResolution" class="chart-tooltip" hidden></div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <h3 class="chart-title">Avg Coverage Score (12 weeks)</h3>
+          <div class="chart-wrap">
+            <canvas id="chartCoverage"></canvas>
+            <div id="tooltipCoverage" class="chart-tooltip" hidden></div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <h3 class="chart-title">Critical Open Tickets (12 weeks)</h3>
+          <div class="chart-wrap">
+            <canvas id="chartCritical"></canvas>
+            <div id="tooltipCritical" class="chart-tooltip" hidden></div>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="section-heading">Org Health — Last 8 Weeks</h3>
+      <div class="table-wrapper">
+        <table class="data-table" id="org-health-table">
+          <thead>
+            <tr>
+              <th>Org</th>
+              <th>8-Week Alerts Trend</th>
+              <th>Latest Alerts</th>
+              <th>Latest Coverage</th>
+            </tr>
+          </thead>
+          <tbody id="org-health-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/tab-priorities.js"></script>
+  <script src="js/tab-orgs.js"></script>
+  <script src="js/tab-metrics.js"></script>
+</body>
+</html>

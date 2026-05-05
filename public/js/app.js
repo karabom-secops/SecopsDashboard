@@ -1,0 +1,136 @@
+/* app.js — core orchestration: week loading, tab switching, week selector */
+
+(function () {
+  'use strict';
+
+  // Shared state
+  window.currentWeekKey = null;
+  window._summaryData = [];
+
+  const weekSelect    = document.getElementById('weekSelect');
+  const dashboard     = document.getElementById('dashboard');
+  const tabBtns       = document.querySelectorAll('.tab-btn');
+  const tabPanels     = {
+    priorities: document.getElementById('tab-priorities'),
+    orgs:       document.getElementById('tab-orgs'),
+    metrics:    document.getElementById('tab-metrics'),
+  };
+
+  // ── Tab switching ──────────────────────────────────────────────────────────
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabBtns.forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+      btn.classList.add('active');
+      btn.setAttribute('aria-selected', 'true');
+
+      const target = btn.dataset.tab;
+      Object.entries(tabPanels).forEach(([key, panel]) => {
+        panel.hidden = key !== target;
+      });
+
+      // Redraw charts when metrics tab becomes visible (canvas needs visible parent)
+      if (target === 'metrics' && window._summaryData.length && window.currentWeekKey) {
+        const weekData = window._lastWeekData;
+        if (weekData) renderMetrics(weekData, window._summaryData);
+      }
+    });
+  });
+
+  // ── Week selector ──────────────────────────────────────────────────────────
+  weekSelect.addEventListener('change', () => {
+    const key = weekSelect.value;
+    if (key) loadWeek(key);
+  });
+
+  // ── Populate week dropdown ─────────────────────────────────────────────────
+  async function populateWeeks() {
+    try {
+      const res = await fetch('api/weeks');
+      const weeks = await res.json();
+      weekSelect.innerHTML = '<option value="">— Select week —</option>';
+      weeks.forEach(w => {
+        const opt = document.createElement('option');
+        opt.value = w.key;
+        opt.textContent = w.weekCommencing || w.key;
+        weekSelect.appendChild(opt);
+      });
+      return weeks;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // ── Load a week and render all tabs ───────────────────────────────────────
+  window.loadWeek = async function loadWeek(weekKey) {
+    window.currentWeekKey = weekKey;
+
+    // Update selector to reflect the loaded week
+    if (weekSelect.value !== weekKey) weekSelect.value = weekKey;
+
+    // Fetch week data and metrics summary in parallel
+    let weekData, summaryData;
+    try {
+      [weekData, summaryData] = await Promise.all([
+        fetch(`api/week/${weekKey}`).then(r => r.json()),
+        fetch('api/metrics/summary').then(r => r.json()),
+      ]);
+    } catch (err) {
+      console.error('Failed to load week data:', err);
+      return;
+    }
+
+    if (weekData.error) { console.error(weekData.error); return; }
+
+    window._lastWeekData = weekData;
+    window._summaryData  = summaryData;
+
+    // Ensure dashboard is visible
+    dashboard.hidden = false;
+
+    // Render all three tabs (metrics only if panel is visible to avoid 0-size canvas)
+    renderPriorities(weekData);
+    renderOrgs(weekData);
+
+    const metricsPanel = tabPanels.metrics;
+    if (!metricsPanel.hidden) {
+      renderMetrics(weekData, summaryData);
+    }
+  };
+
+  // ── Refresh current week after a status PATCH ─────────────────────────────
+  window.refreshCurrentWeek = async function refreshCurrentWeek() {
+    if (!window.currentWeekKey) return;
+    try {
+      const [weekData, summaryData] = await Promise.all([
+        fetch(`api/week/${window.currentWeekKey}`).then(r => r.json()),
+        fetch('api/metrics/summary').then(r => r.json()),
+      ]);
+      window._lastWeekData = weekData;
+      window._summaryData  = summaryData;
+      renderPriorities(weekData);
+      renderOrgs(weekData);
+      if (!tabPanels.metrics.hidden) renderMetrics(weekData, summaryData);
+    } catch (err) {
+      console.error('Refresh failed:', err);
+    }
+  };
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', async () => {
+    const weeks = await populateWeeks();
+
+    // Check if redirected from upload page with a specific week
+    const params = new URLSearchParams(location.search);
+    const preselectKey = params.get('week');
+
+    if (preselectKey) {
+      // Clean the URL without reloading
+      history.replaceState(null, '', '/secops/');
+      await loadWeek(preselectKey);
+    } else if (weeks.length > 0) {
+      // Auto-load the most recent week (first in the list — sorted desc)
+      await loadWeek(weeks[0].key);
+    }
+  });
+
+})();

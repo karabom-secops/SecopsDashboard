@@ -1,0 +1,32 @@
+{
+  "2026-04-29": {
+    "weekKey": "2026-04-29",
+    "weekCommencing": "29 April 2026",
+    "priorities": {
+      "total": 5,
+      "open": 5,
+      "wip": 0,
+      "done": 0,
+      "resolutionRate": 0,
+      "p1Count": 1,
+      "p2Count": 1,
+      "criticalOpen": 2
+    },
+    "orgs": {
+      "total": 10,
+      "totalAlerts": 0,
+      "totalEscalated": 10,
+      "escalationRate": 0,
+      "avgCoverageScore": 78.75,
+      "orgsBelowCoverage": 2,
+      "orgsNoIRPlan": 0
+    },
+    "agents": {
+      "sysmon": null,
+      "containment": null,
+      "sysmonDeploymentRate": null,
+      "containmentDriverRate": null
+    },
+    "deltas": null
+  }
+}
