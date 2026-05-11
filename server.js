@@ -58,13 +58,14 @@ function basicAuth(req, res, next) {
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
-app.use(basicAuth);
-app.use(express.json());
-// Serve static assets both at root AND under /secops/ so that
-// <base href="/secops/"> resolves asset paths correctly.
+// Static files are served BEFORE auth — they are the app shell and contain
+// no sensitive data. All /api/* routes are protected by basicAuth below.
 const PUBLIC = path.join(__dirname, 'public');
 app.use('/secops', express.static(PUBLIC));
 app.use(express.static(PUBLIC));
+
+app.use('/api', basicAuth);
+app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
