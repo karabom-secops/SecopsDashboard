@@ -60,7 +60,11 @@ function basicAuth(req, res, next) {
 
 app.use(basicAuth);
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve static assets both at root AND under /secops/ so that
+// <base href="/secops/"> resolves asset paths correctly.
+const PUBLIC = path.join(__dirname, 'public');
+app.use('/secops', express.static(PUBLIC));
+app.use(express.static(PUBLIC));
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -203,4 +207,12 @@ app.get('/api/metrics/orgs', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`SecOps Dashboard running on http://localhost:${PORT}`);
+  console.log(`Access via base path:   http://localhost:${PORT}/secops/`);
+}).on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use. Stop the existing process or change PORT in .env`);
+  } else {
+    console.error('Server error:', err.message);
+  }
+  process.exit(1);
 });

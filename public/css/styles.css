@@ -88,12 +88,13 @@ a { color: var(--blue); }
 }
 
 .header-logo-svg {
-  height: 44px;
+  height: 48px;
   width: auto;
-  max-width: 160px;
+  max-width: 180px;
   flex-shrink: 0;
   object-fit: contain;
-  filter: drop-shadow(0 4px 12px rgba(0, 102, 204, .20));
+  display: block;
+  filter: drop-shadow(0 4px 14px rgba(0, 102, 204, .22));
 }
 
 .header-brand {
