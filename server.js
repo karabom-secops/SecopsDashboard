@@ -213,14 +213,14 @@ const vulnUpload = multer({ storage: multer.memoryStorage() });
 /**
  * POST /api/vulns/upload
  * Fields:
- *   weekKey   – form field with the week key (YYYY-MM-DD)
+ *   monthKey  – form field with the month key (YYYY-MM)
  *   vulnFile  – Nessus .csv or .nessus XML file
  */
 app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), (req, res) => {
   try {
-    const weekKey = (req.body.weekKey || '').trim();
-    if (!weekKey || !/^\d{4}-\d{2}-\d{2}$/.test(weekKey)) {
-      return res.status(400).json({ error: 'Valid weekKey (YYYY-MM-DD) is required.' });
+    const monthKey = (req.body.monthKey || '').trim();
+    if (!monthKey || !/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ error: 'Valid monthKey (YYYY-MM) is required.' });
     }
 
     if (!req.file) {
@@ -244,15 +244,11 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), (req, res) => {
 
     const summary = computeVulnSummary(findings);
 
-    // Look up weekCommencing from weeks.json
-    const weeks = readData(WEEKS_FILE);
-    const weekCommencing = weeks[weekKey] ? weeks[weekKey].weekCommencing : weekKey;
-
     const vulns = readData(VULNS_FILE);
-    vulns[weekKey] = { weekKey, weekCommencing, summary, findings };
+    vulns[monthKey] = { monthKey, summary, findings };
     writeData(VULNS_FILE, vulns);
 
-    return res.json({ weekKey, weekCommencing, summary });
+    return res.json({ monthKey, summary });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -267,7 +263,7 @@ app.get('/api/vulns', (req, res) => {
     const vulns = readData(VULNS_FILE);
     const list = Object.keys(vulns)
       .sort((a, b) => b.localeCompare(a))
-      .map(k => ({ weekKey: k, weekCommencing: vulns[k].weekCommencing, summary: vulns[k].summary }));
+      .map(k => ({ monthKey: k, summary: vulns[k].summary }));
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -276,7 +272,7 @@ app.get('/api/vulns', (req, res) => {
 
 /**
  * GET /api/vulns/trends
- * Returns last 12 scans with severity counts for trend charting.
+ * Returns last 12 monthly scans with severity counts for trend charting.
  */
 app.get('/api/vulns/trends', (req, res) => {
   try {
@@ -285,12 +281,11 @@ app.get('/api/vulns/trends', (req, res) => {
       .sort((a, b) => a.localeCompare(b))
       .slice(-12)
       .map(k => ({
-        weekKey:        k,
-        weekCommencing: vulns[k].weekCommencing,
-        critical:       vulns[k].summary.critical,
-        high:           vulns[k].summary.high,
-        medium:         vulns[k].summary.medium,
-        low:            vulns[k].summary.low,
+        monthKey:  k,
+        critical:  vulns[k].summary.critical,
+        high:      vulns[k].summary.high,
+        medium:    vulns[k].summary.medium,
+        low:       vulns[k].summary.low,
       }));
     res.json(trends);
   } catch (err) {
@@ -299,13 +294,13 @@ app.get('/api/vulns/trends', (req, res) => {
 });
 
 /**
- * GET /api/vulns/:weekKey
+ * GET /api/vulns/:monthKey
  * Returns full scan data including findings array.
  */
-app.get('/api/vulns/:weekKey', (req, res) => {
+app.get('/api/vulns/:monthKey', (req, res) => {
   try {
     const vulns = readData(VULNS_FILE);
-    const scan = vulns[req.params.weekKey];
+    const scan = vulns[req.params.monthKey];
     if (!scan) return res.status(404).json({ error: 'Scan not found.' });
     res.json(scan);
   } catch (err) {
@@ -314,12 +309,12 @@ app.get('/api/vulns/:weekKey', (req, res) => {
 });
 
 /**
- * PATCH /api/vulns/:weekKey/finding/:index
+ * PATCH /api/vulns/:monthKey/finding/:index
  * Body: { status: 'open' | 'in-progress' | 'fixed' | 'accepted' }
  */
-app.patch('/api/vulns/:weekKey/finding/:index', (req, res) => {
+app.patch('/api/vulns/:monthKey/finding/:index', (req, res) => {
   try {
-    const { weekKey, index } = req.params;
+    const { monthKey, index } = req.params;
     const { status } = req.body;
 
     if (!['open', 'in-progress', 'fixed', 'accepted'].includes(status)) {
@@ -327,7 +322,7 @@ app.patch('/api/vulns/:weekKey/finding/:index', (req, res) => {
     }
 
     const vulns = readData(VULNS_FILE);
-    const scan  = vulns[weekKey];
+    const scan  = vulns[monthKey];
     if (!scan) return res.status(404).json({ error: 'Scan not found.' });
 
     const idx = parseInt(index, 10);

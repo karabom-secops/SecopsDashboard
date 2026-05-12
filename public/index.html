@@ -122,10 +122,14 @@
 
     <!-- Tab: Vulnerabilities -->
     <section id="tab-vulns" class="tab-panel" hidden role="tabpanel">
+      <div class="vuln-scan-header">
+        <label for="vulnScanSelect" class="scan-select-label">Scan Month:</label>
+        <select id="vulnScanSelect" class="scan-select"><option value="">— No scans uploaded —</option></select>
+      </div>
       <div id="vulns-stat-cards" class="stat-grid"></div>
       <div id="vulns-empty-state" hidden>
         <div class="vuln-empty-card">
-          <p>No Nessus scan uploaded for this week.</p>
+          <p>No Nessus scan uploaded yet.</p>
           <a href="upload.html" class="btn btn-primary">Upload Nessus Scan</a>
         </div>
       </div>

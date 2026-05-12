@@ -102,7 +102,7 @@
 
   function initVulnUpload() {
     const vulnForm      = document.getElementById('vulnUploadForm');
-    const vulnWeekSel   = document.getElementById('vulnWeekSelect');
+    const vulnMonthInput = document.getElementById('vulnMonthKey');
     const vulnFileInput = document.getElementById('vulnFile');
     const vulnErrorDiv  = document.getElementById('vulnUploadError');
     const btnVuln       = document.getElementById('btnVulnUpload');
@@ -110,6 +110,10 @@
     const vulnSpinner   = document.getElementById('vulnSpinner');
 
     if (!vulnForm) return;
+
+    // Default to current month
+    const now = new Date();
+    vulnMonthInput.value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
 
     function showVulnError(msg) {
       vulnErrorDiv.textContent = msg;
@@ -127,26 +131,13 @@
       vulnSpinner.hidden = !loading;
     }
 
-    // Populate week selector
-    fetch('api/weeks')
-      .then(r => r.json())
-      .then(weeks => {
-        weeks.forEach(w => {
-          const opt = document.createElement('option');
-          opt.value = w.key;
-          opt.textContent = w.weekCommencing || w.key;
-          vulnWeekSel.appendChild(opt);
-        });
-      })
-      .catch(() => {});
-
     vulnForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearVulnError();
 
-      const weekKey = vulnWeekSel.value;
-      if (!weekKey) {
-        showVulnError('Please select a week.');
+      const monthKey = (vulnMonthInput.value || '').trim();
+      if (!monthKey) {
+        showVulnError('Please select a month.');
         return;
       }
 
@@ -157,7 +148,7 @@
       }
 
       const fd = new FormData();
-      fd.append('weekKey',  weekKey);
+      fd.append('monthKey', monthKey);
       fd.append('vulnFile', file);
 
       setVulnLoading(true);
@@ -170,8 +161,8 @@
           return;
         }
 
-        // Redirect to dashboard on the vulns tab for the uploaded week
-        window.location.href = '/secops/?week=' + encodeURIComponent(data.weekKey) + '&tab=vulns';
+        // Redirect to dashboard on the vulns tab
+        window.location.href = '/secops/?tab=vulns&month=' + encodeURIComponent(data.monthKey);
       } catch (err) {
         showVulnError('Network error: ' + err.message);
       } finally {

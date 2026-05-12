@@ -38,22 +38,31 @@
   }
 
   // ── Public render entry point ──────────────────────────────────────────────
-  window.renderVulns = async function renderVulns(weekKey) {
-    if (!weekKey) return;
-
-    // Always refresh trends (cheap, cached on server side)
+  window.renderVulns = async function renderVulns(monthKey) {
+    // Fetch scan list + trends together
     try {
-      const [scanRes, trendsRes] = await Promise.all([
-        fetch(`api/vulns/${weekKey}`),
+      const [listRes, trendsRes] = await Promise.all([
+        fetch('api/vulns'),
         fetch('api/vulns/trends'),
       ]);
 
-      _trendsData = trendsRes.ok ? await trendsRes.json() : [];
+      const scanList  = listRes.ok  ? await listRes.json()   : [];
+      _trendsData     = trendsRes.ok ? await trendsRes.json() : [];
 
-      if (scanRes.status === 404) {
-        _currentScan = null;
-      } else if (scanRes.ok) {
-        _currentScan = await scanRes.json();
+      // Populate the scan selector
+      _populateScanSelector(scanList, monthKey);
+
+      // Determine which month to display
+      const selectedKey = monthKey
+        || (scanList.length > 0 ? scanList[0].monthKey : null);
+
+      if (selectedKey) {
+        const scanRes = await fetch(`api/vulns/${selectedKey}`);
+        if (scanRes.ok) {
+          _currentScan = await scanRes.json();
+        } else {
+          _currentScan = null;
+        }
       } else {
         _currentScan = null;
       }
@@ -62,13 +71,32 @@
       _trendsData  = [];
     }
 
-    _renderAll(weekKey);
+    _renderAll();
   };
 
+  // ── Populate scan month selector ────────────────────────────────────────────
+  function _populateScanSelector(scanList, selectedKey) {
+    const sel = document.getElementById('vulnScanSelect');
+    if (!sel) return;
+
+    const current = selectedKey || (scanList.length > 0 ? scanList[0].monthKey : '');
+    sel.innerHTML = scanList.length === 0
+      ? '<option value="">— No scans uploaded —</option>'
+      : scanList.map(s => `<option value="${escHtml(s.monthKey)}"${s.monthKey === current ? ' selected' : ''}>${escHtml(s.monthKey)}</option>`).join('');
+
+    // Wire change handler once
+    if (!sel.dataset.handlerSet) {
+      sel.dataset.handlerSet = '1';
+      sel.addEventListener('change', () => {
+        if (sel.value) renderVulns(sel.value);
+      });
+    }
+  }
+
   // ── Full render ────────────────────────────────────────────────────────────
-  function _renderAll(weekKey) {
+  function _renderAll() {
     _renderStatCards();
-    _renderEmptyOrContent(weekKey);
+    _renderEmptyOrContent();
   }
 
   // ── Stat cards ─────────────────────────────────────────────────────────────
@@ -78,10 +106,10 @@
 
     const s = _currentScan ? _currentScan.summary : null;
 
-    // Compute WoW deltas from trends
+    // Compute MoM deltas from trends
     let prevSummary = null;
     if (_currentScan && _trendsData.length >= 2) {
-      const idx = _trendsData.findIndex(t => t.weekKey === _currentScan.weekKey);
+      const idx = _trendsData.findIndex(t => t.monthKey === _currentScan.monthKey);
       if (idx > 0) prevSummary = _trendsData[idx - 1];
     }
 
@@ -130,7 +158,7 @@
   }
 
   // ── Empty state vs content ─────────────────────────────────────────────────
-  function _renderEmptyOrContent(weekKey) {
+  function _renderEmptyOrContent() {
     const emptyEl   = document.getElementById('vulns-empty-state');
     const contentEl = document.getElementById('vulns-content');
     if (!emptyEl || !contentEl) return;
@@ -144,7 +172,7 @@
     emptyEl.hidden   = true;
     contentEl.hidden = false;
 
-    _renderTrendChart(weekKey);
+    _renderTrendChart(_currentScan.monthKey);
     _renderTopVulns();
     _renderHostTable();
     _renderFilterChips();
@@ -152,7 +180,7 @@
   }
 
   // ── Trend chart ────────────────────────────────────────────────────────────
-  function _renderTrendChart(selectedWeekKey) {
+  function _renderTrendChart(selectedMonthKey) {
     const canvas  = document.getElementById('chartVulnTrend');
     const tooltip = document.getElementById('tooltipVulnTrend');
     if (!canvas || !tooltip) return;
@@ -217,11 +245,11 @@
     ctx.textAlign = 'center';
     _trendsData.forEach((t, i) => {
       const x = xPos(i);
-      ctx.fillText(t.weekKey ? t.weekKey.slice(5) : '', x, H - 10);
+      ctx.fillText(t.monthKey ? t.monthKey.slice(5) : '', x, H - 10);
     });
 
-    // Selected-week vertical marker
-    const selIdx = _trendsData.findIndex(t => t.weekKey === selectedWeekKey);
+    // Selected-month vertical marker
+    const selIdx = _trendsData.findIndex(t => t.monthKey === selectedMonthKey);
     if (selIdx >= 0) {
       ctx.save();
       ctx.setLineDash([4, 4]);
@@ -288,7 +316,7 @@
         tooltip.hidden = false;
         tooltip.style.left = (xPos(closest.i) + 10) + 'px';
         tooltip.style.top  = (yPos(closest.t[closest.s.key] || 0) - 10) + 'px';
-        tooltip.textContent = `${closest.t.weekKey} — ${closest.s.label}: ${closest.t[closest.s.key] || 0}`;
+        tooltip.textContent = `${closest.t.monthKey} — ${closest.s.label}: ${closest.t[closest.s.key] || 0}`;
       } else {
         tooltip.hidden = true;
       }
@@ -431,7 +459,7 @@
     const next   = STATUS_CYCLE[(curPos + 1) % STATUS_CYCLE.length];
 
     try {
-      const res = await fetch(`api/vulns/${_currentScan.weekKey}/finding/${idx}`, {
+      const res = await fetch(`api/vulns/${_currentScan.monthKey}/finding/${idx}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ status: next }),

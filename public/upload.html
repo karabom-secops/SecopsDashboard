@@ -63,13 +63,11 @@
     <!-- Nessus Scan Upload -->
     <div class="upload-card" style="margin-top:1.5rem;">
       <h2 class="card-title">Upload Nessus Scan</h2>
-      <p class="card-subtitle">Link a Nessus CSV or .nessus XML export to a weekly report.</p>
+      <p class="card-subtitle">Upload a monthly Nessus CSV or .nessus XML export.</p>
       <form id="vulnUploadForm" novalidate>
         <div class="form-group">
-          <label for="vulnWeekSelect">Week</label>
-          <select id="vulnWeekSelect" required>
-            <option value="">— Select week —</option>
-          </select>
+          <label for="vulnMonthKey">Scan Month</label>
+          <input type="month" id="vulnMonthKey" required />
         </div>
         <div class="form-group">
           <label for="vulnFile">Nessus Export (.csv or .nessus)</label>

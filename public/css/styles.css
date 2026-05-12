@@ -798,6 +798,30 @@ input[type="file"] {
   font-size: 1rem;
 }
 
+/* Vuln scan month selector bar */
+.vuln-scan-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+.scan-select-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.scan-select {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  min-width: 160px;
+  cursor: pointer;
+}
+
 /* ── Sparkline cells ───────────────────────────────────────────────────────── */
 .sparkline-cell canvas { display: block; }
 

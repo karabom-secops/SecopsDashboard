@@ -36,8 +36,8 @@
       }
 
       // Render vulns tab when switched to
-      if (target === 'vulns' && window.currentWeekKey) {
-        renderVulns(window.currentWeekKey);
+      if (target === 'vulns') {
+        renderVulns();
       }
     });
   });
@@ -104,7 +104,7 @@
 
     const vulnsPanel = tabPanels.vulns;
     if (!vulnsPanel.hidden) {
-      renderVulns(weekKey);
+      renderVulns();
     }
   };
 
@@ -121,7 +121,7 @@
       renderPriorities(weekData);
       renderOrgs(weekData);
       if (!tabPanels.metrics.hidden) renderMetrics(weekData, summaryData);
-      if (!tabPanels.vulns.hidden) renderVulns(window.currentWeekKey);
+      if (!tabPanels.vulns.hidden) renderVulns();
     } catch (err) {
       console.error('Refresh failed:', err);
     }
@@ -131,21 +131,31 @@
   document.addEventListener('DOMContentLoaded', async () => {
     const weeks = await populateWeeks();
 
-    // Check if redirected from upload page with a specific week
-    const params = new URLSearchParams(location.search);
+    // Check if redirected from upload page with a specific week/tab
+    const params       = new URLSearchParams(location.search);
     const preselectKey = params.get('week');
+    const tabParam     = params.get('tab');
+    const monthParam   = params.get('month');
+
+    // Clean the URL without reloading
+    if (preselectKey || tabParam || monthParam) {
+      history.replaceState(null, '', '/secops/');
+    }
 
     if (preselectKey) {
-      // Clean the URL without reloading
-      history.replaceState(null, '', '/secops/');
       await loadWeek(preselectKey);
 
       // Switch to a specific tab if redirected from upload
-      const tabParam = params.get('tab');
       if (tabParam && tabPanels[tabParam]) {
         const targetBtn = document.querySelector(`.tab-btn[data-tab="${tabParam}"]`);
         if (targetBtn) targetBtn.click();
       }
+    } else if (tabParam === 'vulns') {
+      // Redirect from Nessus upload — switch straight to vulns tab
+      if (weeks.length > 0) await loadWeek(weeks[0].key);
+      const targetBtn = document.querySelector('.tab-btn[data-tab="vulns"]');
+      if (targetBtn) targetBtn.click();
+      if (monthParam) renderVulns(monthParam);
     } else if (weeks.length > 0) {
       // Auto-load the most recent week (first in the list — sorted desc)
       await loadWeek(weeks[0].key);
