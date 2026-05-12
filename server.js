@@ -211,7 +211,7 @@ app.get('/api/metrics/orgs', (req, res) => {
 
 const vulnUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },  // 50 MB — large Nessus exports
+  limits: { fileSize: 100 * 1024 * 1024 },  // 100 MB — large Nessus exports
 });
 
 /**
