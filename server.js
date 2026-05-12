@@ -67,7 +67,8 @@ app.use('/secops', express.static(PUBLIC));
 app.use(express.static(PUBLIC));
 
 app.use('/api', basicAuth);
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -208,7 +209,10 @@ app.get('/api/metrics/orgs', (req, res) => {
 
 // ── Vuln Routes ──────────────────────────────────────────────────────────────
 
-const vulnUpload = multer({ storage: multer.memoryStorage() });
+const vulnUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },  // 50 MB — large Nessus exports
+});
 
 /**
  * POST /api/vulns/upload
