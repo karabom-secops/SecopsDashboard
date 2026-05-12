@@ -205,28 +205,32 @@
   <!-- Finding management modal -->
   <div id="vuln-finding-modal" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="modal-vuln-title">
     <div class="modal-box">
+      <div id="modal-risk-strip" class="modal-risk-strip"></div>
       <div class="modal-header">
         <h3 id="modal-vuln-title" class="modal-title">Manage Finding</h3>
         <button id="modal-close-btn" class="modal-close-btn" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body">
-        <div class="modal-finding-info">
-          <span id="modal-vuln-risk" class="risk-badge"></span>
-          <span id="modal-vuln-cve" class="modal-cve"></span>
+        <div class="modal-finding-card">
+          <div class="modal-finding-top">
+            <span id="modal-vuln-risk" class="risk-badge"></span>
+            <span id="modal-vuln-cve" class="modal-cve"></span>
+          </div>
+          <p id="modal-vuln-name" class="modal-vuln-name"></p>
+          <p id="modal-vuln-host" class="modal-meta"><span class="meta-icon">&#128421;</span> <span id="modal-host-text"></span></p>
         </div>
-        <p id="modal-vuln-name" class="modal-vuln-name"></p>
-        <p id="modal-vuln-host" class="modal-meta"></p>
-        <div class="form-group">
-          <label for="modal-status-select">Status</label>
-          <select id="modal-status-select" class="scan-select">
-            <option value="open">Open &mdash; Unresolved</option>
-            <option value="in-progress">In Progress &mdash; Remediation underway</option>
-            <option value="fixed">Fixed &mdash; Patched / Remediated</option>
-            <option value="accepted">Accepted Risk &mdash; Will not remediate</option>
+        <div class="modal-divider"></div>
+        <div class="form-group modal-form-group">
+          <label class="modal-label" for="modal-status-select">Remediation Status</label>
+          <select id="modal-status-select" class="modal-status-select">
+            <option value="open">&#128308; Open &mdash; Unresolved</option>
+            <option value="in-progress">&#128992; In Progress &mdash; Remediation underway</option>
+            <option value="fixed">&#128994; Fixed &mdash; Patched / Remediated</option>
+            <option value="accepted">&#9989; Accepted Risk &mdash; Will not remediate</option>
           </select>
         </div>
-        <div class="form-group">
-          <label for="modal-notes">Notes / Risk Acceptance Reason</label>
+        <div class="form-group modal-form-group">
+          <label class="modal-label" for="modal-notes">Notes &amp; Risk Acceptance Reason</label>
           <textarea id="modal-notes" class="modal-textarea" rows="4" maxlength="500"
             placeholder="Add context, risk acceptance justification, ticket reference, target remediation date…"></textarea>
           <span class="modal-char-count"><span id="modal-notes-count">0</span> / 500</span>

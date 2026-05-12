@@ -541,13 +541,22 @@
     const modal = document.getElementById('vuln-finding-modal');
     if (!modal || !f) return;
 
+    const riskKey = String(f.risk || 'info').toLowerCase().replace(/[^a-z]/g, '');
+    const RISK_COLOURS = { critical: '#e8394a', high: '#f59e0b', medium: '#3b82f6', low: '#22c55e', info: '#94a3b8' };
+
+    // Colour accent strip at top of modal
+    const strip = document.getElementById('modal-risk-strip');
+    if (strip) strip.style.background = RISK_COLOURS[riskKey] || '#94a3b8';
+
     const riskEl = document.getElementById('modal-vuln-risk');
-    riskEl.className   = 'risk-badge risk-' + String(f.risk || 'info').toLowerCase().replace(/[^a-z]/g, '');
+    riskEl.className   = 'risk-badge risk-' + riskKey;
     riskEl.textContent = f.risk || 'Info';
 
-    document.getElementById('modal-vuln-cve').textContent  = f.cve ? ' — ' + f.cve : '';
+    document.getElementById('modal-vuln-cve').textContent  = f.cve ? f.cve : '';
     document.getElementById('modal-vuln-name').textContent = f.name;
-    document.getElementById('modal-vuln-host').textContent = `Host: ${f.host}  ·  Port: ${f.port || '—'}`;
+
+    const hostSpan = document.getElementById('modal-host-text');
+    if (hostSpan) hostSpan.textContent = `${f.host}  ·  Port: ${f.port || '—'}`;
 
     document.getElementById('modal-status-select').value = f.status || 'open';
 
