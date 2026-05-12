@@ -923,6 +923,8 @@ input[type="file"] {
   z-index: 1000;
   padding: 1rem;
 }
+/* display:flex overrides the HTML hidden attribute — restore hide behaviour */
+.modal-overlay[hidden] { display: none !important; }
 .modal-box {
   background: var(--card-bg);
   border: 1px solid var(--border);
