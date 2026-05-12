@@ -4,16 +4,21 @@
   'use strict';
 
   // ── State ──────────────────────────────────────────────────────────────────
-  let _currentScan   = null;   // full scan object for selected week
+  let _currentScan   = null;   // full scan object for selected month
   let _trendsData    = [];     // array from /api/vulns/trends
   let _sortKey       = 'total';
   let _sortAsc       = false;
-  let _activeFilter  = 'All';
+  let _activeFilter  = 'All';  // severity filter
+  let _statusFilter  = 'All';  // status filter
   let _trendCanvas   = null;
   let _trendTooltip  = null;
 
-  // Status cycle for remediation tracking
-  const STATUS_CYCLE = ['open', 'in-progress', 'fixed', 'accepted'];
+  const STATUS_LABELS = {
+    open:          'Open',
+    'in-progress': 'In Progress',
+    fixed:         'Fixed',
+    accepted:      'Accepted Risk',
+  };
 
   // ── XSS helper ─────────────────────────────────────────────────────────────
   function escHtml(str) {
@@ -31,11 +36,6 @@
     return `<span class="${escHtml(cls)}">${escHtml(risk || 'Info')}</span>`;
   }
 
-  // ── Status pill helper ─────────────────────────────────────────────────────
-  function statusPill(status, index) {
-    const s = status || 'open';
-    return `<span class="status-pill ${escHtml(s)}" data-idx="${index}" role="button" tabindex="0">${escHtml(s)}</span>`;
-  }
 
   // ── Public render entry point ──────────────────────────────────────────────
   window.renderVulns = async function renderVulns(monthKey) {
@@ -76,7 +76,8 @@
 
   // ── Populate scan month selector ────────────────────────────────────────────
   function _populateScanSelector(scanList, selectedKey) {
-    const sel = document.getElementById('vulnScanSelect');
+    const sel    = document.getElementById('vulnScanSelect');
+    const delBtn = document.getElementById('vulnDeleteScanBtn');
     if (!sel) return;
 
     const current = selectedKey || (scanList.length > 0 ? scanList[0].monthKey : '');
@@ -84,10 +85,14 @@
       ? '<option value="">— No scans uploaded —</option>'
       : scanList.map(s => `<option value="${escHtml(s.monthKey)}"${s.monthKey === current ? ' selected' : ''}>${escHtml(s.monthKey)}</option>`).join('');
 
+    // Show delete button only when a scan is selected
+    if (delBtn) delBtn.hidden = !current;
+
     // Wire change handler once
     if (!sel.dataset.handlerSet) {
       sel.dataset.handlerSet = '1';
       sel.addEventListener('change', () => {
+        if (delBtn) delBtn.hidden = !sel.value;
         if (sel.value) renderVulns(sel.value);
       });
     }
@@ -175,6 +180,7 @@
     _renderTrendChart(_currentScan.monthKey);
     _renderTopVulns();
     _renderHostTable();
+    _renderStatusSummary();
     _renderFilterChips();
     _renderFindingsTable();
   }
@@ -399,21 +405,43 @@
 
   // ── Filter chips for findings ──────────────────────────────────────────────
   function _renderFilterChips() {
-    const el = document.getElementById('vuln-finding-filters');
-    if (!el) return;
-
-    const levels = ['All', 'Critical', 'High', 'Medium', 'Low'];
-    el.innerHTML = levels.map(l => `
-      <button class="chip${_activeFilter === l ? ' active' : ''}" data-level="${escHtml(l)}">${escHtml(l)}</button>
-    `).join('');
-
-    el.querySelectorAll('.chip').forEach(btn => {
-      btn.addEventListener('click', () => {
-        _activeFilter = btn.dataset.level;
-        _renderFilterChips();
-        _renderFindingsTable();
+    // ── Severity filter ──
+    const severityEl = document.getElementById('vuln-finding-filters');
+    if (severityEl) {
+      const levels = ['All', 'Critical', 'High', 'Medium', 'Low'];
+      severityEl.innerHTML = levels.map(l => `
+        <button class="chip${_activeFilter === l ? ' active' : ''}" data-level="${escHtml(l)}">${escHtml(l)}</button>
+      `).join('');
+      severityEl.querySelectorAll('.chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+          _activeFilter = btn.dataset.level;
+          _renderFilterChips();
+          _renderFindingsTable();
+        });
       });
-    });
+    }
+
+    // ── Status filter ──
+    const statusEl = document.getElementById('vuln-status-filters');
+    if (statusEl) {
+      const statuses = [
+        { key: 'All',         label: 'All Statuses' },
+        { key: 'open',        label: 'Open' },
+        { key: 'in-progress', label: 'In Progress' },
+        { key: 'fixed',       label: 'Fixed' },
+        { key: 'accepted',    label: 'Accepted Risk' },
+      ];
+      statusEl.innerHTML = statuses.map(s => `
+        <button class="chip${_statusFilter === s.key ? ' active' : ''}${s.key !== 'All' ? ' chip-st-' + escHtml(s.key) : ''}" data-status="${escHtml(s.key)}">${escHtml(s.label)}</button>
+      `).join('');
+      statusEl.querySelectorAll('.chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+          _statusFilter = btn.dataset.status;
+          _renderFilterChips();
+          _renderFindingsTable();
+        });
+      });
+    }
   }
 
   // ── Findings table ─────────────────────────────────────────────────────────
@@ -422,13 +450,21 @@
     if (!tbody || !_currentScan) return;
 
     const findings = _currentScan.findings || [];
-    const filtered = _activeFilter === 'All'
-      ? findings
-      : findings.filter(f => f.risk === _activeFilter);
+    let filtered = findings;
+    if (_activeFilter !== 'All') {
+      filtered = filtered.filter(f => f.risk === _activeFilter);
+    }
+    if (_statusFilter !== 'All') {
+      filtered = filtered.filter(f => (f.status || 'open') === _statusFilter);
+    }
 
-    tbody.innerHTML = filtered.map((f, displayIdx) => {
-      // Map display index back to original index for PATCH calls
-      const origIdx = findings.indexOf(f);
+    tbody.innerHTML = filtered.map(f => {
+      const origIdx     = findings.indexOf(f);
+      const s           = f.status || 'open';
+      const statusLabel = STATUS_LABELS[s] || s;
+      const notesHtml   = f.notes
+        ? `<span class="notes-preview" title="${escHtml(f.notes)}">${escHtml(f.notes.slice(0, 50))}${f.notes.length > 50 ? '…' : ''}</span>`
+        : `<span class="notes-add">+ Add note</span>`;
       return `
         <tr>
           <td>${escHtml(f.host)}</td>
@@ -436,44 +472,201 @@
           <td>${riskBadge(f.risk)}</td>
           <td class="vuln-name-cell" title="${escHtml(f.name)}">${escHtml(f.name)}</td>
           <td>${escHtml(f.cve || '—')}</td>
-          <td>${statusPill(f.status, origIdx)}</td>
+          <td><button class="status-pill ${escHtml(s)} status-edit-btn" data-idx="${origIdx}" title="Click to manage status">${escHtml(statusLabel)}</button></td>
+          <td class="notes-cell" data-idx="${origIdx}">${notesHtml}</td>
         </tr>
       `;
-    }).join('') || '<tr><td colspan="6">No findings match the current filter.</td></tr>';
+    }).join('') || `<tr><td colspan="7">No findings match the current filter.</td></tr>`;
 
-    // Attach status pill click handlers
-    tbody.querySelectorAll('.status-pill').forEach(pill => {
-      pill.addEventListener('click', () => _cycleStatus(pill));
-      pill.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _cycleStatus(pill); }
+    tbody.querySelectorAll('.status-edit-btn, .notes-cell').forEach(el => {
+      el.addEventListener('click', () => {
+        const idx = parseInt(el.dataset.idx, 10);
+        _openFindingModal(idx);
       });
     });
   }
 
-  // ── Status cycling ─────────────────────────────────────────────────────────
-  async function _cycleStatus(pill) {
-    if (!_currentScan) return;
-    const idx    = parseInt(pill.dataset.idx, 10);
-    const cur    = _currentScan.findings[idx].status || 'open';
-    const curPos = STATUS_CYCLE.indexOf(cur);
-    const next   = STATUS_CYCLE[(curPos + 1) % STATUS_CYCLE.length];
+  // ── Status summary bar ─────────────────────────────────────────────────────
+  function _renderStatusSummary() {
+    const el = document.getElementById('vuln-status-summary');
+    if (!el) return;
+    if (!_currentScan) { el.hidden = true; return; }
+
+    const findings = _currentScan.findings || [];
+    const counts = { open: 0, 'in-progress': 0, fixed: 0, accepted: 0 };
+    findings.forEach(f => {
+      const s = f.status || 'open';
+      if (counts[s] !== undefined) counts[s]++;
+    });
+
+    const remediatedPct = findings.length
+      ? Math.round(((counts.fixed + counts.accepted) / findings.length) * 100)
+      : 0;
+
+    el.hidden = false;
+    el.innerHTML = `
+      <span class="status-count status-count-open" title="Click to filter" data-status="open">
+        <span class="sc-dot"></span>Open <strong>${counts.open}</strong>
+      </span>
+      <span class="status-count status-count-inprogress" title="Click to filter" data-status="in-progress">
+        <span class="sc-dot"></span>In Progress <strong>${counts['in-progress']}</strong>
+      </span>
+      <span class="status-count status-count-fixed" title="Click to filter" data-status="fixed">
+        <span class="sc-dot"></span>Fixed <strong>${counts.fixed}</strong>
+      </span>
+      <span class="status-count status-count-accepted" title="Click to filter" data-status="accepted">
+        <span class="sc-dot"></span>Accepted Risk <strong>${counts.accepted}</strong>
+      </span>
+      <span class="status-count status-count-total">
+        Total <strong>${findings.length}</strong>
+      </span>
+      <span class="status-remediated-pct">
+        ${remediatedPct}% addressed
+        <div class="remediation-bar"><div class="remediation-fill" style="width:${remediatedPct}%"></div></div>
+      </span>
+    `;
+
+    el.querySelectorAll('.status-count[data-status]').forEach(span => {
+      span.addEventListener('click', () => {
+        _statusFilter = span.dataset.status;
+        _renderFilterChips();
+        _renderFindingsTable();
+      });
+    });
+  }
+
+  // ── Finding management modal ───────────────────────────────────────────────
+  function _openFindingModal(origIdx) {
+    const f     = _currentScan.findings[origIdx];
+    const modal = document.getElementById('vuln-finding-modal');
+    if (!modal || !f) return;
+
+    const riskEl = document.getElementById('modal-vuln-risk');
+    riskEl.className   = 'risk-badge risk-' + String(f.risk || 'info').toLowerCase().replace(/[^a-z]/g, '');
+    riskEl.textContent = f.risk || 'Info';
+
+    document.getElementById('modal-vuln-cve').textContent  = f.cve ? ' — ' + f.cve : '';
+    document.getElementById('modal-vuln-name').textContent = f.name;
+    document.getElementById('modal-vuln-host').textContent = `Host: ${f.host}  ·  Port: ${f.port || '—'}`;
+
+    document.getElementById('modal-status-select').value = f.status || 'open';
+
+    const notesEl = document.getElementById('modal-notes');
+    notesEl.value = f.notes || '';
+    document.getElementById('modal-notes-count').textContent = notesEl.value.length;
+
+    const updatedEl = document.getElementById('modal-updated-at');
+    updatedEl.textContent = f.statusUpdatedAt
+      ? 'Last updated: ' + new Date(f.statusUpdatedAt).toLocaleString()
+      : '';
+
+    document.getElementById('modal-error').hidden = true;
+    modal.dataset.idx = origIdx;
+    modal.hidden = false;
+    document.getElementById('modal-status-select').focus();
+  }
+
+  function _closeModal() {
+    const modal = document.getElementById('vuln-finding-modal');
+    if (modal) modal.hidden = true;
+  }
+
+  async function _saveFindingModal() {
+    const modal   = document.getElementById('vuln-finding-modal');
+    const origIdx = parseInt(modal.dataset.idx, 10);
+    const status  = document.getElementById('modal-status-select').value;
+    const notes   = document.getElementById('modal-notes').value.trim();
+    const saveBtn = document.getElementById('modal-save-btn');
+    const errEl   = document.getElementById('modal-error');
+
+    saveBtn.disabled    = true;
+    saveBtn.textContent = 'Saving…';
+    errEl.hidden        = true;
 
     try {
-      const res = await fetch(`api/vulns/${_currentScan.monthKey}/finding/${idx}`, {
+      const res = await fetch(`api/vulns/${_currentScan.monthKey}/finding/${origIdx}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ status: next }),
+        body:    JSON.stringify({ status, notes }),
       });
 
-      if (!res.ok) return;
-      _currentScan.findings[idx].status = next;
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        errEl.textContent = d.error || `Server error (${res.status})`;
+        errEl.hidden      = false;
+        return;
+      }
 
-      // Update pill in place
-      pill.textContent = next;
-      pill.className   = `status-pill ${next}`;
-    } catch {
-      // Network error — silently skip
+      const data = await res.json();
+      _currentScan.findings[origIdx].status          = status;
+      _currentScan.findings[origIdx].notes           = notes;
+      _currentScan.findings[origIdx].statusUpdatedAt = data.statusUpdatedAt || new Date().toISOString();
+
+      _closeModal();
+      _renderStatusSummary();
+      _renderFilterChips();
+      _renderFindingsTable();
+    } catch (err) {
+      errEl.textContent = 'Network error: ' + err.message;
+      errEl.hidden      = false;
+    } finally {
+      saveBtn.disabled    = false;
+      saveBtn.textContent = 'Save Changes';
     }
   }
+
+  // ── Modal wiring (once at load) ────────────────────────────────────────────
+  (function _initModal() {
+    const modal   = document.getElementById('vuln-finding-modal');
+    const notesEl = document.getElementById('modal-notes');
+    const countEl = document.getElementById('modal-notes-count');
+    if (!modal) return;
+
+    document.getElementById('modal-close-btn').addEventListener('click',  _closeModal);
+    document.getElementById('modal-cancel-btn').addEventListener('click', _closeModal);
+    document.getElementById('modal-save-btn').addEventListener('click',   _saveFindingModal);
+
+    modal.addEventListener('click', e => { if (e.target === modal) _closeModal(); });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && !modal.hidden) _closeModal();
+    });
+
+    if (notesEl && countEl) {
+      notesEl.addEventListener('input', () => {
+        countEl.textContent = notesEl.value.length;
+      });
+    }
+
+    // ── Delete scan button ──
+    const delBtn = document.getElementById('vulnDeleteScanBtn');
+    if (delBtn) {
+      delBtn.addEventListener('click', async () => {
+        const sel      = document.getElementById('vulnScanSelect');
+        const monthKey = sel ? sel.value : '';
+        if (!monthKey) return;
+
+        if (!confirm(`Delete the scan for ${monthKey}?\n\nThis will permanently remove all findings and remediation notes for this month.`)) return;
+
+        delBtn.disabled    = true;
+        delBtn.textContent = 'Deleting…';
+
+        try {
+          const res = await fetch(`api/vulns/${encodeURIComponent(monthKey)}`, { method: 'DELETE' });
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.error || `Delete failed (${res.status})`);
+            return;
+          }
+          // Reload the tab — scan list will refresh and default to next available
+          await renderVulns();
+        } catch (err) {
+          alert('Network error: ' + err.message);
+        } finally {
+          delBtn.disabled    = false;
+          delBtn.textContent = '\uD83D\uDDD1\uFE0F Delete Scan';
+        }
+      });
+    }
+  })();
 
 })();

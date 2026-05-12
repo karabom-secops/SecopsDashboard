@@ -125,6 +125,7 @@
       <div class="vuln-scan-header">
         <label for="vulnScanSelect" class="scan-select-label">Scan Month:</label>
         <select id="vulnScanSelect" class="scan-select"><option value="">— No scans uploaded —</option></select>
+        <button id="vulnDeleteScanBtn" class="btn-delete-scan" title="Delete this scan" hidden>&#128465; Delete Scan</button>
       </div>
       <div id="vulns-stat-cards" class="stat-grid"></div>
       <div id="vulns-empty-state" hidden>
@@ -178,7 +179,9 @@
         </div>
 
         <h3 class="section-heading">All Findings</h3>
+        <div id="vuln-status-summary" class="vuln-status-summary" hidden></div>
         <div id="vuln-finding-filters" class="filter-chips"></div>
+        <div id="vuln-status-filters" class="filter-chips filter-chips-status"></div>
         <div class="table-wrapper vuln-findings-wrap">
           <table class="data-table" id="vuln-findings-table">
             <thead>
@@ -189,6 +192,7 @@
                 <th>Vulnerability</th>
                 <th>CVE</th>
                 <th>Status</th>
+                <th>Notes</th>
               </tr>
             </thead>
             <tbody id="vuln-findings-tbody"></tbody>
@@ -196,6 +200,45 @@
         </div>
       </div>
     </section>
+  </div>
+
+  <!-- Finding management modal -->
+  <div id="vuln-finding-modal" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="modal-vuln-title">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="modal-vuln-title" class="modal-title">Manage Finding</h3>
+        <button id="modal-close-btn" class="modal-close-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-finding-info">
+          <span id="modal-vuln-risk" class="risk-badge"></span>
+          <span id="modal-vuln-cve" class="modal-cve"></span>
+        </div>
+        <p id="modal-vuln-name" class="modal-vuln-name"></p>
+        <p id="modal-vuln-host" class="modal-meta"></p>
+        <div class="form-group">
+          <label for="modal-status-select">Status</label>
+          <select id="modal-status-select" class="scan-select">
+            <option value="open">Open &mdash; Unresolved</option>
+            <option value="in-progress">In Progress &mdash; Remediation underway</option>
+            <option value="fixed">Fixed &mdash; Patched / Remediated</option>
+            <option value="accepted">Accepted Risk &mdash; Will not remediate</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="modal-notes">Notes / Risk Acceptance Reason</label>
+          <textarea id="modal-notes" class="modal-textarea" rows="4" maxlength="500"
+            placeholder="Add context, risk acceptance justification, ticket reference, target remediation date…"></textarea>
+          <span class="modal-char-count"><span id="modal-notes-count">0</span> / 500</span>
+        </div>
+        <p id="modal-updated-at" class="modal-updated-at"></p>
+        <p id="modal-error" class="form-error" hidden></p>
+      </div>
+      <div class="modal-footer">
+        <button id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
+        <button id="modal-save-btn" class="btn btn-primary">Save Changes</button>
+      </div>
+    </div>
   </div>
 
   <script src="js/app.js"></script>

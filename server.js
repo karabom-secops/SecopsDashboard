@@ -313,13 +313,31 @@ app.get('/api/vulns/:monthKey', (req, res) => {
 });
 
 /**
+ * DELETE /api/vulns/:monthKey
+ * Permanently removes a scan and all its findings.
+ */
+app.delete('/api/vulns/:monthKey', (req, res) => {
+  try {
+    const vulns = readData(VULNS_FILE);
+    if (!vulns[req.params.monthKey]) {
+      return res.status(404).json({ error: 'Scan not found.' });
+    }
+    delete vulns[req.params.monthKey];
+    writeData(VULNS_FILE, vulns);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * PATCH /api/vulns/:monthKey/finding/:index
- * Body: { status: 'open' | 'in-progress' | 'fixed' | 'accepted' }
+ * Body: { status: 'open' | 'in-progress' | 'fixed' | 'accepted', notes?: string }
  */
 app.patch('/api/vulns/:monthKey/finding/:index', (req, res) => {
   try {
     const { monthKey, index } = req.params;
-    const { status } = req.body;
+    const { status, notes } = req.body;
 
     if (!['open', 'in-progress', 'fixed', 'accepted'].includes(status)) {
       return res.status(400).json({ error: 'status must be open, in-progress, fixed, or accepted.' });
@@ -334,9 +352,14 @@ app.patch('/api/vulns/:monthKey/finding/:index', (req, res) => {
       return res.status(400).json({ error: 'Invalid finding index.' });
     }
 
-    scan.findings[idx].status = status;
+    scan.findings[idx].status          = status;
+    scan.findings[idx].statusUpdatedAt = new Date().toISOString();
+    if (notes !== undefined) {
+      scan.findings[idx].notes = String(notes).slice(0, 500);
+    }
+
     writeData(VULNS_FILE, vulns);
-    res.json({ ok: true, status });
+    res.json({ ok: true, status, statusUpdatedAt: scan.findings[idx].statusUpdatedAt });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
