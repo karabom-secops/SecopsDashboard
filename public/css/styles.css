@@ -916,13 +916,12 @@ input[type="file"] {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 9999;
   padding: 1rem;
-  backdrop-filter: blur(2px);
 }
 /* display:flex overrides the HTML hidden attribute — restore hide behaviour */
 .modal-overlay[hidden] { display: none !important; }
@@ -937,7 +936,6 @@ input[type="file"] {
   display: flex;
   flex-direction: column;
   max-height: 90vh;
-  overflow-y: auto;
   overflow: hidden;
 }
 .modal-risk-strip {
