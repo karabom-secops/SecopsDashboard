@@ -161,7 +161,17 @@
           return;
         }
 
-        // Redirect to dashboard on the vulns tab
+        // Show carry-over summary then redirect
+        const c = data.carriedCounts || {};
+        const total = (c.fixed || 0) + (c.accepted || 0) + (c['in-progress'] || 0);
+        if (total > 0) {
+          const parts = [];
+          if (c.fixed)            parts.push(`${c.fixed} fixed`);
+          if (c.accepted)         parts.push(`${c.accepted} accepted risk`);
+          if (c['in-progress'])   parts.push(`${c['in-progress']} in progress`);
+          alert(`Upload successful!\n\n${total} finding${total !== 1 ? 's' : ''} automatically carried over from the previous scan:\n  • ${parts.join('\n  • ')}`);
+        }
+
         window.location.href = '/secops/?tab=vulns&month=' + encodeURIComponent(data.monthKey);
       } catch (err) {
         showVulnError('Network error: ' + err.message);

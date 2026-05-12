@@ -249,10 +249,52 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), (req, res) => {
     const summary = computeVulnSummary(findings);
 
     const vulns = readData(VULNS_FILE);
+
+    // ── Carry over status/notes from the most recent previous scan ────────────
+    // Find the latest existing scan whose monthKey is before the new one
+    const prevKey = Object.keys(vulns)
+      .filter(k => k < monthKey)
+      .sort((a, b) => b.localeCompare(a))[0];
+
+    if (prevKey) {
+      const prevFindings = vulns[prevKey].findings || [];
+      // Build lookup: "pluginId|host|port" → previous finding
+      const prevMap = new Map();
+      prevFindings.forEach(pf => {
+        if (pf.status && pf.status !== 'open') {
+          const key = `${pf.pluginId}|${pf.host}|${pf.port}`;
+          prevMap.set(key, pf);
+        }
+      });
+
+      // Apply carry-over to new findings
+      let carried = 0;
+      findings.forEach(f => {
+        const match = prevMap.get(`${f.pluginId}|${f.host}|${f.port}`);
+        if (match) {
+          f.status          = match.status;
+          f.notes           = match.notes || '';
+          f.statusUpdatedAt = match.statusUpdatedAt || null;
+          carried++;
+        }
+      });
+
+      console.log(`[vulns] Upload ${monthKey}: ${findings.length} findings, ${carried} carried over from ${prevKey}`);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     vulns[monthKey] = { monthKey, summary, findings };
     writeData(VULNS_FILE, vulns);
 
-    return res.json({ monthKey, summary });
+    // Count carried statuses for the response
+    const carriedCounts = { fixed: 0, accepted: 0, 'in-progress': 0 };
+    findings.forEach(f => {
+      if (f.status && f.status !== 'open' && carriedCounts[f.status] !== undefined) {
+        carriedCounts[f.status]++;
+      }
+    });
+
+    return res.json({ monthKey, summary, carriedCounts });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
