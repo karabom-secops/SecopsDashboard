@@ -738,6 +738,66 @@ input[type="file"] {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Vulnerability Management ───────────────────────────────────────────────── */
+
+/* Risk severity badges */
+.risk-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: .72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+.risk-critical { background: #fee2e2; color: #991b1b; }
+.risk-high      { background: #fef3c7; color: #92400e; }
+.risk-medium    { background: #fff7ed; color: #c2410c; }
+.risk-low       { background: #ecfdf5; color: #065f46; }
+.risk-info      { background: #f1f5f9; color: #64748b; }
+
+/* Additional status pill variants for vuln remediation */
+.status-pill.accepted    { background: #ecfdf5; color: #059669; border: 1px solid #6ee7b7; }
+.status-pill.in-progress { background: #eff8ff; color: #1d6fab; border: 1px solid #93c5fd; }
+.status-pill.fixed       { background: #e7f8ea; color: #2c8740; border: 1px solid #9ed9aa; }
+
+/* Scrollable findings table */
+.vuln-findings-wrap {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+/* Vuln name cell — truncate long names */
+.vuln-name-cell {
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+/* Solution cell — truncate in top-vulns table */
+.solution-cell {
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+  font-size: .82rem;
+  color: var(--muted);
+}
+
+/* Empty state card on vulns tab */
+.vuln-empty-card {
+  text-align: center;
+  padding: 3rem 2rem;
+  color: var(--muted);
+}
+.vuln-empty-card p {
+  margin-bottom: 1rem;
+  font-size: 1rem;
+}
+
 /* ── Sparkline cells ───────────────────────────────────────────────────────── */
 .sparkline-cell canvas { display: block; }
 

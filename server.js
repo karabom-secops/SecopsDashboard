@@ -9,13 +9,15 @@ const multer = require('multer');
 
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
+const { parseNessusCSV, parseNessusXML, computeVulnSummary } = require('./lib/vuln-parser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const DATA_DIR = path.join(__dirname, 'data');
-const WEEKS_FILE = path.join(DATA_DIR, 'weeks.json');
+const WEEKS_FILE   = path.join(DATA_DIR, 'weeks.json');
 const METRICS_FILE = path.join(DATA_DIR, 'metrics.json');
+const VULNS_FILE   = path.join(DATA_DIR, 'vulns.json');
 
 // ── Data helpers ──────────────────────────────────────────────────────────────
 
@@ -199,6 +201,143 @@ app.get('/api/metrics/orgs', (req, res) => {
     const weeks = readData(WEEKS_FILE);
     const history = getOrgHistory(weeks);
     res.json(history);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Vuln Routes ──────────────────────────────────────────────────────────────
+
+const vulnUpload = multer({ storage: multer.memoryStorage() });
+
+/**
+ * POST /api/vulns/upload
+ * Fields:
+ *   weekKey   – form field with the week key (YYYY-MM-DD)
+ *   vulnFile  – Nessus .csv or .nessus XML file
+ */
+app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), (req, res) => {
+  try {
+    const weekKey = (req.body.weekKey || '').trim();
+    if (!weekKey || !/^\d{4}-\d{2}-\d{2}$/.test(weekKey)) {
+      return res.status(400).json({ error: 'Valid weekKey (YYYY-MM-DD) is required.' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No vuln file uploaded.' });
+    }
+
+    const fileText  = req.file.buffer.toString('utf8');
+    const origName  = (req.file.originalname || '').toLowerCase();
+    const mimeType  = (req.file.mimetype || '').toLowerCase();
+
+    let findings;
+    if (origName.endsWith('.nessus') || mimeType.includes('xml')) {
+      findings = parseNessusXML(fileText);
+    } else {
+      findings = parseNessusCSV(fileText);
+    }
+
+    if (findings.length === 0) {
+      return res.status(400).json({ error: 'No findings parsed from file. Check that it is a valid Nessus CSV or .nessus XML export.' });
+    }
+
+    const summary = computeVulnSummary(findings);
+
+    // Look up weekCommencing from weeks.json
+    const weeks = readData(WEEKS_FILE);
+    const weekCommencing = weeks[weekKey] ? weeks[weekKey].weekCommencing : weekKey;
+
+    const vulns = readData(VULNS_FILE);
+    vulns[weekKey] = { weekKey, weekCommencing, summary, findings };
+    writeData(VULNS_FILE, vulns);
+
+    return res.json({ weekKey, weekCommencing, summary });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/vulns
+ * Returns sorted list of scans (no findings payload — summary only).
+ */
+app.get('/api/vulns', (req, res) => {
+  try {
+    const vulns = readData(VULNS_FILE);
+    const list = Object.keys(vulns)
+      .sort((a, b) => b.localeCompare(a))
+      .map(k => ({ weekKey: k, weekCommencing: vulns[k].weekCommencing, summary: vulns[k].summary }));
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/vulns/trends
+ * Returns last 12 scans with severity counts for trend charting.
+ */
+app.get('/api/vulns/trends', (req, res) => {
+  try {
+    const vulns = readData(VULNS_FILE);
+    const trends = Object.keys(vulns)
+      .sort((a, b) => a.localeCompare(b))
+      .slice(-12)
+      .map(k => ({
+        weekKey:        k,
+        weekCommencing: vulns[k].weekCommencing,
+        critical:       vulns[k].summary.critical,
+        high:           vulns[k].summary.high,
+        medium:         vulns[k].summary.medium,
+        low:            vulns[k].summary.low,
+      }));
+    res.json(trends);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/vulns/:weekKey
+ * Returns full scan data including findings array.
+ */
+app.get('/api/vulns/:weekKey', (req, res) => {
+  try {
+    const vulns = readData(VULNS_FILE);
+    const scan = vulns[req.params.weekKey];
+    if (!scan) return res.status(404).json({ error: 'Scan not found.' });
+    res.json(scan);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/vulns/:weekKey/finding/:index
+ * Body: { status: 'open' | 'in-progress' | 'fixed' | 'accepted' }
+ */
+app.patch('/api/vulns/:weekKey/finding/:index', (req, res) => {
+  try {
+    const { weekKey, index } = req.params;
+    const { status } = req.body;
+
+    if (!['open', 'in-progress', 'fixed', 'accepted'].includes(status)) {
+      return res.status(400).json({ error: 'status must be open, in-progress, fixed, or accepted.' });
+    }
+
+    const vulns = readData(VULNS_FILE);
+    const scan  = vulns[weekKey];
+    if (!scan) return res.status(404).json({ error: 'Scan not found.' });
+
+    const idx = parseInt(index, 10);
+    if (isNaN(idx) || idx < 0 || idx >= scan.findings.length) {
+      return res.status(400).json({ error: 'Invalid finding index.' });
+    }
+
+    scan.findings[idx].status = status;
+    writeData(VULNS_FILE, vulns);
+    res.json({ ok: true, status });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

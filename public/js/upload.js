@@ -98,4 +98,88 @@
     });
   }
 
+  // ── Nessus Scan Upload ──────────────────────────────────────────────────────
+
+  function initVulnUpload() {
+    const vulnForm      = document.getElementById('vulnUploadForm');
+    const vulnWeekSel   = document.getElementById('vulnWeekSelect');
+    const vulnFileInput = document.getElementById('vulnFile');
+    const vulnErrorDiv  = document.getElementById('vulnUploadError');
+    const btnVuln       = document.getElementById('btnVulnUpload');
+    const vulnBtnLabel  = document.getElementById('vulnBtnLabel');
+    const vulnSpinner   = document.getElementById('vulnSpinner');
+
+    if (!vulnForm) return;
+
+    function showVulnError(msg) {
+      vulnErrorDiv.textContent = msg;
+      vulnErrorDiv.hidden = false;
+    }
+
+    function clearVulnError() {
+      vulnErrorDiv.hidden = true;
+      vulnErrorDiv.textContent = '';
+    }
+
+    function setVulnLoading(loading) {
+      btnVuln.disabled = loading;
+      vulnBtnLabel.textContent = loading ? 'Uploading…' : 'Upload Nessus Scan';
+      vulnSpinner.hidden = !loading;
+    }
+
+    // Populate week selector
+    fetch('api/weeks')
+      .then(r => r.json())
+      .then(weeks => {
+        weeks.forEach(w => {
+          const opt = document.createElement('option');
+          opt.value = w.key;
+          opt.textContent = w.weekCommencing || w.key;
+          vulnWeekSel.appendChild(opt);
+        });
+      })
+      .catch(() => {});
+
+    vulnForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearVulnError();
+
+      const weekKey = vulnWeekSel.value;
+      if (!weekKey) {
+        showVulnError('Please select a week.');
+        return;
+      }
+
+      const file = vulnFileInput.files[0];
+      if (!file) {
+        showVulnError('Please select a Nessus CSV or .nessus file.');
+        return;
+      }
+
+      const fd = new FormData();
+      fd.append('weekKey',  weekKey);
+      fd.append('vulnFile', file);
+
+      setVulnLoading(true);
+      try {
+        const res  = await fetch('api/vulns/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+          showVulnError(data.error || `Server error (${res.status})`);
+          return;
+        }
+
+        // Redirect to dashboard on the vulns tab for the uploaded week
+        window.location.href = '/secops/?week=' + encodeURIComponent(data.weekKey) + '&tab=vulns';
+      } catch (err) {
+        showVulnError('Network error: ' + err.message);
+      } finally {
+        setVulnLoading(false);
+      }
+    });
+  }
+
+  initVulnUpload();
+
 })();

@@ -59,6 +59,29 @@
         </button>
       </form>
     </div>
+
+    <!-- Nessus Scan Upload -->
+    <div class="upload-card" style="margin-top:1.5rem;">
+      <h2 class="card-title">Upload Nessus Scan</h2>
+      <p class="card-subtitle">Link a Nessus CSV or .nessus XML export to a weekly report.</p>
+      <form id="vulnUploadForm" novalidate>
+        <div class="form-group">
+          <label for="vulnWeekSelect">Week</label>
+          <select id="vulnWeekSelect" required>
+            <option value="">— Select week —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="vulnFile">Nessus Export (.csv or .nessus)</label>
+          <input type="file" id="vulnFile" accept=".csv,.nessus" required />
+        </div>
+        <div id="vulnUploadError" class="upload-error" hidden></div>
+        <button type="submit" id="btnVulnUpload" class="btn btn-primary btn-block">
+          <span id="vulnBtnLabel">Upload Nessus Scan</span>
+          <span id="vulnSpinner" class="spinner" hidden></span>
+        </button>
+      </form>
+    </div>
   </main>
 
   <script src="js/upload.js"></script>

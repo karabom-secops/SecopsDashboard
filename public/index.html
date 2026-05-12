@@ -37,6 +37,9 @@
       <button class="tab-btn" data-tab="metrics" role="tab" aria-selected="false">
         Metrics &amp; Trends
       </button>
+      <button class="tab-btn" data-tab="vulns" role="tab" aria-selected="false">
+        Vulnerabilities
+      </button>
     </nav>
 
     <!-- Tab: Priorities -->
@@ -116,11 +119,85 @@
         </table>
       </div>
     </section>
+
+    <!-- Tab: Vulnerabilities -->
+    <section id="tab-vulns" class="tab-panel" hidden role="tabpanel">
+      <div id="vulns-stat-cards" class="stat-grid"></div>
+      <div id="vulns-empty-state" hidden>
+        <div class="vuln-empty-card">
+          <p>No Nessus scan uploaded for this week.</p>
+          <a href="upload.html" class="btn btn-primary">Upload Nessus Scan</a>
+        </div>
+      </div>
+      <div id="vulns-content" hidden>
+        <div class="charts-grid">
+          <div class="chart-card" style="grid-column: 1 / -1;">
+            <h3 class="chart-title">Vulnerability Trends (last 12 scans)</h3>
+            <div class="chart-wrap">
+              <canvas id="chartVulnTrend"></canvas>
+              <div id="tooltipVulnTrend" class="chart-tooltip" hidden></div>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="section-heading">Top Vulnerabilities</h3>
+        <div class="table-wrapper">
+          <table class="data-table" id="vuln-top-table">
+            <thead>
+              <tr>
+                <th>Vulnerability</th>
+                <th>Risk</th>
+                <th>Affected Hosts</th>
+                <th>CVE</th>
+                <th>Solution</th>
+              </tr>
+            </thead>
+            <tbody id="vuln-top-tbody"></tbody>
+          </table>
+        </div>
+
+        <h3 class="section-heading">Per-Host Summary</h3>
+        <div class="table-wrapper">
+          <table class="data-table" id="vuln-host-table">
+            <thead>
+              <tr>
+                <th data-sort="host">Host <span class="sort-arrow"></span></th>
+                <th data-sort="critical">Critical <span class="sort-arrow"></span></th>
+                <th data-sort="high">High <span class="sort-arrow"></span></th>
+                <th data-sort="medium">Medium <span class="sort-arrow"></span></th>
+                <th data-sort="low">Low <span class="sort-arrow"></span></th>
+                <th data-sort="total">Total <span class="sort-arrow"></span></th>
+              </tr>
+            </thead>
+            <tbody id="vuln-host-tbody"></tbody>
+          </table>
+        </div>
+
+        <h3 class="section-heading">All Findings</h3>
+        <div id="vuln-finding-filters" class="filter-chips"></div>
+        <div class="table-wrapper vuln-findings-wrap">
+          <table class="data-table" id="vuln-findings-table">
+            <thead>
+              <tr>
+                <th>Host</th>
+                <th>Port</th>
+                <th>Risk</th>
+                <th>Vulnerability</th>
+                <th>CVE</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="vuln-findings-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   </div>
 
   <script src="js/app.js"></script>
   <script src="js/tab-priorities.js"></script>
   <script src="js/tab-orgs.js"></script>
   <script src="js/tab-metrics.js"></script>
+  <script src="js/tab-vulns.js"></script>
 </body>
 </html>

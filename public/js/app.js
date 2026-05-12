@@ -14,6 +14,7 @@
     priorities: document.getElementById('tab-priorities'),
     orgs:       document.getElementById('tab-orgs'),
     metrics:    document.getElementById('tab-metrics'),
+    vulns:      document.getElementById('tab-vulns'),
   };
 
   // ── Tab switching ──────────────────────────────────────────────────────────
@@ -32,6 +33,11 @@
       if (target === 'metrics' && window._summaryData.length && window.currentWeekKey) {
         const weekData = window._lastWeekData;
         if (weekData) renderMetrics(weekData, window._summaryData);
+      }
+
+      // Render vulns tab when switched to
+      if (target === 'vulns' && window.currentWeekKey) {
+        renderVulns(window.currentWeekKey);
       }
     });
   });
@@ -95,6 +101,11 @@
     if (!metricsPanel.hidden) {
       renderMetrics(weekData, summaryData);
     }
+
+    const vulnsPanel = tabPanels.vulns;
+    if (!vulnsPanel.hidden) {
+      renderVulns(weekKey);
+    }
   };
 
   // ── Refresh current week after a status PATCH ─────────────────────────────
@@ -110,6 +121,7 @@
       renderPriorities(weekData);
       renderOrgs(weekData);
       if (!tabPanels.metrics.hidden) renderMetrics(weekData, summaryData);
+      if (!tabPanels.vulns.hidden) renderVulns(window.currentWeekKey);
     } catch (err) {
       console.error('Refresh failed:', err);
     }
@@ -127,6 +139,13 @@
       // Clean the URL without reloading
       history.replaceState(null, '', '/secops/');
       await loadWeek(preselectKey);
+
+      // Switch to a specific tab if redirected from upload
+      const tabParam = params.get('tab');
+      if (tabParam && tabPanels[tabParam]) {
+        const targetBtn = document.querySelector(`.tab-btn[data-tab="${tabParam}"]`);
+        if (targetBtn) targetBtn.click();
+      }
     } else if (weeks.length > 0) {
       // Auto-load the most recent week (first in the list — sorted desc)
       await loadWeek(weeks[0].key);
