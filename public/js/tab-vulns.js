@@ -572,12 +572,14 @@
     document.getElementById('modal-error').hidden = true;
     modal.dataset.idx = origIdx;
     modal.hidden = false;
+    document.body.classList.add('modal-open');
     document.getElementById('modal-status-select').focus();
   }
 
   function _closeModal() {
     const modal = document.getElementById('vuln-finding-modal');
     if (modal) modal.hidden = true;
+    document.body.classList.remove('modal-open');
   }
 
   async function _saveFindingModal() {
