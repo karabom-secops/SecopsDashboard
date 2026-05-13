@@ -1102,3 +1102,246 @@ body.modal-open .tab-nav {
   .tab-btn { padding: 0.75rem 0.7rem; font-size: 0.82rem; }
   .tab-panel { padding: 1rem; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LOGIN PAGE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface2);
+}
+
+.login-card {
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2.5rem 2rem;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+}
+
+.login-logo-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+}
+
+.login-logo {
+  height: 48px;
+  object-fit: contain;
+}
+
+.login-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--logo-blue, #0066CC);
+  letter-spacing: -0.01em;
+}
+
+.login-label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.35rem;
+}
+
+.login-input {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.95rem;
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.login-input:focus {
+  border-color: var(--logo-blue, #0066CC);
+  box-shadow: 0 0 0 2px rgba(0,102,204,0.12);
+}
+
+.login-error {
+  color: #dc2626;
+  font-size: 0.85rem;
+  margin: 0.5rem 0;
+}
+
+.login-btn {
+  width: 100%;
+  margin-top: 1.25rem;
+  padding: 0.65rem;
+  font-size: 1rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HEADER USER INFO (logout button, username, role badge)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.header-user-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.header-username {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-role-badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.role-admin    { background: #dbeafe; color: #1d4ed8; }
+.role-readonly { background: #f3f4f6; color: #6b7280; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ADMIN TAB — User management
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.admin-card {
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.admin-card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 1rem 0;
+}
+
+.admin-add-form .admin-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 160px auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.admin-form-submit {
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-form-error {
+  color: #dc2626;
+  font-size: 0.85rem;
+  margin: 0.25rem 0;
+}
+
+.admin-form-success {
+  color: #16a34a;
+  font-size: 0.85rem;
+  margin: 0.25rem 0;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.admin-table th {
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  background: var(--surface2);
+  color: var(--muted, #4A7A96);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-table td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text);
+}
+
+.admin-table tbody tr:last-child td { border-bottom: none; }
+.admin-table tbody tr:hover td { background: var(--surface2); }
+
+.admin-table-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 2rem !important;
+  font-style: italic;
+}
+
+.admin-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.admin-self-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Role badges in admin table */
+.role-badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* btn-sm helper */
+.btn-sm {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.8rem;
+}
+
+/* Danger button */
+.btn-danger {
+  background: #dc2626;
+  color: #ffffff;
+  border: none;
+}
+.btn-danger:hover { background: #b91c1c; }
+
+/* Edit modal — optional label */
+.modal-optional {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+@media (max-width: 768px) {
+  .admin-add-form .admin-form-row { grid-template-columns: 1fr; }
+  .header-user-info { gap: 0.3rem; }
+  .header-username { max-width: 80px; }
+}

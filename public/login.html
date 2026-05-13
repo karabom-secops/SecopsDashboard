@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login — SecOps Dashboard</title>
+  <base href="/secops/" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="login-page">
+
+  <div class="login-card">
+    <div class="login-logo-wrap">
+      <img class="login-logo" src="img/logo.png" alt="Reflex Solutions" onerror="this.style.display='none'" />
+      <span class="login-title">SecOps Dashboard</span>
+    </div>
+
+    <form id="login-form" novalidate autocomplete="on">
+      <div class="form-group">
+        <label class="login-label" for="login-username">Username</label>
+        <input
+          id="login-username"
+          name="username"
+          type="text"
+          class="login-input"
+          autocomplete="username"
+          required
+          placeholder="Enter username"
+        />
+      </div>
+
+      <div class="form-group">
+        <label class="login-label" for="login-password">Password</label>
+        <input
+          id="login-password"
+          name="password"
+          type="password"
+          class="login-input"
+          autocomplete="current-password"
+          required
+          placeholder="Enter password"
+        />
+      </div>
+
+      <p id="login-error" class="login-error" hidden></p>
+
+      <button id="login-btn" type="submit" class="btn btn-primary login-btn">
+        Sign In
+      </button>
+    </form>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      // If already authenticated, redirect straight to dashboard.
+      fetch('api/auth/me', { credentials: 'same-origin' })
+        .then(r => { if (r.ok) location.replace(''); })
+        .catch(() => {});
+
+      const form    = document.getElementById('login-form');
+      const errEl   = document.getElementById('login-error');
+      const btn     = document.getElementById('login-btn');
+
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        errEl.hidden = true;
+        btn.disabled = true;
+        btn.textContent = 'Signing in…';
+
+        const username = document.getElementById('login-username').value.trim();
+        const password = document.getElementById('login-password').value;
+
+        try {
+          const res = await fetch('api/auth/login', {
+            method:      'POST',
+            credentials: 'same-origin',
+            headers:     { 'Content-Type': 'application/json' },
+            body:        JSON.stringify({ username, password }),
+          });
+
+          if (res.ok) {
+            location.replace('');
+          } else {
+            const data = await res.json().catch(() => ({}));
+            errEl.textContent = data.error || 'Login failed. Please try again.';
+            errEl.hidden = false;
+          }
+        } catch (_) {
+          errEl.textContent = 'Network error. Please check your connection.';
+          errEl.hidden = false;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Sign In';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

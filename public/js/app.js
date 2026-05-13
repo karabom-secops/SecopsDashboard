@@ -15,6 +15,7 @@
     orgs:       document.getElementById('tab-orgs'),
     metrics:    document.getElementById('tab-metrics'),
     vulns:      document.getElementById('tab-vulns'),
+    admin:      document.getElementById('tab-admin'),
   };
 
   // ── Tab switching ──────────────────────────────────────────────────────────
@@ -26,7 +27,7 @@
 
       const target = btn.dataset.tab;
       Object.entries(tabPanels).forEach(([key, panel]) => {
-        panel.hidden = key !== target;
+        if (panel) panel.hidden = key !== target;
       });
 
       // Redraw charts when metrics tab becomes visible (canvas needs visible parent)
@@ -38,6 +39,11 @@
       // Render vulns tab when switched to
       if (target === 'vulns') {
         renderVulns();
+      }
+
+      // Render admin tab when switched to
+      if (target === 'admin' && typeof window.renderAdmin === 'function') {
+        window.renderAdmin();
       }
     });
   });

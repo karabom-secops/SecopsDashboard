@@ -85,14 +85,18 @@
       ? '<option value="">— No scans uploaded —</option>'
       : scanList.map(s => `<option value="${escHtml(s.monthKey)}"${s.monthKey === current ? ' selected' : ''}>${escHtml(s.monthKey)}</option>`).join('');
 
-    // Show delete button only when a scan is selected
-    if (delBtn) delBtn.hidden = !current;
+    // Show delete button only when a scan is selected AND user is admin
+    const isAdmin = window.currentUser && window.currentUser.role === 'admin';
+    if (delBtn) delBtn.hidden = !current || !isAdmin;
 
     // Wire change handler once
     if (!sel.dataset.handlerSet) {
       sel.dataset.handlerSet = '1';
       sel.addEventListener('change', () => {
-        if (delBtn) delBtn.hidden = !sel.value;
+        if (delBtn) {
+          const _isAdmin = window.currentUser && window.currentUser.role === 'admin';
+          delBtn.hidden = !sel.value || !_isAdmin;
+        }
         if (sel.value) renderVulns(sel.value);
       });
     }
@@ -573,7 +577,19 @@
     modal.dataset.idx = origIdx;
     modal.hidden = false;
     document.body.classList.add('modal-open');
-    document.getElementById('modal-status-select').focus();
+
+    // Role gating — readonly users can view but not edit
+    const isAdmin = window.currentUser && window.currentUser.role === 'admin';
+    const statusSel   = document.getElementById('modal-status-select');
+    const notesField  = document.getElementById('modal-notes');
+    const saveButton  = document.getElementById('modal-save-btn');
+    if (statusSel)  statusSel.disabled  = !isAdmin;
+    if (notesField) notesField.disabled = !isAdmin;
+    if (saveButton) saveButton.hidden   = !isAdmin;
+
+    if (isAdmin) {
+      statusSel.focus();
+    }
   }
 
   function _closeModal() {
