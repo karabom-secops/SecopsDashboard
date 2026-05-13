@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS vuln_findings (
                         CHECK (status IN ('open', 'in-progress', 'fixed', 'accepted')),
   notes             TEXT        NOT NULL DEFAULT '',
   status_updated_at TIMESTAMPTZ,
+  first_seen_at     TIMESTAMPTZ,
   UNIQUE (scan_id, finding_index)
 );
 

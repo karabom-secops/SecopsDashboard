@@ -138,6 +138,10 @@
       ? '<option value="">— No scans uploaded —</option>'
       : scanList.map(s => `<option value="${escHtml(s.monthKey)}"${s.monthKey === current ? ' selected' : ''}>${escHtml(s.monthKey)}</option>`).join('');
 
+    // Show uploaded-at timestamp for the current scan
+    const currentItem = scanList.find(s => s.monthKey === current);
+    _renderUploadedAt(currentItem ? currentItem.uploadedAt : null);
+
     // Show delete button only when a scan is selected AND user is admin/superadmin
     const isAdmin = window.currentUser && (window.currentUser.role === 'admin' || window.currentUser.role === 'superadmin');
     if (delBtn) delBtn.hidden = !current || !isAdmin;
@@ -155,11 +159,25 @@
     }
   }
 
+  // ── Upload timestamp ───────────────────────────────────────────────────────
+  function _renderUploadedAt(dateStr) {
+    const el = document.getElementById('vulnUploadedAt');
+    if (!el) return;
+    if (!dateStr) { el.textContent = ''; return; }
+    const d = new Date(dateStr);
+    el.textContent = 'Uploaded ' + d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
   // ── Full render ────────────────────────────────────────────────────────────
   function _renderAll() {
     _renderStatCards();
     _renderEmptyOrContent();
-  }
+    // Show/hide export button
+    const exportBtn = document.getElementById('vulnExportCsvBtn');
+    if (exportBtn) exportBtn.hidden = !_currentScan;    // Dynamic page title
+    document.title = _currentScan
+      ? `SecOps — Vulns ${_currentScan.monthKey}`
+      : 'SecOps Dashboard';  }
 
   // ── Stat cards ─────────────────────────────────────────────────────────────
   function _renderStatCards() {
@@ -226,6 +244,14 @@
     if (!emptyEl || !contentEl) return;
 
     if (!_currentScan) {
+      // Build dynamic upload href for superadmin
+      const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+      const uploadHref = 'upload.html' + (isSA && _activeTenantId ? '?tenantId=' + encodeURIComponent(_activeTenantId) : '');
+      emptyEl.innerHTML = `
+        <div class="vuln-empty-card">
+          <p>No Nessus scan uploaded yet.</p>
+          <a href="${uploadHref}" class="btn btn-primary">Upload Nessus Scan</a>
+        </div>`;
       emptyEl.hidden   = false;
       contentEl.hidden = true;
       return;
@@ -524,16 +550,18 @@
         : `<span class="notes-add">+ Add note</span>`;
       return `
         <tr>
+          <td class="col-check"><input type="checkbox" class="finding-cb" data-idx="${origIdx}"></td>
           <td>${escHtml(f.host)}</td>
           <td>${escHtml(f.port || '—')}</td>
           <td>${riskBadge(f.risk)}</td>
           <td class="vuln-name-cell" title="${escHtml(f.name)}">${escHtml(f.name)}</td>
           <td>${escHtml(f.cve || '—')}</td>
+          <td class="age-cell">${_ageHtml(f)}</td>
           <td><button class="status-pill ${escHtml(s)} status-edit-btn" data-idx="${origIdx}" title="Click to manage status">${escHtml(statusLabel)}</button></td>
           <td class="notes-cell" data-idx="${origIdx}">${notesHtml}</td>
         </tr>
       `;
-    }).join('') || `<tr><td colspan="7">No findings match the current filter.</td></tr>`;
+    }).join('') || `<tr><td colspan="9">No findings match the current filter.</td></tr>`;
 
     tbody.querySelectorAll('.status-edit-btn, .notes-cell').forEach(el => {
       el.addEventListener('click', () => {
@@ -541,6 +569,94 @@
         _openFindingModal(idx);
       });
     });
+
+    // ── Checkbox / bulk selection ──
+    const selectAll = document.getElementById('vulnSelectAll');
+    const bulkBar   = document.getElementById('vulnBulkBar');
+    const bulkCount = document.getElementById('vulnBulkCount');
+
+    function _syncBulkBar() {
+      if (!bulkBar) return;
+      const checked = tbody.querySelectorAll('.finding-cb:checked');
+      bulkBar.hidden = checked.length === 0;
+      if (bulkCount) bulkCount.textContent = `${checked.length} selected`;
+    }
+
+    if (selectAll) {
+      selectAll.checked = false;
+      selectAll.addEventListener('change', () => {
+        tbody.querySelectorAll('.finding-cb').forEach(cb => { cb.checked = selectAll.checked; });
+        _syncBulkBar();
+      });
+    }
+    tbody.querySelectorAll('.finding-cb').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (!cb.checked && selectAll) selectAll.checked = false;
+        _syncBulkBar();
+      });
+    });
+
+    const applyBtn = document.getElementById('vulnBulkApplyBtn');
+    const clearBtn = document.getElementById('vulnBulkClearBtn');
+
+    if (clearBtn) {
+      clearBtn.onclick = () => {
+        tbody.querySelectorAll('.finding-cb').forEach(cb => { cb.checked = false; });
+        if (selectAll) selectAll.checked = false;
+        _syncBulkBar();
+      };
+    }
+
+    if (applyBtn) {
+      applyBtn.onclick = async () => {
+        const statusSel = document.getElementById('vulnBulkStatus');
+        const status    = statusSel ? statusSel.value : '';
+        if (!status) { alert('Please choose a status to apply.'); return; }
+
+        const checked = [...tbody.querySelectorAll('.finding-cb:checked')];
+        const indices = checked.map(cb => parseInt(cb.dataset.idx, 10));
+        if (indices.length === 0) return;
+
+        const monthKey = _currentScan.monthKey;
+        const body     = { status, indices, tenantId: _activeTenantId };
+
+        applyBtn.disabled = true;
+        applyBtn.textContent = 'Saving…';
+        try {
+          const res = await fetch(`api/vulns/${encodeURIComponent(monthKey)}/findings/bulk-status`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert('Bulk update failed: ' + (err.error || res.status));
+            return;
+          }
+          // Update local state then re-render
+          indices.forEach(idx => {
+            if (_currentScan.findings[idx]) _currentScan.findings[idx].status = status;
+          });
+          if (selectAll) selectAll.checked = false;
+          if (statusSel) statusSel.value = '';
+          _renderFindingsTable();
+          _renderStatusSummary();
+        } finally {
+          applyBtn.disabled = false;
+          applyBtn.textContent = 'Apply';
+        }
+      };
+    }
+  }
+
+  // ── Age/SLA helper ─────────────────────────────────────────────────────────
+  function _ageHtml(f) {
+    if (!f.firstSeenAt) return '<span class="age-unknown">—</span>';
+    const days = Math.floor((Date.now() - new Date(f.firstSeenAt)) / 86400000);
+    const risk = (f.risk || '').toLowerCase();
+    const isOverdue = (risk === 'critical' && days > 30) || (risk === 'high' && days > 60) || (risk === 'medium' && days > 90);
+    const cls = isOverdue ? 'age-overdue' : (days < 7 ? 'age-new' : '');
+    return `<span class="${cls}">${days}d</span>`;
   }
 
   // ── Status summary bar ─────────────────────────────────────────────────────
@@ -695,6 +811,34 @@
     }
   }
 
+  // ── Export CSV ─────────────────────────────────────────────────────────────
+  function _exportCsv() {
+    if (!_currentScan) return;
+    let rows = _currentScan.findings || [];
+    if (_activeFilter !== 'All') rows = rows.filter(f => f.risk === _activeFilter);
+    if (_statusFilter !== 'All') rows = rows.filter(f => (f.status || 'open') === _statusFilter);
+    const esc = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    const csv = [
+      ['Host', 'Port', 'Risk', 'Vulnerability', 'CVE', 'Days Open', 'Status', 'Notes'].join(','),
+      ...rows.map(f => {
+        const days = f.firstSeenAt
+          ? Math.floor((Date.now() - new Date(f.firstSeenAt)) / 86400000) + 'd'
+          : '';
+        return [
+          f.host, f.port || '', f.risk, f.name,
+          f.cve || '', days, f.status || 'open', f.notes || ''
+        ].map(esc).join(',');
+      })
+    ].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'vulns-' + _currentScan.monthKey + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   // ── Modal wiring (once at load) ────────────────────────────────────────────
   (function _initModal() {
     const modal   = document.getElementById('vuln-finding-modal');
@@ -717,7 +861,11 @@
       });
     }
 
-    // ── Delete scan button ──
+    // ── Export CSV button ──
+    const exportBtn = document.getElementById('vulnExportCsvBtn');
+    if (exportBtn) exportBtn.addEventListener('click', _exportCsv);
+
+    // ── Delete scan button (two-step inline confirm) ──
     const delBtn = document.getElementById('vulnDeleteScanBtn');
     if (delBtn) {
       delBtn.addEventListener('click', async () => {
@@ -725,8 +873,24 @@
         const monthKey = sel ? sel.value : '';
         if (!monthKey) return;
 
-        if (!confirm(`Delete the scan for ${monthKey}?\n\nThis will permanently remove all findings and remediation notes for this month.`)) return;
+        // First click: arm the button
+        if (!delBtn.dataset.armed) {
+          delBtn.dataset.armed = '1';
+          delBtn.textContent   = '\u26a0\ufe0f Confirm delete?';
+          delBtn.classList.add('btn-delete-armed');
+          setTimeout(() => {
+            if (delBtn.dataset.armed) {
+              delete delBtn.dataset.armed;
+              delBtn.classList.remove('btn-delete-armed');
+              delBtn.textContent = '\uD83D\uDDD1\uFE0F Delete Scan';
+            }
+          }, 4000);
+          return;
+        }
 
+        // Second click: proceed
+        delete delBtn.dataset.armed;
+        delBtn.classList.remove('btn-delete-armed');
         delBtn.disabled    = true;
         delBtn.textContent = 'Deleting…';
 
@@ -737,7 +901,6 @@
             alert(d.error || `Delete failed (${res.status})`);
             return;
           }
-          // Reload the tab — scan list will refresh and default to next available
           await renderVulns();
         } catch (err) {
           alert('Network error: ' + err.message);

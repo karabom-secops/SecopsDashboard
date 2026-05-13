@@ -6,9 +6,10 @@
   let _orgs = [];
   let _sortKey = 'orgName';
   let _sortAsc  = true;
+  let _vulnSummary = null; // latest vuln summary per tenant (superadmin only)
 
   // ── Public render function ─────────────────────────────────────────────────
-  window.renderOrgs = function renderOrgs(weekData) {
+  window.renderOrgs = async function renderOrgs(weekData) {
     const orgs = weekData.orgs || [];
 
     // Enrich with escalationPct for sorting/display
@@ -16,6 +17,37 @@
       ...o,
       escalationPct: o.alerts > 0 ? Math.round((o.escalated / o.alerts) * 100) : 0,
     }));
+
+    // Superadmin: fetch latest vuln summary per tenant and show columns
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+    _vulnSummary = null;
+    if (isSA) {
+      try {
+        const res = await fetch('api/vulns/latest-summary');
+        if (res.ok) {
+          _vulnSummary = await res.json();
+          // Merge vuln critical/high counts into orgs by normalising names
+          _vulnSummary.forEach(vs => {
+            if (!vs.summary) return;
+            const tName = (vs.tenantName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const match = _orgs.find(o => {
+              const oName = (o.orgName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+              return oName === tName || oName.startsWith(tName) || tName.startsWith(oName);
+            });
+            if (match) {
+              match.vulnCritical = vs.summary.critical || 0;
+              match.vulnHigh     = vs.summary.high || 0;
+            }
+          });
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    // Show/hide vuln columns header
+    ['orgVulnCriticalTh', 'orgVulnHighTh'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.hidden = !isSA;
+    });
 
     renderStatCards(_orgs);
     renderTable();
@@ -43,16 +75,21 @@
     const sorted = sortOrgs(_orgs, _sortKey, _sortAsc);
     const tbody  = document.getElementById('orgs-tbody');
     tbody.innerHTML = '';
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
 
     if (sorted.length === 0) {
       const tr = document.createElement('tr');
-      tr.innerHTML = '<td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem">No org data available.</td>';
+      tr.innerHTML = `<td colspan="${isSA ? 8 : 6}" style="text-align:center;color:var(--muted);padding:1.5rem">No org data available.</td>`;
       tbody.appendChild(tr);
       return;
     }
 
     sorted.forEach(org => {
       const tr = document.createElement('tr');
+      const vulnCols = isSA ? `
+        <td class="${(org.vulnCritical || 0) > 0 ? 'esc-bad' : ''}">${org.vulnCritical != null ? org.vulnCritical : '<span style="color:var(--muted)">—</span>'}</td>
+        <td class="${(org.vulnHigh || 0) > 0 ? 'esc-warn' : ''}">${org.vulnHigh != null ? org.vulnHigh : '<span style="color:var(--muted)">—</span>'}</td>
+      ` : '';
       tr.innerHTML = `
         <td>${escHtml(org.orgName)}</td>
         <td>${org.alerts}</td>
@@ -60,6 +97,7 @@
         <td class="${escalationClass(org.escalationPct)}">${org.escalationPct}%</td>
         <td>${coverageCell(org.coverageScore)}</td>
         <td>${irBadge(org.irPlan)}</td>
+        ${vulnCols}
       `;
       tbody.appendChild(tr);
     });

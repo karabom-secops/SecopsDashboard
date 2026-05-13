@@ -43,6 +43,51 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
 
+/* ── Dark mode overrides ───────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg:        #0d1117;
+  --bg-soft:   #161b22;
+  --surface:   #1c2128;
+  --surface2:  #22272e;
+  --surface3:  #2d333b;
+  --card-bg:   #1c2128;
+  --border:    #30363d;
+  --text:      #e6edf3;
+  --muted:     #8b949e;
+  --red-dim:   #2a1215;
+  --amber-dim: #2a1f05;
+  --green-dim: #0d2017;
+  --blue-dim:  #0d2137;
+}
+[data-theme="dark"] body {
+  background: var(--bg);
+  background-image: none;
+  color: var(--text);
+}
+[data-theme="dark"] .site-header {
+  background: #161b22;
+  border-color: #30363d;
+}
+[data-theme="dark"] .data-table th {
+  background: linear-gradient(180deg, #22272e 0%, #1c2128 100%);
+  color: #8b949e;
+}
+[data-theme="dark"] .data-table tbody tr:hover { background: var(--surface3); }
+[data-theme="dark"] .stat-card,
+[data-theme="dark"] .card,
+[data-theme="dark"] .vuln-card,
+[data-theme="dark"] .modal-box { background: var(--card-bg); border-color: var(--border); }
+[data-theme="dark"] input,
+[data-theme="dark"] select,
+[data-theme="dark"] textarea {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: var(--border);
+}
+[data-theme="dark"] .chip { background: var(--surface2); color: var(--text); border-color: var(--border); }
+[data-theme="dark"] .chip.active { background: var(--blue); color: #fff; }
+[data-theme="dark"] .vuln-bulk-bar { background: var(--surface2); border-color: var(--border); }
+
 /* ── Reset / base ──────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -590,6 +635,9 @@ input[type="file"] {
   color: #4a6e84;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .data-table th[data-sort] { cursor: pointer; }
@@ -1352,3 +1400,85 @@ body.login-page {
   .header-user-info { gap: 0.3rem; }
   .header-username { max-width: 80px; }
 }
+
+/* ── Uploaded-at timestamp ─────────────────────────────────────────────────────── */
+.vuln-uploaded-at {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-left: 0.5rem;
+}
+
+/* ── Findings heading row (title + Export CSV btn) ─────────────────────── */
+.findings-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+/* ── Armed (confirm) delete button ────────────────────────────────────── */
+.btn-delete-armed {
+  background: #dc2626 !important;
+  color: #fff !important;
+  border-color: #dc2626 !important;
+}
+
+/* ── Modal Esc hint ───────────────────────────────────────────────────────── */
+.modal-esc-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-right: auto;
+}
+
+/* ── Print: findings-only view ───────────────────────────────────────────── */
+@media print {
+  .app-header, .tab-nav,
+  #vulnTenantFilterWrap, .vuln-scan-header,
+  #vulns-stat-cards, .charts-grid,
+  .filter-chips, .findings-heading-row .btn,
+  .vuln-status-summary,
+  .col-check, #vulnBulkBar { display: none !important; }
+
+  .tab-panel { display: block !important; }
+  section.tab-panel:not(#tab-vulns) { display: none !important; }
+
+  .vuln-findings-wrap {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  body { background: #fff; }
+}
+
+/* ── Bulk action bar ─────────────────────────────────────────────────────── */
+.vuln-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.9rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.6rem;
+}
+.bulk-count {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-right: 0.2rem;
+}
+.bulk-status-select {
+  font-size: 0.82rem;
+  padding: 0.25rem 0.5rem;
+}
+.col-check {
+  width: 2rem;
+  text-align: center;
+}
+
+/* ── Age / SLA cells ─────────────────────────────────────────────────────── */
+.age-cell { font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.age-overdue { color: var(--red); font-weight: 700; }
+.age-new { color: var(--muted); font-style: italic; }
+.age-unknown { color: var(--muted); }
+

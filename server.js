@@ -537,24 +537,31 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
     if (prevScan.rows.length > 0) {
       const prevId = prevScan.rows[0].id;
       const prevFindings = await client.query(
-        `SELECT plugin_id, host, port, status, notes, status_updated_at
-         FROM vuln_findings WHERE scan_id = $1 AND status != 'open'`,
+        `SELECT plugin_id, host, port, status, notes, status_updated_at, first_seen_at
+         FROM vuln_findings WHERE scan_id = $1`,
         [prevId]
       );
       prevFindings.rows.forEach(pf => {
         const key = `${pf.plugin_id}|${pf.host}|${pf.port}`;
-        prevMap.set(key, pf);
+        // If duplicate key, keep the one with status data or earliest first_seen_at
+        if (!prevMap.has(key) || pf.status !== 'open') {
+          prevMap.set(key, pf);
+        }
       });
     }
 
     let carried = 0;
+    const uploadNow = new Date();
     findings.forEach(f => {
       const match = prevMap.get(`${f.pluginId}|${f.host}|${f.port}`);
       if (match) {
         f.status          = match.status;
         f.notes           = match.notes || '';
         f.statusUpdatedAt = match.status_updated_at ? match.status_updated_at.toISOString() : null;
+        f.firstSeenAt     = match.first_seen_at || uploadNow;
         carried++;
+      } else {
+        f.firstSeenAt = uploadNow;
       }
     });
 
@@ -572,8 +579,8 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
       await client.query(
         `INSERT INTO vuln_findings
            (scan_id, finding_index, plugin_id, name, risk, host, port, protocol,
-            cve, cvss_v2, cvss_v3, synopsis, solution, status, notes, status_updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+            cve, cvss_v2, cvss_v3, synopsis, solution, status, notes, status_updated_at, first_seen_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
         [
           scanId, i,
           f.pluginId   || null, f.name     || null, f.risk     || null,
@@ -583,6 +590,7 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
           f.status || 'open',
           f.notes  || '',
           f.statusUpdatedAt ? new Date(f.statusUpdatedAt) : null,
+          f.firstSeenAt || null,
         ]
       );
     }
@@ -611,7 +619,7 @@ app.get('/api/vulns', async (req, res) => {
     const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'query');
     if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
     const result = await pool.query(
-      'SELECT month_key AS "monthKey", summary FROM vuln_scans WHERE tenant_id=$1 ORDER BY month_key DESC',
+      'SELECT month_key AS "monthKey", summary, created_at AS "uploadedAt" FROM vuln_scans WHERE tenant_id=$1 ORDER BY month_key DESC',
       [tenantId]
     );
     res.json(result.rows);
@@ -656,7 +664,8 @@ app.get('/api/vulns/:monthKey', async (req, res) => {
       `SELECT finding_index AS idx, plugin_id AS "pluginId", name, risk, host, port,
               protocol, cve, cvss_v2 AS "cvssV2", cvss_v3 AS "cvssV3",
               synopsis, solution, status, notes,
-              status_updated_at AS "statusUpdatedAt"
+              status_updated_at AS "statusUpdatedAt",
+              first_seen_at AS "firstSeenAt"
        FROM vuln_findings WHERE scan_id = $1 ORDER BY finding_index ASC`,
       [scan.id]
     );
@@ -665,6 +674,7 @@ app.get('/api/vulns/:monthKey', async (req, res) => {
       const f = { ...row };
       delete f.idx;
       if (f.statusUpdatedAt) f.statusUpdatedAt = f.statusUpdatedAt.toISOString();
+      if (f.firstSeenAt)     f.firstSeenAt     = f.firstSeenAt.toISOString();
       return f;
     });
 
@@ -686,6 +696,148 @@ app.delete('/api/vulns/:monthKey', requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Scan not found.' });
     }
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Bulk status update ────────────────────────────────────────────────────
+app.patch('/api/vulns/:monthKey/findings/bulk-status', requireAdmin, async (req, res) => {
+  try {
+    const { monthKey } = req.params;
+    const { status, indices } = req.body;
+
+    if (!['open', 'in-progress', 'fixed', 'accepted'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status.' });
+    }
+    if (!Array.isArray(indices) || indices.length === 0) {
+      return res.status(400).json({ error: 'indices must be a non-empty array.' });
+    }
+    const idxList = indices.map(i => parseInt(i, 10)).filter(i => !isNaN(i) && i >= 0);
+    if (idxList.length === 0) return res.status(400).json({ error: 'No valid indices.' });
+
+    const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'body');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
+    const scanResult = await pool.query(
+      'SELECT id FROM vuln_scans WHERE tenant_id=$1 AND month_key=$2',
+      [tenantId, monthKey]
+    );
+    if (scanResult.rows.length === 0) return res.status(404).json({ error: 'Scan not found.' });
+    const scanId = scanResult.rows[0].id;
+
+    await pool.query(
+      `UPDATE vuln_findings SET status = $1, status_updated_at = NOW()
+       WHERE scan_id = $2 AND finding_index = ANY($3::int[])`,
+      [status, scanId, idxList]
+    );
+
+    res.json({ ok: true, updated: idxList.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Latest vuln summary per tenant (superadmin: all, others: own) ──────────
+app.get('/api/vulns/latest-summary', async (req, res) => {
+  try {
+    const isSA = req.session.role === 'superadmin';
+    let rows;
+    if (isSA) {
+      const result = await pool.query(
+        `SELECT t.id AS "tenantId", t.name AS "tenantName",
+                vs.month_key AS "monthKey", vs.summary
+         FROM tenants t
+         LEFT JOIN LATERAL (
+           SELECT month_key, summary FROM vuln_scans
+           WHERE tenant_id = t.id ORDER BY month_key DESC LIMIT 1
+         ) vs ON true
+         ORDER BY t.name ASC`
+      );
+      rows = result.rows;
+    } else {
+      const tenantId = req.session.tenantId;
+      if (!tenantId) return res.json([]);
+      const result = await pool.query(
+        `SELECT $1::int AS "tenantId", '' AS "tenantName",
+                month_key AS "monthKey", summary
+         FROM vuln_scans WHERE tenant_id=$1 ORDER BY month_key DESC LIMIT 1`,
+        [tenantId]
+      );
+      rows = result.rows;
+    }
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Bulk status update ──────────────────────────────────────────────────────
+app.patch('/api/vulns/:monthKey/findings/bulk-status', requireAdmin, async (req, res) => {
+  try {
+    const { monthKey } = req.params;
+    const { status, indices } = req.body;
+
+    if (!['open', 'in-progress', 'fixed', 'accepted'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status.' });
+    }
+    if (!Array.isArray(indices) || indices.length === 0) {
+      return res.status(400).json({ error: 'indices must be a non-empty array.' });
+    }
+    const idxList = indices.map(i => parseInt(i, 10)).filter(i => !isNaN(i) && i >= 0);
+    if (idxList.length === 0) return res.status(400).json({ error: 'No valid indices.' });
+
+    const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'body');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
+    const scanResult = await pool.query(
+      'SELECT id FROM vuln_scans WHERE tenant_id=$1 AND month_key=$2',
+      [tenantId, monthKey]
+    );
+    if (scanResult.rows.length === 0) return res.status(404).json({ error: 'Scan not found.' });
+    const scanId = scanResult.rows[0].id;
+
+    await pool.query(
+      `UPDATE vuln_findings SET status = $1, status_updated_at = NOW()
+       WHERE scan_id = $2 AND finding_index = ANY($3::int[])`,
+      [status, scanId, idxList]
+    );
+
+    res.json({ ok: true, updated: idxList.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Latest vuln summary per tenant (superadmin: all, others: own) ──────────
+app.get('/api/vulns/latest-summary', async (req, res) => {
+  try {
+    const isSA = req.session.role === 'superadmin';
+    let rows;
+    if (isSA) {
+      const result = await pool.query(
+        `SELECT t.id AS "tenantId", t.name AS "tenantName",
+                vs.month_key AS "monthKey", vs.summary
+         FROM tenants t
+         LEFT JOIN LATERAL (
+           SELECT month_key, summary FROM vuln_scans
+           WHERE tenant_id = t.id ORDER BY month_key DESC LIMIT 1
+         ) vs ON true
+         ORDER BY t.name ASC`
+      );
+      rows = result.rows;
+    } else {
+      const tenantId = req.session.tenantId;
+      if (!tenantId) return res.json([]);
+      const result = await pool.query(
+        `SELECT $1::int AS "tenantId", '' AS "tenantName",
+                month_key AS "monthKey", summary
+         FROM vuln_scans WHERE tenant_id=$1 ORDER BY month_key DESC LIMIT 1`,
+        [tenantId]
+      );
+      rows = result.rows;
+    }
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

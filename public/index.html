@@ -22,6 +22,7 @@
         <option value="">— Select week —</option>
       </select>
       <a href="upload.html" class="btn btn-primary" data-admin-only>Upload New Report</a>
+      <button id="darkModeToggle" class="btn btn-secondary btn-sm" title="Toggle dark mode" aria-label="Toggle dark mode">&#9790;</button>
       <div class="header-user-info">
         <span id="headerUsername" class="header-username"></span>
         <span id="headerRole" class="header-role-badge"></span>
@@ -70,6 +71,8 @@
               <th data-sort="escalationPct">Esc% <span class="sort-arrow"></span></th>
               <th data-sort="coverageScore">Coverage <span class="sort-arrow"></span></th>
               <th data-sort="irPlan">IR Plan <span class="sort-arrow"></span></th>
+              <th id="orgVulnCriticalTh" class="vuln-th" hidden data-sort="vulnCritical">Crit Vulns <span class="sort-arrow"></span></th>
+              <th id="orgVulnHighTh" class="vuln-th" hidden data-sort="vulnHigh">High Vulns <span class="sort-arrow"></span></th>
             </tr>
           </thead>
           <tbody id="orgs-tbody"></tbody>
@@ -141,6 +144,7 @@
         <label for="vulnScanSelect" class="scan-select-label">Scan Month:</label>
         <select id="vulnScanSelect" class="scan-select"><option value="">— No scans uploaded —</option></select>
         <button id="vulnDeleteScanBtn" class="btn-delete-scan" title="Delete this scan" hidden>&#128465; Delete Scan</button>
+        <span id="vulnUploadedAt" class="vuln-uploaded-at"></span>
       </div>
       <div id="vulns-stat-cards" class="stat-grid"></div>
       <div id="vulns-empty-state" hidden>
@@ -193,7 +197,23 @@
           </table>
         </div>
 
-        <h3 class="section-heading">All Findings</h3>
+        <div class="findings-heading-row">
+          <h3 class="section-heading" style="margin:0">All Findings</h3>
+          <button id="vulnExportCsvBtn" class="btn btn-secondary btn-sm" hidden>&#8595; Export CSV</button>
+        </div>
+        <!-- Bulk action bar — shown when checkboxes are ticked -->
+        <div id="vulnBulkBar" class="vuln-bulk-bar" hidden>
+          <span id="vulnBulkCount" class="bulk-count"></span>
+          <select id="vulnBulkStatus" class="modal-status-select bulk-status-select">
+            <option value="">Set status…</option>
+            <option value="open">Open</option>
+            <option value="in-progress">In Progress</option>
+            <option value="fixed">Fixed</option>
+            <option value="accepted">Accepted Risk</option>
+          </select>
+          <button id="vulnBulkApplyBtn" class="btn btn-primary btn-sm">Apply</button>
+          <button id="vulnBulkClearBtn" class="btn btn-secondary btn-sm">Clear</button>
+        </div>
         <div id="vuln-status-summary" class="vuln-status-summary" hidden></div>
         <div id="vuln-finding-filters" class="filter-chips"></div>
         <div id="vuln-status-filters" class="filter-chips filter-chips-status"></div>
@@ -201,11 +221,13 @@
           <table class="data-table" id="vuln-findings-table">
             <thead>
               <tr>
+                <th class="col-check"><input type="checkbox" id="vulnSelectAll" title="Select all"></th>
                 <th>Host</th>
                 <th>Port</th>
                 <th>Risk</th>
                 <th>Vulnerability</th>
                 <th>CVE</th>
+                <th>Days Open</th>
                 <th>Status</th>
                 <th>Notes</th>
               </tr>
@@ -336,7 +358,7 @@
       <div id="modal-risk-strip" class="modal-risk-strip"></div>
       <div class="modal-header">
         <h3 id="modal-vuln-title" class="modal-title">Manage Finding</h3>
-        <button id="modal-close-btn" class="modal-close-btn" aria-label="Close">&times;</button>
+        <button id="modal-close-btn" class="modal-close-btn" aria-label="Close" title="Press Esc to close">&times;</button>
       </div>
       <div class="modal-body">
         <div class="modal-finding-card">
@@ -367,6 +389,7 @@
         <p id="modal-error" class="form-error" hidden></p>
       </div>
       <div class="modal-footer">
+        <span class="modal-esc-hint">Esc to close</span>
         <button id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
         <button id="modal-save-btn" class="btn btn-primary">Save Changes</button>
       </div>
