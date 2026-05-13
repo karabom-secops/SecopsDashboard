@@ -471,9 +471,10 @@
 
   window.renderAdmin = renderUsers;
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initAdmin);
-  } else {
+  // Wait for auth.js to set window.currentUser before initialising
+  if (window.currentUser) {
     initAdmin();
+  } else {
+    document.addEventListener('authReady', initAdmin, { once: true });
   }
 })();

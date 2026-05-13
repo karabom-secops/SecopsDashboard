@@ -40,6 +40,9 @@
     // Expose globally so other scripts can read role etc.
     window.currentUser = user;
 
+    // Notify other tab scripts that auth is resolved
+    document.dispatchEvent(new CustomEvent('authReady', { detail: user }));
+
     // ── Populate header user info ────────────────────────────────────────
     const usernameEl = document.getElementById('headerUsername');
     if (usernameEl) usernameEl.textContent = user.username;
