@@ -213,6 +213,11 @@
     });
   }
 
-  initVulnUpload();
+  // Wait for auth.js to resolve window.currentUser before initialising
+  if (window.currentUser) {
+    initVulnUpload();
+  } else {
+    document.addEventListener('authReady', initVulnUpload, { once: true });
+  }
 
 })();
