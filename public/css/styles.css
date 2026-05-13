@@ -800,6 +800,12 @@ input[type="file"] {
 }
 
 /* Vuln scan month selector bar */
+.vuln-tenant-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
 .vuln-scan-header {
   display: flex;
   align-items: center;
@@ -1215,8 +1221,9 @@ body.login-page {
   text-transform: uppercase;
 }
 
-.role-admin    { background: #dbeafe; color: #1d4ed8; }
-.role-readonly { background: #f3f4f6; color: #6b7280; }
+.role-superadmin { background: #ede9fe; color: #6d28d9; }
+.role-admin      { background: #dbeafe; color: #1d4ed8; }
+.role-readonly   { background: #f3f4f6; color: #6b7280; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ADMIN TAB — User management

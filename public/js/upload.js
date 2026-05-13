@@ -100,7 +100,7 @@
 
   // ── Nessus Scan Upload ──────────────────────────────────────────────────────
 
-  function initVulnUpload() {
+  async function initVulnUpload() {
     const vulnForm      = document.getElementById('vulnUploadForm');
     const vulnMonthInput = document.getElementById('vulnMonthKey');
     const vulnFileInput = document.getElementById('vulnFile');
@@ -108,12 +108,31 @@
     const btnVuln       = document.getElementById('btnVulnUpload');
     const vulnBtnLabel  = document.getElementById('vulnBtnLabel');
     const vulnSpinner   = document.getElementById('vulnSpinner');
+    const tenantWrap    = document.getElementById('vulnTenantSelectWrap');
+    const tenantSel     = document.getElementById('vulnTenantId');
 
     if (!vulnForm) return;
 
     // Default to current month
     const now = new Date();
     vulnMonthInput.value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+
+    // Superadmin: load tenant list and show the tenant picker
+    if (window.currentUser && window.currentUser.role === 'superadmin') {
+      try {
+        const res = await fetch('api/tenants');
+        const tenants = res.ok ? await res.json() : [];
+        tenants.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t.id;
+          opt.textContent = t.name;
+          tenantSel.appendChild(opt);
+        });
+        if (tenantWrap) tenantWrap.hidden = false;
+      } catch (_) {
+        // Non-fatal: tenant selector stays hidden, upload may fail server-side
+      }
+    }
 
     function showVulnError(msg) {
       vulnErrorDiv.textContent = msg;
@@ -147,9 +166,22 @@
         return;
       }
 
+      // For superadmin, tenantId is required
+      const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+      if (isSA) {
+        const tenantId = tenantSel ? (tenantSel.value || '').trim() : '';
+        if (!tenantId) {
+          showVulnError('Please select a tenant / organisation.');
+          return;
+        }
+      }
+
       const fd = new FormData();
       fd.append('monthKey', monthKey);
       fd.append('vulnFile', file);
+      if (isSA && tenantSel && tenantSel.value) {
+        fd.append('tenantId', tenantSel.value);
+      }
 
       setVulnLoading(true);
       try {

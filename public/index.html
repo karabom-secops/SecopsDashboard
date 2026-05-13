@@ -130,6 +130,13 @@
 
     <!-- Tab: Vulnerabilities -->
     <section id="tab-vulns" class="tab-panel" hidden role="tabpanel">
+      <!-- Tenant filter — visible to superadmin only (tab-vulns.js controls this) -->
+      <div id="vulnTenantFilterWrap" class="vuln-tenant-filter" hidden>
+        <label for="vulnTenantSelect" class="scan-select-label">Organisation:</label>
+        <select id="vulnTenantSelect" class="scan-select">
+          <option value="">— Select tenant —</option>
+        </select>
+      </div>
       <div class="vuln-scan-header">
         <label for="vulnScanSelect" class="scan-select-label">Scan Month:</label>
         <select id="vulnScanSelect" class="scan-select"><option value="">— No scans uploaded —</option></select>
@@ -213,11 +220,52 @@
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
   <section id="tab-admin" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
-      <h2 class="section-title">User Management</h2>
+      <h2 class="section-title">Administration</h2>
     </div>
 
     <p id="adminSuccess" class="admin-form-success" hidden></p>
     <p id="adminError"   class="admin-form-error"   hidden></p>
+
+    <!-- Tenant Management (superadmin only) -->
+    <div id="tenantManagementSection" class="admin-card" hidden>
+      <h3 class="admin-card-title">Tenant Management</h3>
+
+      <!-- Add Tenant Form -->
+      <form id="addTenantForm" class="admin-add-form" novalidate>
+        <div class="admin-form-row">
+          <div class="form-group">
+            <label class="modal-label" for="newTenantName">Org Name</label>
+            <input id="newTenantName" type="text" class="modal-status-select"
+              placeholder="e.g. Acme Corp" autocomplete="off" required />
+          </div>
+          <div class="form-group">
+            <label class="modal-label" for="newTenantSlug">Slug</label>
+            <input id="newTenantSlug" type="text" class="modal-status-select"
+              placeholder="e.g. acme-corp" autocomplete="off" required />
+          </div>
+          <div class="form-group admin-form-submit">
+            <label class="modal-label">&nbsp;</label>
+            <button id="addTenantBtn" type="submit" class="btn btn-primary">Add Tenant</button>
+          </div>
+        </div>
+      </form>
+
+      <div class="table-wrap" style="margin-top:1rem;">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Slug</th>
+              <th>Users</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tenantTableBody">
+            <tr><td colspan="4" class="admin-table-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
     <!-- Add User Form -->
     <div class="admin-card">
@@ -241,6 +289,14 @@
             <select id="newRole" class="modal-status-select">
               <option value="readonly">Read-only</option>
               <option value="admin">Admin</option>
+              <option value="superadmin">Super Admin</option>
+            </select>
+          </div>
+          <!-- Tenant selector — shown for superadmin only (tab-admin.js hides otherwise) -->
+          <div id="newUserTenantRow" class="form-group" hidden>
+            <label class="modal-label" for="newUserTenant">Tenant</label>
+            <select id="newUserTenant" class="modal-status-select tenant-dropdown">
+              <option value="">— Select tenant —</option>
             </select>
           </div>
           <div class="form-group admin-form-submit">
@@ -253,20 +309,21 @@
 
     <!-- Users Table -->
     <div class="admin-card">
-      <h3 class="admin-card-title">All Users</h3>
+      <h3 class="admin-card-title">Users</h3>
       <div class="table-wrap">
         <table class="admin-table">
           <thead>
             <tr>
               <th>Username</th>
               <th>Role</th>
+              <th id="userTableTenantTh" hidden>Tenant</th>
               <th>Created</th>
               <th>Last Login</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="userTableBody">
-            <tr><td colspan="5" class="admin-table-empty">Loading…</td></tr>
+            <tr><td colspan="6" class="admin-table-empty">Loading…</td></tr>
           </tbody>
         </table>
       </div>

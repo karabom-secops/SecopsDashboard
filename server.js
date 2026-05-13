@@ -11,7 +11,7 @@ const PgStore = require('connect-pg-simple')(session);
 const bcrypt  = require('bcryptjs');
 
 const pool = require('./lib/db');
-const { requireAuth, requireAdmin } = require('./lib/auth-middleware');
+const { requireAuth, requireAdmin, requireSuperAdmin } = require('./lib/auth-middleware');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
 const { parseNessusCSV, parseNessusXML, computeVulnSummary } = require('./lib/vuln-parser');
@@ -91,7 +91,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, username, password_hash, role FROM users WHERE username = $1',
+      'SELECT id, username, password_hash, role, tenant_id FROM users WHERE username = $1',
       [username]
     );
 
@@ -110,8 +110,9 @@ app.post('/api/auth/login', async (req, res) => {
     req.session.userId   = user.id;
     req.session.username = user.username;
     req.session.role     = user.role;
+    req.session.tenantId = user.tenant_id;  // null for superadmin
 
-    return res.json({ id: user.id, username: user.username, role: user.role });
+    return res.json({ id: user.id, username: user.username, role: user.role, tenantId: user.tenant_id });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -133,6 +134,7 @@ app.get('/api/auth/me', (req, res) => {
     id:       req.session.userId,
     username: req.session.username,
     role:     req.session.role,
+    tenantId: req.session.tenantId || null,
   });
 });
 
@@ -140,15 +142,104 @@ app.get('/api/auth/me', (req, res) => {
 
 app.use('/api', requireAuth);
 
-// ── User management routes (admin only) ───────────────────────────────────
+// ── Tenant routes (superadmin only) ──────────────────────────────────────
+
+const SLUG_RE = /^[a-z0-9_-]{2,30}$/;
+
+app.get('/api/tenants', async (req, res) => {
+  // All authenticated users can list tenants (needed for dropdowns).
+  try {
+    const result = await pool.query(
+      `SELECT t.id, t.name, t.slug, t.created_at,
+              COUNT(u.id)::int AS user_count
+       FROM tenants t
+       LEFT JOIN users u ON u.tenant_id = t.id
+       GROUP BY t.id ORDER BY t.name ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tenants', requireSuperAdmin, async (req, res) => {
+  try {
+    const name = (req.body.name || '').trim();
+    const slug = (req.body.slug || '').trim().toLowerCase();
+
+    if (!name || name.length < 2 || name.length > 100) {
+      return res.status(400).json({ error: 'Tenant name must be 2–100 characters.' });
+    }
+    if (!SLUG_RE.test(slug)) {
+      return res.status(400).json({ error: 'Slug must be 2–30 lowercase alphanumeric characters, hyphens or underscores.' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id, name, slug, created_at`,
+      [name, slug]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Tenant name or slug already exists.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/tenants/:id', requireSuperAdmin, async (req, res) => {
+  try {
+    const tenantId = parseInt(req.params.id, 10);
+    if (isNaN(tenantId)) return res.status(400).json({ error: 'Invalid tenant id.' });
+
+    const occupied = await pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM users     WHERE tenant_id=$1)::int AS users,
+         (SELECT COUNT(*) FROM vuln_scans WHERE tenant_id=$1)::int AS scans`,
+      [tenantId]
+    );
+    const { users, scans } = occupied.rows[0];
+    if (users > 0 || scans > 0) {
+      return res.status(409).json({
+        error: `Cannot delete tenant: it still has ${users} user(s) and ${scans} scan(s). Remove them first.`,
+      });
+    }
+
+    const result = await pool.query('DELETE FROM tenants WHERE id=$1 RETURNING id', [tenantId]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Tenant not found.' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── User management routes ────────────────────────────────────────────────
+// superadmin: full CRUD across all tenants.
+// tenant admin: CRUD within their own tenant only (no superadmin role allowed).
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
 
 app.get('/api/users', requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT id, username, role, created_at, last_login FROM users ORDER BY created_at ASC'
-    );
+    const isSA = req.session.role === 'superadmin';
+    let result;
+    if (isSA) {
+      result = await pool.query(
+        `SELECT u.id, u.username, u.role, u.tenant_id, t.name AS tenant_name,
+                u.created_at, u.last_login
+         FROM users u LEFT JOIN tenants t ON t.id = u.tenant_id
+         ORDER BY u.created_at ASC`
+      );
+    } else {
+      result = await pool.query(
+        `SELECT u.id, u.username, u.role, u.tenant_id, t.name AS tenant_name,
+                u.created_at, u.last_login
+         FROM users u LEFT JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.tenant_id = $1
+         ORDER BY u.created_at ASC`,
+        [req.session.tenantId]
+      );
+    }
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -159,7 +250,12 @@ app.post('/api/users', requireAdmin, async (req, res) => {
   try {
     const username = (req.body.username || '').trim();
     const password = (req.body.password || '').trim();
-    const role     = (req.body.role     || 'readonly').trim();
+    const isSA     = req.session.role === 'superadmin';
+
+    let role     = (req.body.role || 'readonly').trim();
+    let tenantId = isSA
+      ? (req.body.tenantId ? parseInt(req.body.tenantId, 10) : null)
+      : req.session.tenantId;
 
     if (!USERNAME_RE.test(username)) {
       return res.status(400).json({ error: 'Username must be 3–30 alphanumeric characters (underscores allowed).' });
@@ -167,15 +263,25 @@ app.post('/api/users', requireAdmin, async (req, res) => {
     if (password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     }
-    if (!['admin', 'readonly'].includes(role)) {
-      return res.status(400).json({ error: 'Role must be admin or readonly.' });
+
+    // Superadmin can create any role; tenant admin can only create admin/readonly.
+    const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly'] : ['admin', 'readonly'];
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}.` });
     }
+
+    // Non-superadmin roles must belong to a tenant.
+    if (role !== 'superadmin' && !tenantId) {
+      return res.status(400).json({ error: 'A tenant must be specified for non-superadmin users.' });
+    }
+    // Superadmin has no tenant.
+    if (role === 'superadmin') tenantId = null;
 
     const hash = await bcrypt.hash(password, 12);
     const result = await pool.query(
-      `INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3)
-       RETURNING id, username, role, created_at`,
-      [username, hash, role]
+      `INSERT INTO users (username, password_hash, role, tenant_id) VALUES ($1, $2, $3, $4)
+       RETURNING id, username, role, tenant_id, created_at`,
+      [username, hash, role, tenantId || null]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -191,13 +297,25 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
     const targetId = parseInt(req.params.id, 10);
     if (isNaN(targetId)) return res.status(400).json({ error: 'Invalid user id.' });
 
+    const isSA = req.session.role === 'superadmin';
+
+    // Tenant admin can only edit users in their own tenant.
+    if (!isSA) {
+      const check = await pool.query('SELECT tenant_id FROM users WHERE id=$1', [targetId]);
+      if (check.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
+      if (check.rows[0].tenant_id !== req.session.tenantId) {
+        return res.status(403).json({ error: 'You can only edit users in your own organisation.' });
+      }
+    }
+
     const { role, password } = req.body;
     const updates = [];
     const values  = [];
 
     if (role !== undefined) {
-      if (!['admin', 'readonly'].includes(role)) {
-        return res.status(400).json({ error: 'Role must be admin or readonly.' });
+      const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly'] : ['admin', 'readonly'];
+      if (!allowedRoles.includes(role)) {
+        return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}.` });
       }
       if (targetId === req.session.userId) {
         return res.status(400).json({ error: 'You cannot change your own role.' });
@@ -222,7 +340,7 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
     values.push(targetId);
     const result = await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${values.length}
-       RETURNING id, username, role, created_at, last_login`,
+       RETURNING id, username, role, tenant_id, created_at, last_login`,
       values
     );
 
@@ -242,7 +360,17 @@ app.delete('/api/users/:id', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'You cannot delete your own account.' });
     }
 
-    const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [targetId]);
+    const isSA = req.session.role === 'superadmin';
+    let result;
+    if (isSA) {
+      result = await pool.query('DELETE FROM users WHERE id=$1 RETURNING id', [targetId]);
+    } else {
+      // Tenant admin can only delete users in their own tenant.
+      result = await pool.query(
+        'DELETE FROM users WHERE id=$1 AND tenant_id=$2 RETURNING id',
+        [targetId, req.session.tenantId]
+      );
+    }
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
     res.json({ ok: true });
   } catch (err) {
@@ -348,6 +476,26 @@ app.get('/api/metrics/orgs', (req, res) => {
   }
 });
 
+// ── Vuln helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Resolve which tenant's vuln data to act on.
+ * - superadmin: reads tenantId from body or query string (must be provided).
+ * - admin/readonly: always their own session tenantId.
+ * Returns { tenantId } or throws { status, error }.
+ */
+function resolveVulnTenant(req, source = 'query') {
+  if (req.session.role === 'superadmin') {
+    const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
 // ── Vuln routes — backed by PostgreSQL ───────────────────────────────────
 
 app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async (req, res) => {
@@ -360,6 +508,9 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
     if (!req.file) {
       return res.status(400).json({ error: 'No vuln file uploaded.' });
     }
+
+    const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'body');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
 
     const fileText = req.file.buffer.toString('utf8');
     const origName = (req.file.originalname || '').toLowerCase();
@@ -378,8 +529,8 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
     const summary = computeVulnSummary(findings);
 
     const prevScan = await client.query(
-      `SELECT id FROM vuln_scans WHERE month_key < $1 ORDER BY month_key DESC LIMIT 1`,
-      [monthKey]
+      `SELECT id FROM vuln_scans WHERE tenant_id=$1 AND month_key < $2 ORDER BY month_key DESC LIMIT 1`,
+      [tenantId, monthKey]
     );
 
     const prevMap = new Map();
@@ -408,11 +559,11 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
     });
 
     await client.query('BEGIN');
-    await client.query('DELETE FROM vuln_scans WHERE month_key = $1', [monthKey]);
+    await client.query('DELETE FROM vuln_scans WHERE tenant_id=$1 AND month_key=$2', [tenantId, monthKey]);
 
     const scanResult = await client.query(
-      `INSERT INTO vuln_scans (month_key, summary, uploaded_by) VALUES ($1, $2, $3) RETURNING id`,
-      [monthKey, JSON.stringify(summary), req.session.userId]
+      `INSERT INTO vuln_scans (tenant_id, month_key, summary, uploaded_by) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [tenantId, monthKey, JSON.stringify(summary), req.session.userId]
     );
     const scanId = scanResult.rows[0].id;
 
@@ -445,8 +596,8 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
       }
     });
 
-    console.log(`[vulns] Upload ${monthKey}: ${findings.length} findings, ${carried} carried over`);
-    return res.json({ monthKey, summary, carriedCounts });
+    console.log(`[vulns] Upload ${monthKey} (tenant ${tenantId}): ${findings.length} findings, ${carried} carried over`);
+    return res.json({ monthKey, tenantId, summary, carriedCounts });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     return res.status(500).json({ error: err.message });
@@ -457,8 +608,11 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
 
 app.get('/api/vulns', async (req, res) => {
   try {
+    const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'query');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
     const result = await pool.query(
-      'SELECT month_key AS "monthKey", summary FROM vuln_scans ORDER BY month_key DESC'
+      'SELECT month_key AS "monthKey", summary FROM vuln_scans WHERE tenant_id=$1 ORDER BY month_key DESC',
+      [tenantId]
     );
     res.json(result.rows);
   } catch (err) {
@@ -468,13 +622,16 @@ app.get('/api/vulns', async (req, res) => {
 
 app.get('/api/vulns/trends', async (req, res) => {
   try {
+    const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'query');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
     const result = await pool.query(
       `SELECT month_key AS "monthKey",
               (summary->>'critical')::int AS critical,
               (summary->>'high')::int     AS high,
               (summary->>'medium')::int   AS medium,
               (summary->>'low')::int      AS low
-       FROM vuln_scans ORDER BY month_key ASC`
+       FROM vuln_scans WHERE tenant_id=$1 ORDER BY month_key ASC`,
+      [tenantId]
     );
     res.json(result.rows.slice(-12));
   } catch (err) {
@@ -484,9 +641,11 @@ app.get('/api/vulns/trends', async (req, res) => {
 
 app.get('/api/vulns/:monthKey', async (req, res) => {
   try {
+    const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'query');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
     const scanResult = await pool.query(
-      'SELECT id, month_key AS "monthKey", summary FROM vuln_scans WHERE month_key = $1',
-      [req.params.monthKey]
+      'SELECT id, month_key AS "monthKey", summary FROM vuln_scans WHERE tenant_id=$1 AND month_key=$2',
+      [tenantId, req.params.monthKey]
     );
     if (scanResult.rows.length === 0) {
       return res.status(404).json({ error: 'Scan not found.' });
@@ -517,9 +676,11 @@ app.get('/api/vulns/:monthKey', async (req, res) => {
 
 app.delete('/api/vulns/:monthKey', requireAdmin, async (req, res) => {
   try {
+    const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'query');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
     const result = await pool.query(
-      'DELETE FROM vuln_scans WHERE month_key = $1 RETURNING id',
-      [req.params.monthKey]
+      'DELETE FROM vuln_scans WHERE tenant_id=$1 AND month_key=$2 RETURNING id',
+      [tenantId, req.params.monthKey]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Scan not found.' });
@@ -542,8 +703,12 @@ app.patch('/api/vulns/:monthKey/finding/:index', requireAdmin, async (req, res) 
     const idx = parseInt(index, 10);
     if (isNaN(idx) || idx < 0) return res.status(400).json({ error: 'Invalid finding index.' });
 
+    const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'body');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
     const scanResult = await pool.query(
-      'SELECT id FROM vuln_scans WHERE month_key = $1', [monthKey]
+      'SELECT id FROM vuln_scans WHERE tenant_id=$1 AND month_key=$2',
+      [tenantId, monthKey]
     );
     if (scanResult.rows.length === 0) {
       return res.status(404).json({ error: 'Scan not found.' });

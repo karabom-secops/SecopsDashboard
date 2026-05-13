@@ -1,6 +1,9 @@
 -- SecOps Dashboard — PostgreSQL Schema
--- Run this once to set up all tables.
+-- Run this once on a fresh database.
 -- Usage: psql -U secops_user -d secops_db -f db/schema.sql
+--
+-- For an EXISTING deployment that already has the old schema (no tenants),
+-- run db/migrate-tenants.sql instead.
 
 -- ── Sessions (managed by connect-pg-simple) ───────────────────────────────
 
@@ -12,26 +15,41 @@ CREATE TABLE IF NOT EXISTS "sessions" (
 );
 CREATE INDEX IF NOT EXISTS "IDX_sessions_expire" ON "sessions" ("expire");
 
+-- ── Tenants ───────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS tenants (
+  id         SERIAL PRIMARY KEY,
+  name       VARCHAR(100) UNIQUE NOT NULL,
+  slug       VARCHAR(30)  UNIQUE NOT NULL,
+  created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
 -- ── Users ─────────────────────────────────────────────────────────────────
+-- superadmin: tenant_id IS NULL — sees all tenants
+-- admin/readonly: tenant_id NOT NULL — scoped to their org
 
 CREATE TABLE IF NOT EXISTS users (
   id               SERIAL PRIMARY KEY,
   username         VARCHAR(30) UNIQUE NOT NULL,
   password_hash    TEXT        NOT NULL,
-  role             VARCHAR(10) NOT NULL DEFAULT 'readonly'
-                     CONSTRAINT users_role_chk CHECK (role IN ('admin', 'readonly')),
+  role             VARCHAR(15) NOT NULL DEFAULT 'readonly'
+                     CONSTRAINT users_role_chk CHECK (role IN ('superadmin', 'admin', 'readonly')),
+  tenant_id        INT         REFERENCES tenants(id) ON DELETE SET NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_login       TIMESTAMPTZ
 );
 
 -- ── Vulnerability Scans ───────────────────────────────────────────────────
+-- month_key is unique per tenant, not globally unique.
 
 CREATE TABLE IF NOT EXISTS vuln_scans (
   id           SERIAL PRIMARY KEY,
-  month_key    CHAR(7)     UNIQUE NOT NULL,   -- 'YYYY-MM'
+  tenant_id    INT         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  month_key    CHAR(7)     NOT NULL,   -- 'YYYY-MM'
   summary      JSONB       NOT NULL DEFAULT '{}',
   uploaded_by  INT         REFERENCES users(id) ON DELETE SET NULL,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (tenant_id, month_key)
 );
 
 -- ── Vulnerability Findings ────────────────────────────────────────────────

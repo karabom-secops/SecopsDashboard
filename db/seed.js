@@ -52,10 +52,10 @@ async function seed() {
 
     const hash = await bcrypt.hash(password, 12);
     const result = await client.query(
-      `INSERT INTO users (username, password_hash, role) VALUES ($1, $2, 'admin') RETURNING id`,
+      `INSERT INTO users (username, password_hash, role, tenant_id) VALUES ($1, $2, 'superadmin', NULL) RETURNING id`,
       [username, hash]
     );
-    console.log(`Admin user "${username}" created successfully (id=${result.rows[0].id}).`);
+    console.log(`Superadmin user "${username}" created successfully (id=${result.rows[0].id}).`);
   } finally {
     client.release();
     await pool.end();

@@ -37,6 +37,7 @@
     }
 
     // Expose globally so other scripts can read role etc.
+    // Expose globally so other scripts can read role etc.
     window.currentUser = user;
 
     // ── Populate header user info ────────────────────────────────────────
@@ -45,22 +46,26 @@
 
     const roleEl = document.getElementById('headerRole');
     if (roleEl) {
-      roleEl.textContent = user.role === 'admin' ? 'Admin' : 'Read-only';
-      roleEl.className   = 'header-role-badge ' + (user.role === 'admin' ? 'role-admin' : 'role-readonly');
-    }
-
-    // ── Show Admin tab only for admins ───────────────────────────────────
-    const adminTabBtn = document.getElementById('tab-admin-btn');
-    if (adminTabBtn) {
-      if (user.role === 'admin') {
-        adminTabBtn.hidden = false;
+      if (user.role === 'superadmin') {
+        roleEl.textContent = 'Super Admin';
+        roleEl.className   = 'header-role-badge role-superadmin';
+      } else if (user.role === 'admin') {
+        roleEl.textContent = 'Admin';
+        roleEl.className   = 'header-role-badge role-admin';
       } else {
-        adminTabBtn.hidden = true;
+        roleEl.textContent = 'Read-only';
+        roleEl.className   = 'header-role-badge role-readonly';
       }
     }
 
+    // ── Show Admin tab for admin or superadmin ───────────────────────────
+    const adminTabBtn = document.getElementById('tab-admin-btn');
+    if (adminTabBtn) {
+      adminTabBtn.hidden = (user.role === 'readonly');
+    }
+
     // ── Hide admin-only action elements for readonly users ───────────────
-    if (user.role !== 'admin') {
+    if (user.role === 'readonly') {
       document.querySelectorAll('[data-admin-only]').forEach(el => {
         el.hidden = true;
       });

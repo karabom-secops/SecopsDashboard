@@ -65,6 +65,13 @@
       <h2 class="card-title">Upload Nessus Scan</h2>
       <p class="card-subtitle">Upload a monthly Nessus CSV or .nessus XML export.</p>
       <form id="vulnUploadForm" novalidate>
+        <!-- Tenant selector — shown to superadmin only (upload.js controls this) -->
+        <div id="vulnTenantSelectWrap" class="form-group" hidden>
+          <label for="vulnTenantId">Organisation</label>
+          <select id="vulnTenantId" class="scan-select">
+            <option value="">— Select tenant —</option>
+          </select>
+        </div>
         <div class="form-group">
           <label for="vulnMonthKey">Scan Month</label>
           <input type="month" id="vulnMonthKey" required />
