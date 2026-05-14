@@ -190,10 +190,9 @@
     var ctx   = canvas.getContext('2d');
     ctx.scale(DPR, DPR);
 
-    var isDark = document.documentElement.dataset.theme === 'dark';
-    var textColor  = isDark ? '#c9d1d9' : '#374151';
-    var gridColor  = isDark ? '#30363d' : '#e5e7eb';
-    var barColor   = isDark ? '#3b82f6' : '#2563eb';
+    var textColor  = '#374151';
+    var gridColor  = '#e5e7eb';
+    var barColor   = '#2563eb';
 
     var padL = 50, padR = 20, padT = 20, padB = 40;
     var chartW = W - padL - padR;

@@ -43,51 +43,6 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
 
-/* ── Dark mode overrides ───────────────────────────────────────────────────── */
-[data-theme="dark"] {
-  --bg:        #0d1117;
-  --bg-soft:   #161b22;
-  --surface:   #1c2128;
-  --surface2:  #22272e;
-  --surface3:  #2d333b;
-  --card-bg:   #1c2128;
-  --border:    #30363d;
-  --text:      #e6edf3;
-  --muted:     #8b949e;
-  --red-dim:   #2a1215;
-  --amber-dim: #2a1f05;
-  --green-dim: #0d2017;
-  --blue-dim:  #0d2137;
-}
-[data-theme="dark"] body {
-  background: var(--bg);
-  background-image: none;
-  color: var(--text);
-}
-[data-theme="dark"] .site-header {
-  background: #161b22;
-  border-color: #30363d;
-}
-[data-theme="dark"] .data-table th {
-  background: linear-gradient(180deg, #22272e 0%, #1c2128 100%);
-  color: #8b949e;
-}
-[data-theme="dark"] .data-table tbody tr:hover { background: var(--surface3); }
-[data-theme="dark"] .stat-card,
-[data-theme="dark"] .card,
-[data-theme="dark"] .vuln-card,
-[data-theme="dark"] .modal-box { background: var(--card-bg); border-color: var(--border); }
-[data-theme="dark"] input,
-[data-theme="dark"] select,
-[data-theme="dark"] textarea {
-  background: var(--surface2);
-  color: var(--text);
-  border-color: var(--border);
-}
-[data-theme="dark"] .chip { background: var(--surface2); color: var(--text); border-color: var(--border); }
-[data-theme="dark"] .chip.active { background: var(--blue); color: #fff; }
-[data-theme="dark"] .vuln-bulk-bar { background: var(--surface2); border-color: var(--border); }
-
 /* ── Reset / base ──────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }
@@ -1335,11 +1290,6 @@ body.login-page {
   z-index: 200;
 }
 
-[data-theme="dark"] .mfa-banner {
-  background: #4a3900;
-  color: #ffd54f;
-}
-
 .mfa-banner-link {
   color: inherit;
   font-weight: 700;
@@ -1413,10 +1363,6 @@ body.login-page {
 .stat-card.accent-purple {
   border-top-color: #7c3aed;
 }
-[data-theme="dark"] .stat-card.accent-purple {
-  border-top-color: #a78bfa;
-}
-
 /* ═══════════════════════════════════════════════════════════════════════════
    HEADER USER INFO (logout button, username, role badge)
    ═══════════════════════════════════════════════════════════════════════════ */

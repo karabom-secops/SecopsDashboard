@@ -143,30 +143,6 @@
     }
   };
 
-  // ── Dark mode toggle ───────────────────────────────────────────────────────
-  (function initDarkMode() {
-    const root      = document.documentElement;
-    const toggleBtn = document.getElementById('darkModeToggle');
-    const saved     = localStorage.getItem('theme');
-    if (saved === 'dark') root.dataset.theme = 'dark';
-
-    function _syncBtn() {
-      if (!toggleBtn) return;
-      toggleBtn.textContent = root.dataset.theme === 'dark' ? '☀' : '🌙';
-      toggleBtn.title       = root.dataset.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
-    }
-    _syncBtn();
-
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', () => {
-        const isDark = root.dataset.theme === 'dark';
-        root.dataset.theme = isDark ? '' : 'dark';
-        localStorage.setItem('theme', isDark ? '' : 'dark');
-        _syncBtn();
-      });
-    }
-  })();
-
   // ── Init ───────────────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', async () => {
     const weeks = await populateWeeks();
