@@ -10,6 +10,9 @@ const session = require('express-session');
 const PgStore = require('connect-pg-simple')(session);
 const bcrypt  = require('bcryptjs');
 
+const { authenticator } = require('otplib');
+const QRCode           = require('qrcode');
+
 const pool = require('./lib/db');
 const { requireAuth, requireAdmin, requireSuperAdmin } = require('./lib/auth-middleware');
 const { parseReport } = require('./lib/parser');
@@ -81,7 +84,7 @@ const vulnUpload = multer({
 
 // ── Auth routes (public — no requireAuth) ─────────────────────────────────
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
   try {
     const username = (req.body.username || '').trim();
     const password = (req.body.password || '').trim();
@@ -91,7 +94,9 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, username, password_hash, role, tenant_id FROM users WHERE username = $1',
+      `SELECT id, username, password_hash, role, tenant_id,
+              totp_enabled, totp_required
+       FROM users WHERE username = $1`,
       [username]
     );
 
@@ -117,15 +122,148 @@ app.post('/api/auth/login', async (req, res) => {
       tenantIds = tRes.rows.map(r => r.tenant_id);
     }
 
+    // ── Superadmin MFA branching ─────────────────────────────────────────
+    if (user.role === 'superadmin') {
+      const pending = {
+        userId: user.id, username: user.username, role: user.role,
+        tenantId: user.tenant_id, tenantIds,
+      };
+
+      if (user.totp_enabled) {
+        // Branch A: TOTP enrolled — require second factor before granting session
+        req.session.mfaPending = pending;
+        return res.json({ mfaRequired: true });
+      }
+
+      if (user.totp_required) {
+        // Branch B: TOTP required but not yet set up — force enrollment
+        req.session.enrollPending = pending;
+        return res.json({ enrollRequired: true });
+      }
+
+      // Branch C: grace-period superadmin — full session, prompt banner
+      req.session.userId       = user.id;
+      req.session.username     = user.username;
+      req.session.role         = user.role;
+      req.session.tenantId     = user.tenant_id;
+      req.session.tenantIds    = tenantIds;
+      req.session.totpEnabled  = false;
+      return res.json({
+        id: user.id, username: user.username, role: user.role,
+        tenantId: user.tenant_id, tenantIds, showMfaPrompt: true,
+      });
+    }
+
+    // ── Non-superadmin: always full session, no MFA ───────────────────────
     req.session.userId    = user.id;
     req.session.username  = user.username;
     req.session.role      = user.role;
-    req.session.tenantId  = user.tenant_id;  // primary active tenant
-    req.session.tenantIds = tenantIds;        // all allowed tenants
+    req.session.tenantId  = user.tenant_id;
+    req.session.tenantIds = tenantIds;
+    req.session.totpEnabled = false;
 
     return res.json({ id: user.id, username: user.username, role: user.role, tenantId: user.tenant_id, tenantIds });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return serverError(res, err);
+  }
+});
+
+// ── MFA: verify TOTP code after password step ─────────────────────────────
+app.post('/api/auth/mfa-verify', async (req, res) => {
+  try {
+    const pending = req.session.mfaPending;
+    if (!pending) return res.status(401).json({ error: 'No MFA session pending.' });
+
+    const token = String(req.body.token || '').trim();
+    if (!/^\d{6}$/.test(token)) {
+      return res.status(400).json({ error: 'Token must be 6 digits.' });
+    }
+
+    const { rows } = await pool.query(
+      'SELECT totp_secret FROM users WHERE id = $1',
+      [pending.userId]
+    );
+    if (!rows.length || !rows[0].totp_secret) {
+      return res.status(401).json({ error: 'MFA not configured.' });
+    }
+
+    const valid = authenticator.verify({ token, secret: rows[0].totp_secret });
+    if (!valid) return res.status(401).json({ error: 'Invalid or expired code. Try again.' });
+
+    // Promote to full session
+    req.session.mfaPending   = undefined;
+    req.session.userId       = pending.userId;
+    req.session.username     = pending.username;
+    req.session.role         = pending.role;
+    req.session.tenantId     = pending.tenantId;
+    req.session.tenantIds    = pending.tenantIds;
+    req.session.totpEnabled  = true;
+
+    return res.json({
+      id: pending.userId, username: pending.username,
+      role: pending.role, tenantId: pending.tenantId, tenantIds: pending.tenantIds,
+    });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// ── MFA: forced enrollment setup (generates QR; needs enrollPending) ──────
+app.get('/api/auth/enroll-totp/setup', async (req, res) => {
+  try {
+    const pending = req.session.enrollPending;
+    if (!pending) return res.status(401).json({ error: 'No enrollment session pending.' });
+
+    const secret  = authenticator.generateSecret();
+    req.session.pendingTotpSecret = secret;
+
+    const otpauthUri = authenticator.keyuri(pending.username, 'SecOps Dashboard', secret);
+    const qrCodeUrl  = await QRCode.toDataURL(otpauthUri);
+
+    return res.json({ qrCodeUrl, secret });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// ── MFA: forced enrollment confirm ────────────────────────────────────────
+app.post('/api/auth/enroll-totp/confirm', async (req, res) => {
+  try {
+    const pending = req.session.enrollPending;
+    if (!pending) return res.status(401).json({ error: 'No enrollment session pending.' });
+
+    const secret = req.session.pendingTotpSecret;
+    if (!secret) return res.status(400).json({ error: 'Setup not started. Request QR code first.' });
+
+    const token = String(req.body.token || '').trim();
+    if (!/^\d{6}$/.test(token)) {
+      return res.status(400).json({ error: 'Token must be 6 digits.' });
+    }
+
+    const valid = authenticator.verify({ token, secret });
+    if (!valid) return res.status(401).json({ error: 'Invalid or expired code. Try again.' });
+
+    await pool.query(
+      'UPDATE users SET totp_secret=$1, totp_enabled=true WHERE id=$2',
+      [secret, pending.userId]
+    );
+
+    // Promote to full session
+    req.session.enrollPending    = undefined;
+    req.session.pendingTotpSecret = undefined;
+    req.session.userId           = pending.userId;
+    req.session.username         = pending.username;
+    req.session.role             = pending.role;
+    req.session.tenantId         = pending.tenantId;
+    req.session.tenantIds        = pending.tenantIds;
+    req.session.totpEnabled      = true;
+
+    return res.json({
+      id: pending.userId, username: pending.username,
+      role: pending.role, tenantId: pending.tenantId, tenantIds: pending.tenantIds,
+    });
+  } catch (err) {
+    return serverError(res, err);
   }
 });
 
@@ -142,17 +280,99 @@ app.get('/api/auth/me', (req, res) => {
     return res.status(401).json({ error: 'Not authenticated.' });
   }
   res.json({
-    id:        req.session.userId,
-    username:  req.session.username,
-    role:      req.session.role,
-    tenantId:  req.session.tenantId  || null,
-    tenantIds: req.session.tenantIds || [],
+    id:          req.session.userId,
+    username:    req.session.username,
+    role:        req.session.role,
+    tenantId:    req.session.tenantId   || null,
+    tenantIds:   req.session.tenantIds  || [],
+    totpEnabled: req.session.totpEnabled || false,
   });
 });
 
 // ── All remaining /api/* routes require a valid session ───────────────────
 
 app.use('/api', requireAuth);
+
+// ── TOTP management routes (requireAuth + superadmin only) ───────────────
+
+// Generate a new TOTP secret for a logged-in grace-period superadmin
+app.get('/api/auth/totp-setup', async (req, res) => {
+  if (req.session.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Superadmin only.' });
+  }
+  try {
+    const secret     = authenticator.generateSecret();
+    req.session.pendingTotpSecret = secret;
+
+    const otpauthUri = authenticator.keyuri(req.session.username, 'SecOps Dashboard', secret);
+    const qrCodeUrl  = await QRCode.toDataURL(otpauthUri);
+
+    return res.json({ qrCodeUrl, secret });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// Confirm a TOTP code against pendingTotpSecret and activate MFA
+app.post('/api/auth/totp-confirm', async (req, res) => {
+  if (req.session.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Superadmin only.' });
+  }
+  try {
+    const secret = req.session.pendingTotpSecret;
+    if (!secret) return res.status(400).json({ error: 'Setup not started. Request QR code first.' });
+
+    const token = String(req.body.token || '').trim();
+    if (!/^\d{6}$/.test(token)) {
+      return res.status(400).json({ error: 'Token must be 6 digits.' });
+    }
+
+    const valid = authenticator.verify({ token, secret });
+    if (!valid) return res.status(401).json({ error: 'Invalid or expired code. Try again.' });
+
+    await pool.query(
+      'UPDATE users SET totp_secret=$1, totp_enabled=true, totp_required=true WHERE id=$2',
+      [secret, req.session.userId]
+    );
+
+    req.session.pendingTotpSecret = undefined;
+    req.session.totpEnabled       = true;
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// Disable TOTP — requires password confirmation; totp_required stays true
+app.post('/api/auth/totp-disable', async (req, res) => {
+  if (req.session.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Superadmin only.' });
+  }
+  try {
+    const password = String(req.body.password || '');
+    if (!password) return res.status(400).json({ error: 'Password is required.' });
+
+    const { rows } = await pool.query(
+      'SELECT password_hash FROM users WHERE id = $1',
+      [req.session.userId]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'User not found.' });
+
+    const match = await bcrypt.compare(password, rows[0].password_hash);
+    if (!match) return res.status(401).json({ error: 'Incorrect password.' });
+
+    await pool.query(
+      'UPDATE users SET totp_secret=NULL, totp_enabled=false WHERE id=$1',
+      [req.session.userId]
+    );
+
+    req.session.totpEnabled = false;
+    return res.json({ ok: true });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
 
 // ── Multi-tenant helpers ──────────────────────────────────────────────────
 
@@ -346,10 +566,13 @@ app.post('/api/users', requireAdmin, async (req, res) => {
     if (role === 'superadmin') { tenantId = null; tenantIds = []; }
 
     const hash = await bcrypt.hash(password, 12);
+    // New superadmin accounts require TOTP enrollment on first login
+    const requireTotp = (role === 'superadmin');
     const result = await pool.query(
-      `INSERT INTO users (username, password_hash, role, tenant_id) VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (username, password_hash, role, tenant_id, totp_required)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id, username, role, tenant_id, created_at`,
-      [username, hash, role, tenantId || null]
+      [username, hash, role, tenantId || null, requireTotp]
     );
     const newUser = result.rows[0];
 

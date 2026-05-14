@@ -42,6 +42,27 @@
     // Notify other tab scripts that auth is resolved
     document.dispatchEvent(new CustomEvent('authReady', { detail: user }));
 
+    // ── MFA banner for grace-period superadmins ──────────────────────────
+    if (user.role === 'superadmin' && !user.totpEnabled) {
+      var banner = document.getElementById('mfaBanner');
+      if (banner) {
+        banner.hidden = false;
+        var bannerLink = document.getElementById('mfaBannerLink');
+        if (bannerLink) {
+          bannerLink.addEventListener('click', function (e) {
+            e.preventDefault();
+            // Switch to the Admin tab and scroll to MFA section
+            var adminBtn = document.getElementById('tab-admin-btn');
+            if (adminBtn) adminBtn.click();
+            setTimeout(function () {
+              var mfaSection = document.getElementById('mfaSection');
+              if (mfaSection) mfaSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
+          });
+        }
+      }
+    }
+
     // ── Tenant switcher (shown when user is assigned to 2+ tenants) ──────
     const tenantSwitcher = document.getElementById('tenantSwitcher');
     if (tenantSwitcher && Array.isArray(user.tenantIds) && user.tenantIds.length > 1) {

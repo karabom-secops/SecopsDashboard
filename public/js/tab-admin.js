@@ -505,6 +505,171 @@
     }
 
     await renderUsers();
+    initMfa();
+  }
+
+  // ── MFA Management (superadmin only) ──────────────────────────────────────
+
+  function initMfa() {
+    if (!isSuperAdmin()) return;
+
+    var section      = document.getElementById('mfaSection');
+    var statusText   = document.getElementById('mfaStatusText');
+    var enableBtn    = document.getElementById('mfaEnableBtn');
+    var disableBtn   = document.getElementById('mfaDisableBtn');
+    var actionBtns   = document.getElementById('mfaActionBtns');
+    var setupPanel   = document.getElementById('mfaSetupPanel');
+    var qrImg        = document.getElementById('mfaQrImg');
+    var secretText   = document.getElementById('mfaSecretText');
+    var confirmCode  = document.getElementById('mfaConfirmCode');
+    var confirmBtn   = document.getElementById('mfaConfirmBtn');
+    var setupCancel  = document.getElementById('mfaSetupCancelBtn');
+    var setupErr     = document.getElementById('mfaSetupError');
+    var disablePanel = document.getElementById('mfaDisablePanel');
+    var disablePwd   = document.getElementById('mfaDisablePassword');
+    var disableConfirm = document.getElementById('mfaDisableConfirmBtn');
+    var disableCancel  = document.getElementById('mfaDisableCancelBtn');
+    var disableErr     = document.getElementById('mfaDisableError');
+
+    if (!section) return;
+    section.hidden = false;
+
+    var totpEnabled = window.currentUser && window.currentUser.totpEnabled;
+    updateMfaUi(totpEnabled);
+
+    function updateMfaUi(enabled) {
+      if (statusText) {
+        statusText.textContent = enabled
+          ? '\u2705 MFA is enabled. Your account requires a one-time code at every login.'
+          : '\u26A0\uFE0F MFA is not configured. Enable it to protect your superadmin account.';
+      }
+      if (enableBtn)  enableBtn.hidden  = enabled;
+      if (disableBtn) disableBtn.hidden = !enabled;
+      if (setupPanel)   setupPanel.hidden   = true;
+      if (disablePanel) disablePanel.hidden = true;
+      if (actionBtns)   actionBtns.hidden   = false;
+    }
+
+    // \u2500\u2500 Enable flow \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    if (enableBtn) {
+      enableBtn.addEventListener('click', async function () {
+        if (actionBtns)   actionBtns.hidden   = true;
+        if (setupPanel)   setupPanel.hidden   = false;
+        if (confirmCode)  confirmCode.value   = '';
+        if (setupErr)     setupErr.hidden     = true;
+        if (qrImg)        qrImg.src           = '';
+        if (secretText)   secretText.textContent = 'Loading\u2026';
+
+        try {
+          var r = await fetch(apiUrl('auth/totp-setup'), { credentials: 'same-origin' });
+          var d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Failed to load setup.');
+          if (qrImg)      qrImg.src              = d.qrCodeUrl;
+          if (secretText) secretText.textContent = d.secret;
+          if (confirmCode) setTimeout(function () { confirmCode.focus(); }, 50);
+        } catch (err) {
+          if (setupErr) { setupErr.textContent = err.message; setupErr.hidden = false; }
+          if (actionBtns) actionBtns.hidden = false;
+          if (setupPanel) setupPanel.hidden = true;
+        }
+      });
+    }
+
+    if (setupCancel) {
+      setupCancel.addEventListener('click', function () {
+        if (setupPanel)   setupPanel.hidden   = true;
+        if (actionBtns)   actionBtns.hidden   = false;
+      });
+    }
+
+    if (confirmBtn) {
+      confirmBtn.addEventListener('click', async function () {
+        if (setupErr) setupErr.hidden = true;
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Confirming\u2026';
+
+        try {
+          var r = await fetch(apiUrl('auth/totp-confirm'), {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: confirmCode ? confirmCode.value.trim() : '' }),
+          });
+          var d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Confirmation failed.');
+
+          // Success: update UI and currentUser state
+          if (window.currentUser) window.currentUser.totpEnabled = true;
+          var banner = document.getElementById('mfaBanner');
+          if (banner) banner.hidden = true;
+          showAdminSuccess('MFA enabled successfully. Your account is now protected.');
+          updateMfaUi(true);
+        } catch (err) {
+          if (setupErr) { setupErr.textContent = err.message; setupErr.hidden = false; }
+        } finally {
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Confirm & Enable';
+        }
+      });
+    }
+
+    if (confirmCode) {
+      confirmCode.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && confirmBtn) confirmBtn.click();
+      });
+    }
+
+    // \u2500\u2500 Disable flow \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    if (disableBtn) {
+      disableBtn.addEventListener('click', function () {
+        if (actionBtns)   actionBtns.hidden   = true;
+        if (disablePanel) disablePanel.hidden = false;
+        if (disablePwd)   disablePwd.value    = '';
+        if (disableErr)   disableErr.hidden   = true;
+        if (disablePwd)   setTimeout(function () { disablePwd.focus(); }, 50);
+      });
+    }
+
+    if (disableCancel) {
+      disableCancel.addEventListener('click', function () {
+        if (disablePanel) disablePanel.hidden = true;
+        if (actionBtns)   actionBtns.hidden   = false;
+      });
+    }
+
+    if (disableConfirm) {
+      disableConfirm.addEventListener('click', async function () {
+        if (disableErr) disableErr.hidden = true;
+        disableConfirm.disabled = true;
+        disableConfirm.textContent = 'Disabling\u2026';
+
+        try {
+          var r = await fetch(apiUrl('auth/totp-disable'), {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: disablePwd ? disablePwd.value : '' }),
+          });
+          var d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Failed to disable MFA.');
+
+          if (window.currentUser) window.currentUser.totpEnabled = false;
+          var banner = document.getElementById('mfaBanner');
+          if (banner) banner.hidden = false;
+          showAdminSuccess('MFA disabled. You will be required to enrol again on next login.');
+          updateMfaUi(false);
+        } catch (err) {
+          if (disableErr) { disableErr.textContent = err.message; disableErr.hidden = false; }
+        } finally {
+          disableConfirm.disabled = false;
+          disableConfirm.textContent = 'Confirm Disable';
+        }
+      });
+    }
+
+    if (disablePwd) {
+      disablePwd.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && disableConfirm) disableConfirm.click();
+      });
+    }
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────

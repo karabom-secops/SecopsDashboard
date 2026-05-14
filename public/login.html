@@ -48,54 +48,42 @@
         Sign In
       </button>
     </form>
+
+    <!-- Step 2a: TOTP verify (shown when mfaRequired) -->
+    <div id="mfa-step" hidden>
+      <h2 class="login-mfa-title">Two-Factor Authentication</h2>
+      <p class="login-mfa-hint">Enter the 6-digit code from your authenticator app.</p>
+      <div class="form-group">
+        <label class="login-label" for="mfa-code">Authenticator Code</label>
+        <input id="mfa-code" type="text" inputmode="numeric" maxlength="6"
+               pattern="[0-9]{6}" class="login-input" autocomplete="one-time-code"
+               placeholder="000000" />
+      </div>
+      <p id="mfa-error" class="login-error" hidden></p>
+      <button id="mfa-btn" type="button" class="btn btn-primary login-btn">Verify</button>
+      <button id="mfa-back" type="button" class="btn btn-secondary login-btn-back">← Back to login</button>
+    </div>
+
+    <!-- Step 2b: Forced TOTP enrollment (shown when enrollRequired) -->
+    <div id="enroll-step" hidden>
+      <h2 class="login-mfa-title">Set Up Two-Factor Authentication</h2>
+      <p class="login-mfa-hint">Scan the QR code with Google Authenticator, Authy, or any TOTP app.</p>
+      <img id="enroll-qr-img" src="" alt="TOTP QR Code" class="enroll-qr" />
+      <p class="login-mfa-hint">Or enter this key manually:</p>
+      <code id="enroll-secret-text" class="enroll-secret"></code>
+      <div class="form-group" style="margin-top:1rem">
+        <label class="login-label" for="enroll-code">Confirm 6-digit code</label>
+        <input id="enroll-code" type="text" inputmode="numeric" maxlength="6"
+               pattern="[0-9]{6}" class="login-input" autocomplete="one-time-code"
+               placeholder="000000" />
+      </div>
+      <p id="enroll-error" class="login-error" hidden></p>
+      <button id="enroll-btn" type="button" class="btn btn-primary login-btn">Confirm &amp; Enable</button>
+      <button id="enroll-back" type="button" class="btn btn-secondary login-btn-back">← Back to login</button>
+    </div>
+
   </div>
 
-  <script>
-    (function () {
-      'use strict';
-
-      // If already authenticated, redirect straight to dashboard.
-      fetch('api/auth/me', { credentials: 'same-origin' })
-        .then(r => { if (r.ok) location.replace(''); })
-        .catch(() => {});
-
-      const form    = document.getElementById('login-form');
-      const errEl   = document.getElementById('login-error');
-      const btn     = document.getElementById('login-btn');
-
-      form.addEventListener('submit', async function (e) {
-        e.preventDefault();
-        errEl.hidden = true;
-        btn.disabled = true;
-        btn.textContent = 'Signing in…';
-
-        const username = document.getElementById('login-username').value.trim();
-        const password = document.getElementById('login-password').value;
-
-        try {
-          const res = await fetch('api/auth/login', {
-            method:      'POST',
-            credentials: 'same-origin',
-            headers:     { 'Content-Type': 'application/json' },
-            body:        JSON.stringify({ username, password }),
-          });
-
-          if (res.ok) {
-            location.replace('');
-          } else {
-            const data = await res.json().catch(() => ({}));
-            errEl.textContent = data.error || 'Login failed. Please try again.';
-            errEl.hidden = false;
-          }
-        } catch (_) {
-          errEl.textContent = 'Network error. Please check your connection.';
-          errEl.hidden = false;
-        } finally {
-          btn.disabled = false;
-          btn.textContent = 'Sign In';
-        }
-      });
-    })();
-  </script>
+  <script src="js/login.js"></script>
 </body>
 </html>

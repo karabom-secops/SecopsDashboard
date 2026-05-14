@@ -1267,6 +1267,93 @@ body.login-page {
   font-size: 1rem;
 }
 
+/* ── MFA login steps ─────────────────────────────────────────────────────── */
+.login-mfa-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  color: var(--text);
+}
+
+.login-mfa-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+  line-height: 1.4;
+}
+
+.login-btn-back {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  font-size: 0.9rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.login-btn-back:hover {
+  background: var(--surface2);
+}
+
+.enroll-qr {
+  display: block;
+  margin: 0.75rem auto;
+  max-width: 180px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.enroll-secret {
+  display: block;
+  font-family: monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  color: var(--text);
+  margin-bottom: 0.5rem;
+}
+
+/* ── MFA banner (grace-period superadmin reminder) ──────────────────────── */
+.mfa-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1.25rem;
+  background: #7c5c00;
+  color: #ffe082;
+  font-size: 0.85rem;
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  z-index: 200;
+}
+
+[data-theme="dark"] .mfa-banner {
+  background: #4a3900;
+  color: #ffd54f;
+}
+
+.mfa-banner-link {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* ── MFA admin card status text ──────────────────────────────────────────── */
+.mfa-status-text {
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+  color: var(--text);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    HEADER USER INFO (logout button, username, role badge)
    ═══════════════════════════════════════════════════════════════════════════ */

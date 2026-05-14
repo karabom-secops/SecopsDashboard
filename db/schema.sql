@@ -36,7 +36,10 @@ CREATE TABLE IF NOT EXISTS users (
                      CONSTRAINT users_role_chk CHECK (role IN ('superadmin', 'admin', 'readonly')),
   tenant_id        INT         REFERENCES tenants(id) ON DELETE SET NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_login       TIMESTAMPTZ
+  last_login       TIMESTAMPTZ,
+  totp_secret      TEXT,
+  totp_enabled     BOOLEAN     NOT NULL DEFAULT FALSE,
+  totp_required    BOOLEAN     NOT NULL DEFAULT FALSE
 );
 
 -- ── Vulnerability Scans ───────────────────────────────────────────────────
