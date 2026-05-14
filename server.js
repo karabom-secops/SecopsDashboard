@@ -107,12 +107,23 @@ app.post('/api/auth/login', async (req, res) => {
 
     await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
-    req.session.userId   = user.id;
-    req.session.username = user.username;
-    req.session.role     = user.role;
-    req.session.tenantId = user.tenant_id;  // null for superadmin
+    // Load all tenant IDs for this user (for multi-tenant access)
+    let tenantIds = [];
+    if (user.role !== 'superadmin') {
+      const tRes = await pool.query(
+        'SELECT tenant_id FROM user_tenants WHERE user_id = $1 ORDER BY tenant_id',
+        [user.id]
+      );
+      tenantIds = tRes.rows.map(r => r.tenant_id);
+    }
 
-    return res.json({ id: user.id, username: user.username, role: user.role, tenantId: user.tenant_id });
+    req.session.userId    = user.id;
+    req.session.username  = user.username;
+    req.session.role      = user.role;
+    req.session.tenantId  = user.tenant_id;  // primary active tenant
+    req.session.tenantIds = tenantIds;        // all allowed tenants
+
+    return res.json({ id: user.id, username: user.username, role: user.role, tenantId: user.tenant_id, tenantIds });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -131,16 +142,47 @@ app.get('/api/auth/me', (req, res) => {
     return res.status(401).json({ error: 'Not authenticated.' });
   }
   res.json({
-    id:       req.session.userId,
-    username: req.session.username,
-    role:     req.session.role,
-    tenantId: req.session.tenantId || null,
+    id:        req.session.userId,
+    username:  req.session.username,
+    role:      req.session.role,
+    tenantId:  req.session.tenantId  || null,
+    tenantIds: req.session.tenantIds || [],
   });
 });
 
 // ── All remaining /api/* routes require a valid session ───────────────────
 
 app.use('/api', requireAuth);
+
+// ── Multi-tenant helpers ──────────────────────────────────────────────────
+
+// Returns all tenants the current user is assigned to (for tenant switcher UI)
+app.get('/api/auth/my-tenants', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT t.id, t.name
+       FROM user_tenants ut
+       JOIN tenants t ON t.id = ut.tenant_id
+       WHERE ut.user_id = $1
+       ORDER BY t.name ASC`,
+      [req.session.userId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// Switch the active tenant context within the current session
+app.post('/api/auth/switch-tenant', (req, res) => {
+  const newId   = parseInt(req.body.tenantId, 10);
+  const allowed = req.session.tenantIds || [];
+  if (isNaN(newId) || !allowed.includes(newId)) {
+    return res.status(403).json({ error: 'Not authorised for this tenant.' });
+  }
+  req.session.tenantId = newId;
+  res.json({ ok: true, tenantId: newId });
+});
 
 // ── Tenant routes (superadmin only) ──────────────────────────────────────
 
@@ -209,7 +251,7 @@ app.delete('/api/tenants/:id', requireSuperAdmin, async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Tenant not found.' });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return serverError(res, err);
   }
 });
 
@@ -226,23 +268,37 @@ app.get('/api/users', requireAdmin, async (req, res) => {
     if (isSA) {
       result = await pool.query(
         `SELECT u.id, u.username, u.role, u.tenant_id, t.name AS tenant_name,
-                u.created_at, u.last_login
-         FROM users u LEFT JOIN tenants t ON t.id = u.tenant_id
+                u.created_at, u.last_login,
+                COALESCE(
+                  ARRAY_AGG(DISTINCT ut.tenant_id) FILTER (WHERE ut.tenant_id IS NOT NULL),
+                  ARRAY[]::int[]
+                ) AS "tenantIds"
+         FROM users u
+         LEFT JOIN tenants t  ON t.id  = u.tenant_id
+         LEFT JOIN user_tenants ut ON ut.user_id = u.id
+         GROUP BY u.id, u.username, u.role, u.tenant_id, t.name, u.created_at, u.last_login
          ORDER BY u.created_at ASC`
       );
     } else {
       result = await pool.query(
         `SELECT u.id, u.username, u.role, u.tenant_id, t.name AS tenant_name,
-                u.created_at, u.last_login
-         FROM users u LEFT JOIN tenants t ON t.id = u.tenant_id
+                u.created_at, u.last_login,
+                COALESCE(
+                  ARRAY_AGG(DISTINCT ut.tenant_id) FILTER (WHERE ut.tenant_id IS NOT NULL),
+                  ARRAY[]::int[]
+                ) AS "tenantIds"
+         FROM users u
+         LEFT JOIN tenants t  ON t.id  = u.tenant_id
+         LEFT JOIN user_tenants ut ON ut.user_id = u.id
          WHERE u.tenant_id = $1
+         GROUP BY u.id, u.username, u.role, u.tenant_id, t.name, u.created_at, u.last_login
          ORDER BY u.created_at ASC`,
         [req.session.tenantId]
       );
     }
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return serverError(res, err);
   }
 });
 
@@ -252,10 +308,22 @@ app.post('/api/users', requireAdmin, async (req, res) => {
     const password = (req.body.password || '').trim();
     const isSA     = req.session.role === 'superadmin';
 
-    let role     = (req.body.role || 'readonly').trim();
-    let tenantId = isSA
-      ? (req.body.tenantId ? parseInt(req.body.tenantId, 10) : null)
-      : req.session.tenantId;
+    let role = (req.body.role || 'readonly').trim();
+
+    // Resolve primary tenant and full list of assigned tenant IDs
+    let tenantId, tenantIds;
+    if (isSA) {
+      if (Array.isArray(req.body.tenantIds) && req.body.tenantIds.length > 0) {
+        tenantIds = req.body.tenantIds.map(id => parseInt(id, 10)).filter(id => !isNaN(id) && id > 0);
+        tenantId  = tenantIds[0];
+      } else {
+        tenantId  = req.body.tenantId ? parseInt(req.body.tenantId, 10) : null;
+        tenantIds = tenantId ? [tenantId] : [];
+      }
+    } else {
+      tenantId  = req.session.tenantId;
+      tenantIds = tenantId ? [tenantId] : [];
+    }
 
     if (!USERNAME_RE.test(username)) {
       return res.status(400).json({ error: 'Username must be 3–30 alphanumeric characters (underscores allowed).' });
@@ -270,12 +338,12 @@ app.post('/api/users', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}.` });
     }
 
-    // Non-superadmin roles must belong to a tenant.
-    if (role !== 'superadmin' && !tenantId) {
-      return res.status(400).json({ error: 'A tenant must be specified for non-superadmin users.' });
+    // Non-superadmin roles must belong to at least one tenant.
+    if (role !== 'superadmin' && tenantIds.length === 0) {
+      return res.status(400).json({ error: 'At least one tenant must be specified for non-superadmin users.' });
     }
     // Superadmin has no tenant.
-    if (role === 'superadmin') tenantId = null;
+    if (role === 'superadmin') { tenantId = null; tenantIds = []; }
 
     const hash = await bcrypt.hash(password, 12);
     const result = await pool.query(
@@ -283,12 +351,22 @@ app.post('/api/users', requireAdmin, async (req, res) => {
        RETURNING id, username, role, tenant_id, created_at`,
       [username, hash, role, tenantId || null]
     );
-    res.status(201).json(result.rows[0]);
+    const newUser = result.rows[0];
+
+    // Assign all tenants in junction table
+    for (const tid of tenantIds) {
+      await pool.query(
+        'INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [newUser.id, tid]
+      );
+    }
+
+    res.status(201).json(newUser);
   } catch (err) {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'Username already exists.' });
     }
-    res.status(500).json({ error: err.message });
+    return serverError(res, err);
   }
 });
 
@@ -308,7 +386,7 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
       }
     }
 
-    const { role, password } = req.body;
+    const { role, password, tenantIds } = req.body;
     const updates = [];
     const values  = [];
 
@@ -333,8 +411,20 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
       values.push(hash);
     }
 
+    // Superadmin can update tenant assignments
+    let tenantIdsUpdate = null;
+    if (isSA && tenantIds !== undefined) {
+      if (!Array.isArray(tenantIds)) {
+        return res.status(400).json({ error: 'tenantIds must be an array.' });
+      }
+      tenantIdsUpdate = tenantIds.map(id => parseInt(id, 10)).filter(id => !isNaN(id) && id > 0);
+      const primary = tenantIdsUpdate[0] || null;
+      updates.push(`tenant_id = $${values.length + 1}`);
+      values.push(primary);
+    }
+
     if (updates.length === 0) {
-      return res.status(400).json({ error: 'Nothing to update. Provide role or password.' });
+      return res.status(400).json({ error: 'Nothing to update. Provide role, password, or tenantIds.' });
     }
 
     values.push(targetId);
@@ -343,11 +433,22 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
        RETURNING id, username, role, tenant_id, created_at, last_login`,
       values
     );
-
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
+
+    // Replace junction table entries if tenantIds were supplied
+    if (tenantIdsUpdate !== null) {
+      await pool.query('DELETE FROM user_tenants WHERE user_id = $1', [targetId]);
+      for (const tid of tenantIdsUpdate) {
+        await pool.query(
+          'INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [targetId, tid]
+        );
+      }
+    }
+
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return serverError(res, err);
   }
 });
 

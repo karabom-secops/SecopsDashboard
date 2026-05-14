@@ -37,11 +37,43 @@
     }
 
     // Expose globally so other scripts can read role etc.
-    // Expose globally so other scripts can read role etc.
     window.currentUser = user;
 
     // Notify other tab scripts that auth is resolved
     document.dispatchEvent(new CustomEvent('authReady', { detail: user }));
+
+    // ── Tenant switcher (shown when user is assigned to 2+ tenants) ──────
+    const tenantSwitcher = document.getElementById('tenantSwitcher');
+    if (tenantSwitcher && Array.isArray(user.tenantIds) && user.tenantIds.length > 1) {
+      try {
+        const tRes = await fetch(apiUrl('auth/my-tenants'), { credentials: 'same-origin' });
+        if (tRes.ok) {
+          const tenants = await tRes.json();
+          if (tenants.length > 1) {
+            tenants.forEach(function (t) {
+              var opt = document.createElement('option');
+              opt.value = t.id;
+              opt.textContent = t.name;
+              if (t.id === user.tenantId) opt.selected = true;
+              tenantSwitcher.appendChild(opt);
+            });
+            tenantSwitcher.hidden = false;
+            tenantSwitcher.addEventListener('change', async function () {
+              var newId = parseInt(tenantSwitcher.value, 10);
+              try {
+                await fetch(apiUrl('auth/switch-tenant'), {
+                  method: 'POST',
+                  credentials: 'same-origin',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ tenantId: newId }),
+                });
+              } catch (_) { /* ignore */ }
+              location.reload();
+            });
+          }
+        }
+      } catch (_) { /* non-critical */ }
+    }
 
     // ── Populate header user info ────────────────────────────────────────
     const usernameEl = document.getElementById('headerUsername');

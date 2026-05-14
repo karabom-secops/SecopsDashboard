@@ -164,15 +164,27 @@
 
   async function populateTenantDropdowns() {
     const selects = document.querySelectorAll('.tenant-dropdown');
-    if (selects.length === 0) return;
+    if (selects.length === 0 && !document.getElementById('newUserTenants')) return;
     if (_tenants.length === 0) await fetchTenants();
-    const opts = '<option value="">— Select tenant —</option>' +
+    const opts = '<option value="">&#8212; Select tenant &#8212;</option>' +
       _tenants.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
     selects.forEach(sel => {
       const current = sel.value;
       sel.innerHTML = opts;
       if (current) sel.value = current;
     });
+    // Refresh multi-selects too
+    populateTenantMultiSelect(document.getElementById('newUserTenants'), []);
+  }
+
+  function populateTenantMultiSelect(selectEl, selectedIds) {
+    if (!selectEl || _tenants.length === 0) return;
+    selectEl.innerHTML = _tenants
+      .map(t => {
+        const sel = selectedIds && selectedIds.includes(t.id) ? ' selected' : '';
+        return `<option value="${t.id}"${sel}>${escapeHtml(t.name)}</option>`;
+      })
+      .join('');
   }
 
   // ── User table ────────────────────────────────────────────────────────────
@@ -245,13 +257,17 @@
     const body     = { username, password, role };
 
     if (isSuperAdmin()) {
-      const tenantSel = document.getElementById('newUserTenant');
+      const multiSel = document.getElementById('newUserTenants');
       if (role !== 'superadmin') {
-        if (!tenantSel || !tenantSel.value) {
-          showAdminError('Please select a tenant for this user.');
+        const selected = multiSel
+          ? Array.from(multiSel.selectedOptions).map(o => parseInt(o.value, 10))
+          : [];
+        if (selected.length === 0) {
+          showAdminError('Please select at least one tenant for this user.');
+          btn.disabled = false;
           return;
         }
-        body.tenantId = parseInt(tenantSel.value, 10);
+        body.tenantIds = selected;
       }
     }
 
@@ -282,7 +298,7 @@
 
   // ── Edit user modal ───────────────────────────────────────────────────────
 
-  function openEditModal(userId, username, currentRole) {
+  function openEditModal(userId, username, currentRole, currentTenantIds) {
     const modal = document.getElementById('editUserModal');
     if (!modal) return;
 
@@ -298,6 +314,18 @@
     roleSelect.innerHTML = allowedRoles
       .map(([val, label]) => `<option value="${val}"${currentRole === val ? ' selected' : ''}>${label}</option>`)
       .join('');
+
+    // Tenant assignment (superadmin only)
+    const tenantsRow = document.getElementById('editUserTenantsRow');
+    const multiSel   = document.getElementById('editUserTenants');
+    if (tenantsRow && multiSel) {
+      if (isSuperAdmin()) {
+        populateTenantMultiSelect(multiSel, currentTenantIds || []);
+        tenantsRow.hidden = false;
+      } else {
+        tenantsRow.hidden = true;
+      }
+    }
 
     modal.hidden = false;
     document.body.classList.add('modal-open');
@@ -319,6 +347,14 @@
 
     const body = { role };
     if (pass) body.password = pass;
+
+    // Include tenant assignments if superadmin
+    if (isSuperAdmin()) {
+      const multiSel = document.getElementById('editUserTenants');
+      if (multiSel) {
+        body.tenantIds = Array.from(multiSel.selectedOptions).map(o => parseInt(o.value, 10));
+      }
+    }
 
     const btn    = document.getElementById('editUserSaveBtn');
     btn.disabled = true;
@@ -432,6 +468,9 @@
     const closeBtn = document.getElementById('editUserCancelBtn');
     if (closeBtn) closeBtn.addEventListener('click', closeEditModal);
 
+    const cancelBtn2 = document.getElementById('editUserCancelBtn2');
+    if (cancelBtn2) cancelBtn2.addEventListener('click', closeEditModal);
+
     const saveBtn = document.getElementById('editUserSaveBtn');
     if (saveBtn) saveBtn.addEventListener('click', handleSaveEdit);
 
@@ -448,11 +487,12 @@
       tbody.addEventListener('click', function (e) {
         const btn = e.target.closest('[data-action]');
         if (!btn) return;
-        const action   = btn.dataset.action;
-        const userId   = parseInt(btn.dataset.id, 10);
-        const username = btn.dataset.username || '';
+        const action     = btn.dataset.action;
+        const userId     = parseInt(btn.dataset.id, 10);
+        const username   = btn.dataset.username || '';
+        const tenantIds  = JSON.parse(btn.dataset.tenantIds || '[]');
         if (action === 'delete-user') handleDeleteUser(userId, username);
-        else if (action === 'edit-user') openEditModal(userId, username, btn.dataset.role);
+        else if (action === 'edit-user') openEditModal(userId, username, btn.dataset.role, tenantIds);
       });
     }
 

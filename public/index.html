@@ -18,6 +18,7 @@
       </div>
     </div>
     <div class="header-right">
+      <select id="tenantSwitcher" class="tenant-switcher" title="Switch active tenant" hidden></select>
       <select id="weekSelect" title="Select a week">
         <option value="">— Select week —</option>
       </select>
@@ -316,9 +317,8 @@
           </div>
           <!-- Tenant selector — shown for superadmin only (tab-admin.js hides otherwise) -->
           <div id="newUserTenantRow" class="form-group" hidden>
-            <label class="modal-label" for="newUserTenant">Tenant</label>
-            <select id="newUserTenant" class="modal-status-select tenant-dropdown">
-              <option value="">— Select tenant —</option>
+            <label class="modal-label" for="newUserTenants">Tenant(s)</label>
+            <select id="newUserTenants" multiple size="4" class="modal-status-select tenant-multi-select">
             </select>
           </div>
           <div class="form-group admin-form-submit">
@@ -416,10 +416,15 @@
           <label class="modal-label" for="editUserPassword">New Password <span class="modal-optional">(leave blank to keep current)</span></label>
           <input id="editUserPassword" type="password" class="modal-status-select" placeholder="Min 8 characters" autocomplete="new-password" />
         </div>
+        <div id="editUserTenantsRow" class="form-group modal-form-group" hidden>
+          <label class="modal-label" for="editUserTenants">Assigned Tenants</label>
+          <select id="editUserTenants" multiple size="4" class="modal-status-select tenant-multi-select"></select>
+          <span class="modal-optional">Hold Ctrl / Cmd to select multiple</span>
+        </div>
         <p id="editUserError" class="admin-form-error" hidden></p>
       </div>
       <div class="modal-footer">
-        <button id="editUserCancelBtn2" class="btn btn-secondary" onclick="document.getElementById('editUserCancelBtn').click()">Cancel</button>
+        <button id="editUserCancelBtn2" class="btn btn-secondary">Cancel</button>
         <button id="editUserSaveBtn" class="btn btn-primary">Save Changes</button>
       </div>
     </div>
