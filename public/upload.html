@@ -89,6 +89,31 @@
     </div>
   </main>
 
+    <!-- Security Awareness Upload -->
+    <div class="upload-card" style="margin-top:1.5rem;">
+      <h2 class="card-title">Upload Security Awareness CSV</h2>
+      <p class="card-subtitle">Upload a User Dashboard CSV export to track incomplete training sessions per employee.</p>
+      <form id="awarenessUploadForm" novalidate>
+        <!-- Tenant selector — shown to superadmin only -->
+        <div id="awarenessTenantSelectWrap" class="form-group" hidden>
+          <label for="awarenessTenantId">Organisation</label>
+          <select id="awarenessTenantId" class="scan-select">
+            <option value="">— Select tenant —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="awarenessFile">User Dashboard CSV</label>
+          <input type="file" id="awarenessFile" accept=".csv,text/csv" required />
+        </div>
+        <div id="awarenessUploadError" class="upload-error" hidden></div>
+        <button type="submit" id="btnAwarenessUpload" class="btn btn-primary btn-block">
+          <span id="awarenessBtnLabel">Upload CSV</span>
+          <span id="awarenessSpinner" class="spinner" hidden></span>
+        </button>
+      </form>
+    </div>
+  </main>
+
   <script src="js/auth.js"></script>
   <script src="js/upload.js"></script>
 </body>

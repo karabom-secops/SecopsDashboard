@@ -52,6 +52,9 @@
       <button class="tab-btn" data-tab="vulns" role="tab" aria-selected="false">
         Vulnerabilities
       </button>
+      <button class="tab-btn" data-tab="awareness" role="tab" aria-selected="false">
+        Awareness
+      </button>
       <button class="tab-btn" id="tab-admin-btn" data-tab="admin" role="tab" aria-selected="false" hidden>
         Admin
       </button>
@@ -244,7 +247,82 @@
       </div>
     </section>
   </div>
+  <!-- ── Security Awareness Tab Panel ───────────────────────────────────── -->
+  <section id="tab-awareness" class="tab-panel" hidden role="tabpanel">
 
+    <!-- Superadmin tenant filter -->
+    <div id="awarenessTenantFilterWrap" class="vuln-controls-row" hidden>
+      <select id="awarenessTenantSelect" class="scan-select">
+        <option value="">— Select tenant —</option>
+      </select>
+    </div>
+
+    <!-- Upload metadata -->
+    <div class="awareness-meta-row">
+      <span id="awarenessUploadedAt" class="awareness-uploaded-at"></span>
+      <button id="awarenessDeleteBtn" class="btn btn-danger btn-sm" hidden>Delete Data</button>
+    </div>
+
+    <!-- Empty state -->
+    <div id="awarenessEmpty" class="awareness-empty" hidden>
+      <p>No security awareness data uploaded yet.</p>
+      <a href="upload.html" class="btn btn-primary">Upload CSV</a>
+    </div>
+
+    <!-- Content (hidden until data loaded) -->
+    <div id="awarenessContent" hidden>
+
+      <!-- Stat cards -->
+      <div id="awareness-stat-cards" class="stat-cards-row"></div>
+
+      <!-- Distribution chart -->
+      <div class="awareness-chart-card">
+        <h3 class="awareness-card-title">Incomplete Sessions Distribution</h3>
+        <div class="chart-wrap">
+          <canvas id="chartAwarenessDistrib"></canvas>
+        </div>
+      </div>
+
+      <!-- Manager breakdown -->
+      <div class="awareness-table-card">
+        <h3 class="awareness-card-title">Breakdown by Manager</h3>
+        <div class="table-scroll">
+          <table class="data-table" id="awarenessManagerTable">
+            <thead>
+              <tr>
+                <th>Manager</th>
+                <th class="col-num">Reports</th>
+                <th class="col-num">Incomplete Sessions</th>
+                <th>Worst Offender</th>
+                <th class="col-num">Their Count</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Top offenders -->
+      <div class="awareness-table-card">
+        <h3 class="awareness-card-title">Top 10 Employees by Incomplete Sessions</h3>
+        <div class="table-scroll">
+          <table class="data-table" id="awarenessTopTable">
+            <thead>
+              <tr>
+                <th class="col-num">#</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Manager</th>
+                <th class="col-num">Incomplete</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /awarenessContent -->
+  </section>
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
   <section id="tab-admin" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
@@ -485,6 +563,7 @@
   <script src="js/tab-orgs.js"></script>
   <script src="js/tab-metrics.js"></script>
   <script src="js/tab-vulns.js"></script>
+  <script src="js/tab-awareness.js"></script>
   <script src="js/tab-admin.js"></script>
 </body>
 </html>

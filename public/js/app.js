@@ -15,6 +15,7 @@
     orgs:       document.getElementById('tab-orgs'),
     metrics:    document.getElementById('tab-metrics'),
     vulns:      document.getElementById('tab-vulns'),
+    awareness:  document.getElementById('tab-awareness'),
     admin:      document.getElementById('tab-admin'),
   };
 
@@ -39,6 +40,11 @@
       // Render vulns tab when switched to
       if (target === 'vulns') {
         renderVulns();
+      }
+
+      // Render awareness tab when switched to
+      if (target === 'awareness' && typeof window.renderAwareness === 'function') {
+        window.renderAwareness();
       }
 
       // Render admin tab when switched to
@@ -190,6 +196,11 @@
       const targetBtn = document.querySelector('.tab-btn[data-tab="vulns"]');
       if (targetBtn) targetBtn.click();
       if (monthParam) renderVulns(monthParam);
+    } else if (tabParam === 'awareness') {
+      // Redirect from awareness upload
+      if (weeks.length > 0) await loadWeek(weeks[0].key);
+      const targetBtn = document.querySelector('.tab-btn[data-tab="awareness"]');
+      if (targetBtn) targetBtn.click();
     } else if (weeks.length > 0) {
       // Auto-load the most recent week (first in the list — sorted desc)
       await loadWeek(weeks[0].key);

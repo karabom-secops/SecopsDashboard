@@ -82,3 +82,33 @@ CREATE TABLE IF NOT EXISTS vuln_findings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_vuln_findings_scan ON vuln_findings (scan_id);
+
+-- ── Security Awareness Uploads ────────────────────────────────────────────
+-- One row per tenant (latest-only). Delete + re-insert on each upload.
+
+CREATE TABLE IF NOT EXISTS awareness_uploads (
+  id               SERIAL PRIMARY KEY,
+  tenant_id        INT         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  uploaded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  uploaded_by      INT         REFERENCES users(id) ON DELETE SET NULL,
+  total_users      INT         NOT NULL DEFAULT 0,
+  total_incomplete INT         NOT NULL DEFAULT 0,
+  UNIQUE (tenant_id)
+);
+
+-- ── Security Awareness Users ──────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS awareness_users (
+  id                  SERIAL PRIMARY KEY,
+  upload_id           INT  NOT NULL REFERENCES awareness_uploads(id) ON DELETE CASCADE,
+  manager_first_name  TEXT,
+  manager_last_name   TEXT,
+  manager_email       TEXT,
+  user_first_name     TEXT NOT NULL,
+  user_last_name      TEXT NOT NULL,
+  user_email          TEXT NOT NULL,
+  incomplete_sessions INT  NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_awareness_users_upload  ON awareness_users (upload_id);
+CREATE INDEX IF NOT EXISTS idx_awareness_users_manager ON awareness_users (manager_email);

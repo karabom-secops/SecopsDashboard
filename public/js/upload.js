@@ -213,11 +213,81 @@
     });
   }
 
+  // ── Security Awareness Upload ─────────────────────────────────────────────
+
+  async function initAwarenessUpload() {
+    var awarenessForm  = document.getElementById('awarenessUploadForm');
+    var awarenessFile  = document.getElementById('awarenessFile');
+    var awarenessErr   = document.getElementById('awarenessUploadError');
+    var btnAwareness   = document.getElementById('btnAwarenessUpload');
+    var awarenessLabel = document.getElementById('awarenessBtnLabel');
+    var awarenessSpinner = document.getElementById('awarenessSpinner');
+    var tenantWrap     = document.getElementById('awarenessTenantSelectWrap');
+    var tenantSel      = document.getElementById('awarenessTenantId');
+
+    if (!awarenessForm) return;
+
+    if (window.currentUser && window.currentUser.role === 'superadmin') {
+      try {
+        const res = await fetch('api/tenants');
+        const tenants = res.ok ? await res.json() : [];
+        tenants.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t.id;
+          opt.textContent = t.name;
+          tenantSel.appendChild(opt);
+        });
+        if (tenantWrap) tenantWrap.hidden = false;
+      } catch (_) {}
+    }
+
+    function showAwarenessError(msg) { awarenessErr.textContent = msg; awarenessErr.hidden = false; }
+    function clearAwarenessError() { awarenessErr.hidden = true; awarenessErr.textContent = ''; }
+    function setAwarenessLoading(loading) {
+      btnAwareness.disabled = loading;
+      awarenessLabel.textContent = loading ? 'Uploading…' : 'Upload CSV';
+      awarenessSpinner.hidden = !loading;
+    }
+
+    awarenessForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearAwarenessError();
+
+      const file = awarenessFile.files[0];
+      if (!file) { showAwarenessError('Please select a CSV file.'); return; }
+
+      const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+      if (isSA && tenantSel && !tenantSel.value) {
+        showAwarenessError('Please select a tenant / organisation.'); return;
+      }
+
+      const fd = new FormData();
+      fd.append('awarenessFile', file);
+      if (isSA && tenantSel && tenantSel.value) fd.append('tenantId', tenantSel.value);
+
+      setAwarenessLoading(true);
+      try {
+        const res  = await fetch('api/awareness/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok || data.error) { showAwarenessError(data.error || `Server error (${res.status})`); return; }
+        window.location.href = '/secops/?tab=awareness';
+      } catch (err) {
+        showAwarenessError('Network error: ' + err.message);
+      } finally {
+        setAwarenessLoading(false);
+      }
+    });
+  }
+
   // Wait for auth.js to resolve window.currentUser before initialising
   if (window.currentUser) {
     initVulnUpload();
+    initAwarenessUpload();
   } else {
-    document.addEventListener('authReady', initVulnUpload, { once: true });
+    document.addEventListener('authReady', () => {
+      initVulnUpload();
+      initAwarenessUpload();
+    }, { once: true });
   }
 
 })();

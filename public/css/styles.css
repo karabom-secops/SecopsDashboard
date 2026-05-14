@@ -1355,6 +1355,62 @@ body.login-page {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   SECURITY AWARENESS TAB
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.awareness-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  min-height: 2rem;
+}
+
+.awareness-uploaded-at {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.awareness-chart-card,
+.awareness-table-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.awareness-card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 1rem;
+  color: var(--text);
+}
+
+.awareness-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 3rem 1rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.awareness-empty p {
+  margin: 0;
+  font-size: 1rem;
+}
+
+/* purple stat card accent (for Awareness) */
+.stat-card.accent-purple {
+  border-top-color: #7c3aed;
+}
+[data-theme="dark"] .stat-card.accent-purple {
+  border-top-color: #a78bfa;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    HEADER USER INFO (logout button, username, role badge)
    ═══════════════════════════════════════════════════════════════════════════ */
 

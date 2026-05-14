@@ -10,14 +10,15 @@ const session = require('express-session');
 const PgStore = require('connect-pg-simple')(session);
 const bcrypt  = require('bcryptjs');
 
-const { authenticator } = require('otplib');
-const QRCode           = require('qrcode');
+const speakeasy = require('speakeasy');
+const QRCode    = require('qrcode');
 
 const pool = require('./lib/db');
 const { requireAuth, requireAdmin, requireSuperAdmin } = require('./lib/auth-middleware');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
 const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
+const { parseAwarenessCSV } = require('./lib/awareness-parser');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -187,7 +188,7 @@ app.post('/api/auth/mfa-verify', async (req, res) => {
       return res.status(401).json({ error: 'MFA not configured.' });
     }
 
-    const valid = authenticator.verify({ token, secret: rows[0].totp_secret });
+    const valid = speakeasy.totp.verify({ secret: rows[0].totp_secret, encoding: 'base32', token, window: 1 });
     if (!valid) return res.status(401).json({ error: 'Invalid or expired code. Try again.' });
 
     // Promote to full session
@@ -214,10 +215,10 @@ app.get('/api/auth/enroll-totp/setup', async (req, res) => {
     const pending = req.session.enrollPending;
     if (!pending) return res.status(401).json({ error: 'No enrollment session pending.' });
 
-    const secret  = authenticator.generateSecret();
+    const secret  = speakeasy.generateSecret({ length: 20 }).base32;
     req.session.pendingTotpSecret = secret;
 
-    const otpauthUri = authenticator.keyuri(pending.username, 'SecOps Dashboard', secret);
+    const otpauthUri = speakeasy.otpauthURL({ secret, label: pending.username, issuer: 'SecOps Dashboard', encoding: 'base32' });
     const qrCodeUrl  = await QRCode.toDataURL(otpauthUri);
 
     return res.json({ qrCodeUrl, secret });
@@ -240,7 +241,7 @@ app.post('/api/auth/enroll-totp/confirm', async (req, res) => {
       return res.status(400).json({ error: 'Token must be 6 digits.' });
     }
 
-    const valid = authenticator.verify({ token, secret });
+    const valid = speakeasy.totp.verify({ secret, encoding: 'base32', token, window: 1 });
     if (!valid) return res.status(401).json({ error: 'Invalid or expired code. Try again.' });
 
     await pool.query(
@@ -301,10 +302,10 @@ app.get('/api/auth/totp-setup', async (req, res) => {
     return res.status(403).json({ error: 'Superadmin only.' });
   }
   try {
-    const secret     = authenticator.generateSecret();
+    const secret     = speakeasy.generateSecret({ length: 20 }).base32;
     req.session.pendingTotpSecret = secret;
 
-    const otpauthUri = authenticator.keyuri(req.session.username, 'SecOps Dashboard', secret);
+    const otpauthUri = speakeasy.otpauthURL({ secret, label: req.session.username, issuer: 'SecOps Dashboard', encoding: 'base32' });
     const qrCodeUrl  = await QRCode.toDataURL(otpauthUri);
 
     return res.json({ qrCodeUrl, secret });
@@ -327,7 +328,7 @@ app.post('/api/auth/totp-confirm', async (req, res) => {
       return res.status(400).json({ error: 'Token must be 6 digits.' });
     }
 
-    const valid = authenticator.verify({ token, secret });
+    const valid = speakeasy.totp.verify({ secret, encoding: 'base32', token, window: 1 });
     if (!valid) return res.status(401).json({ error: 'Invalid or expired code. Try again.' });
 
     await pool.query(
@@ -1231,6 +1232,127 @@ app.patch('/api/vulns/:monthKey/finding/:index', requireAdmin, async (req, res) 
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────
+
+// ── Security Awareness routes ─────────────────────────────────────────────
+
+const awarenessUpload = multer({
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: 10 * 1024 * 1024 },
+});
+
+/**
+ * Resolve which tenant's awareness data to act on.
+ * Mirrors resolveVulnTenant.
+ */
+function resolveAwarenessTenant(req, source) {
+  if (req.session.role === 'superadmin') {
+    const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+app.post('/api/awareness/upload', requireAdmin, awarenessUpload.single('awarenessFile'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded.' });
+    }
+
+    const { tenantId, error: tenantErr } = resolveAwarenessTenant(req, 'body');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
+    let parsed;
+    try {
+      parsed = parseAwarenessCSV(req.file.buffer.toString('utf8'));
+    } catch (parseErr) {
+      return res.status(400).json({ error: parseErr.message });
+    }
+
+    const { rows, totalUsers, totalIncomplete } = parsed;
+
+    await client.query('BEGIN');
+
+    // Delete existing upload for this tenant (cascade deletes users)
+    await client.query('DELETE FROM awareness_uploads WHERE tenant_id = $1', [tenantId]);
+
+    const uploadRes = await client.query(
+      `INSERT INTO awareness_uploads (tenant_id, uploaded_by, total_users, total_incomplete)
+       VALUES ($1, $2, $3, $4) RETURNING id, uploaded_at`,
+      [tenantId, req.session.userId, totalUsers, totalIncomplete]
+    );
+    const uploadId  = uploadRes.rows[0].id;
+    const uploadedAt = uploadRes.rows[0].uploaded_at;
+
+    // Bulk insert users
+    for (const row of rows) {
+      await client.query(
+        `INSERT INTO awareness_users
+           (upload_id, manager_first_name, manager_last_name, manager_email,
+            user_first_name, user_last_name, user_email, incomplete_sessions)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          uploadId,
+          row.managerFirstName, row.managerLastName, row.managerEmail,
+          row.userFirstName,    row.userLastName,    row.userEmail,
+          row.incompleteSessions,
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+    return res.json({ tenantId, totalUsers, totalIncomplete, uploadedAt });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return serverError(res, err);
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/awareness', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error: tenantErr } = resolveAwarenessTenant(req, 'query');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
+    const uploadRes = await pool.query(
+      'SELECT id, uploaded_at, total_users, total_incomplete FROM awareness_uploads WHERE tenant_id = $1',
+      [tenantId]
+    );
+    if (uploadRes.rows.length === 0) {
+      return res.json({ upload: null, users: [] });
+    }
+
+    const upload = uploadRes.rows[0];
+    const usersRes = await pool.query(
+      `SELECT manager_first_name, manager_last_name, manager_email,
+              user_first_name, user_last_name, user_email, incomplete_sessions
+       FROM awareness_users WHERE upload_id = $1
+       ORDER BY incomplete_sessions DESC, user_last_name, user_first_name`,
+      [upload.id]
+    );
+
+    return res.json({ upload, users: usersRes.rows });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+app.delete('/api/awareness', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error: tenantErr } = resolveAwarenessTenant(req, 'query');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
+    await pool.query('DELETE FROM awareness_uploads WHERE tenant_id = $1', [tenantId]);
+    return res.json({ ok: true });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`SecOps Dashboard running on http://localhost:${PORT}`);
