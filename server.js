@@ -83,6 +83,15 @@ const vulnUpload = multer({
   limits:  { fileSize: 100 * 1024 * 1024 },
 });
 
+const rateLimit = require('express-rate-limit');
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Please try again later.' },
+});
+
 // ── Auth routes (public — no requireAuth) ─────────────────────────────────
 
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
