@@ -90,6 +90,7 @@
 
 /* ── Reset / base ──────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
 
 html { font-size: 15px; }
 
@@ -1395,6 +1396,12 @@ body.login-page {
   padding: 3rem 1rem;
   color: var(--muted);
   text-align: center;
+}
+
+.table-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: auto;
 }
 
 .awareness-empty p {
