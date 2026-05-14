@@ -14,7 +14,7 @@ const pool = require('./lib/db');
 const { requireAuth, requireAdmin, requireSuperAdmin } = require('./lib/auth-middleware');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
-const { parseNessusCSV, parseNessusXML, computeVulnSummary } = require('./lib/vuln-parser');
+const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -519,11 +519,13 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
     let findings;
     if (origName.endsWith('.nessus') || mimeType.includes('xml')) {
       findings = parseNessusXML(fileText);
+    } else if (isArcticWolfCSV(fileText)) {
+      findings = parseArcticWolfCSV(fileText);
     } else {
       findings = parseNessusCSV(fileText);
     }
     if (findings.length === 0) {
-      return res.status(400).json({ error: 'No findings parsed. Check it is a valid Nessus CSV or .nessus XML export.' });
+      return res.status(400).json({ error: 'No findings parsed. Check it is a valid Nessus CSV, .nessus XML, or Arctic Wolf Managed Risk CSV export.' });
     }
 
     const summary = computeVulnSummary(findings);
@@ -561,7 +563,8 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
         f.firstSeenAt     = match.first_seen_at || uploadNow;
         carried++;
       } else {
-        f.firstSeenAt = uploadNow;
+        // Preserve firstSeenAt supplied by the parser (e.g. Arctic Wolf First Detected Time)
+        f.firstSeenAt = f.firstSeenAt || uploadNow;
       }
     });
 
@@ -608,7 +611,7 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
     return res.json({ monthKey, tenantId, summary, carriedCounts });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    return res.status(500).json({ error: err.message });
+    return serverError(res, err);
   } finally {
     client.release();
   }
