@@ -96,6 +96,40 @@
       } catch (_) { /* non-critical */ }
     }
 
+    // ── Global tenant selector (superadmin only — shared across Vulns & Awareness) ──
+    window.globalTenantId = null;
+    if (user.role === 'superadmin') {
+      const globalWrap = document.getElementById('globalTenantFilterWrap');
+      const globalSel  = document.getElementById('globalTenantSelect');
+      if (globalWrap && globalSel) {
+        try {
+          const tRes = await fetch(apiUrl('tenants'), { credentials: 'same-origin' });
+          if (tRes.ok) {
+            const tenants = await tRes.json();
+            tenants.forEach(function (t) {
+              var opt = document.createElement('option');
+              opt.value = t.id;
+              opt.textContent = t.name;
+              globalSel.appendChild(opt);
+            });
+            globalWrap.hidden = false;
+            globalSel.addEventListener('change', function () {
+              window.globalTenantId = globalSel.value ? parseInt(globalSel.value, 10) : null;
+              // Re-render whichever of the two tenant-scoped tabs is currently visible
+              var activePanel = document.querySelector('.tab-panel:not([hidden])');
+              if (activePanel) {
+                if (activePanel.id === 'tab-vulns' && typeof window.renderVulns === 'function') {
+                  window.renderVulns();
+                } else if (activePanel.id === 'tab-awareness' && typeof window.renderAwareness === 'function') {
+                  window.renderAwareness();
+                }
+              }
+            });
+          }
+        } catch (_) { /* non-critical */ }
+      }
+    }
+
     // ── Populate header user info ────────────────────────────────────────
     const usernameEl = document.getElementById('headerUsername');
     if (usernameEl) usernameEl.textContent = user.username;

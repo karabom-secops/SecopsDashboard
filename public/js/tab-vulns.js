@@ -12,7 +12,6 @@
   let _statusFilter  = 'All';  // status filter
   let _trendCanvas   = null;
   let _trendTooltip  = null;
-  let _activeTenantId = null;  // null = use session tenant (non-superadmin)
 
   const STATUS_LABELS = {
     open:          'Open',
@@ -41,14 +40,12 @@
   // ── Tenant query helper ────────────────────────────────────────────────────
   function tenantParam(sep) {
     const isSA = window.currentUser && window.currentUser.role === 'superadmin';
-    if (!isSA || !_activeTenantId) return '';
-    return sep + 'tenantId=' + encodeURIComponent(_activeTenantId);
+    if (!isSA || !window.globalTenantId) return '';
+    return sep + 'tenantId=' + encodeURIComponent(window.globalTenantId);
   }
 
   // ── Public render entry point ──────────────────────────────────────────────
   window.renderVulns = async function renderVulns(monthKey) {
-    await _renderTenantFilter();
-
     // Fetch scan list + trends together
     try {
       const [listRes, trendsRes] = await Promise.all([
@@ -83,49 +80,6 @@
 
     _renderAll();
   };
-
-  // ── Superadmin tenant filter ───────────────────────────────────────────────
-  async function _renderTenantFilter() {
-    const wrap = document.getElementById('vulnTenantFilterWrap');
-    if (!wrap) return;
-
-    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
-    if (!isSA) { wrap.hidden = true; return; }
-
-    wrap.hidden = false;
-
-    // Only fetch tenants once (cache in module)
-    if (!_renderTenantFilter._tenants) {
-      try {
-        const res = await fetch('api/tenants');
-        _renderTenantFilter._tenants = res.ok ? await res.json() : [];
-      } catch (_) {
-        _renderTenantFilter._tenants = [];
-      }
-    }
-    const tenants = _renderTenantFilter._tenants;
-
-    const sel = document.getElementById('vulnTenantSelect');
-    if (!sel) return;
-
-    if (!sel.dataset.handlerSet) {
-      sel.dataset.handlerSet = '1';
-      sel.addEventListener('change', () => {
-        _activeTenantId = sel.value ? parseInt(sel.value, 10) : null;
-        _currentScan   = null;
-        _trendsData    = [];
-        window.renderVulns();
-      });
-    }
-
-    if (sel.options.length <= 1) {
-      sel.innerHTML = '<option value="">— Select tenant —</option>' +
-        tenants.map(t => `<option value="${escHtml(String(t.id))}">${escHtml(t.name)}</option>`).join('');
-    }
-
-    // Restore active tenant selection
-    if (_activeTenantId) sel.value = String(_activeTenantId);
-  }
 
   // ── Populate scan month selector ────────────────────────────────────────────
   function _populateScanSelector(scanList, selectedKey) {

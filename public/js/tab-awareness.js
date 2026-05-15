@@ -5,7 +5,7 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
   var _data           = null;  // { upload, users }
-  var _activeTenantId = null;
+
 
   // ── XSS helper ─────────────────────────────────────────────────────────────
   function esc(str) {
@@ -17,14 +17,12 @@
   // ── Tenant query param helper ───────────────────────────────────────────────
   function tenantParam(sep) {
     var isSA = window.currentUser && window.currentUser.role === 'superadmin';
-    if (!isSA || !_activeTenantId) return '';
-    return sep + 'tenantId=' + encodeURIComponent(_activeTenantId);
+    if (!isSA || !window.globalTenantId) return '';
+    return sep + 'tenantId=' + encodeURIComponent(window.globalTenantId);
   }
 
   // ── Public entry point ──────────────────────────────────────────────────────
   window.renderAwareness = async function renderAwareness() {
-    await _renderTenantFilter();
-
     try {
       var res = await fetch('api/awareness' + tenantParam('?'), { credentials: 'same-origin' });
       _data = res.ok ? await res.json() : { upload: null, users: [] };
@@ -34,46 +32,6 @@
 
     _renderAll();
   };
-
-  // ── Superadmin tenant filter ────────────────────────────────────────────────
-  async function _renderTenantFilter() {
-    var wrap = document.getElementById('awarenessTenantFilterWrap');
-    if (!wrap) return;
-
-    var isSA = window.currentUser && window.currentUser.role === 'superadmin';
-    if (!isSA) { wrap.hidden = true; return; }
-
-    wrap.hidden = false;
-
-    if (!_renderTenantFilter._tenants) {
-      try {
-        var r = await fetch('api/tenants');
-        _renderTenantFilter._tenants = r.ok ? await r.json() : [];
-      } catch (_) { _renderTenantFilter._tenants = []; }
-    }
-
-    var sel = document.getElementById('awarenessTenantSelect');
-    if (!sel) return;
-
-    if (!sel.dataset.handlerSet) {
-      sel.dataset.handlerSet = '1';
-      sel.addEventListener('change', function () {
-        _activeTenantId = sel.value ? parseInt(sel.value, 10) : null;
-        _data = null;
-        window.renderAwareness();
-      });
-    }
-
-    if (sel.options.length <= 1) {
-      var tenants = _renderTenantFilter._tenants;
-      sel.innerHTML = '<option value="">\u2014 Select tenant \u2014</option>' +
-        tenants.map(function (t) {
-          return '<option value="' + esc(String(t.id)) + '">' + esc(t.name) + '</option>';
-        }).join('');
-    }
-
-    if (_activeTenantId) sel.value = String(_activeTenantId);
-  }
 
   // ── Full render ─────────────────────────────────────────────────────────────
   function _renderAll() {

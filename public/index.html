@@ -24,6 +24,12 @@
     </div>
     <div class="header-right">
       <select id="tenantSwitcher" class="tenant-switcher" title="Switch active tenant" hidden></select>
+      <div id="globalTenantFilterWrap" class="global-tenant-filter-wrap" hidden>
+        <label for="globalTenantSelect" class="global-tenant-label">Organisation:</label>
+        <select id="globalTenantSelect" class="global-tenant-select">
+          <option value="">&#8212; Select tenant &#8212;</option>
+        </select>
+      </div>
       <select id="weekSelect" title="Select a week">
         <option value="">— Select week —</option>
       </select>
@@ -141,13 +147,7 @@
 
     <!-- Tab: Vulnerabilities -->
     <section id="tab-vulns" class="tab-panel" hidden role="tabpanel">
-      <!-- Tenant filter — visible to superadmin only (tab-vulns.js controls this) -->
-      <div id="vulnTenantFilterWrap" class="vuln-tenant-filter" hidden>
-        <label for="vulnTenantSelect" class="scan-select-label">Organisation:</label>
-        <select id="vulnTenantSelect" class="scan-select">
-          <option value="">— Select tenant —</option>
-        </select>
-      </div>
+
       <div class="vuln-scan-header">
         <label for="vulnScanSelect" class="scan-select-label">Scan Month:</label>
         <select id="vulnScanSelect" class="scan-select"><option value="">— No scans uploaded —</option></select>
@@ -249,12 +249,7 @@
   <!-- ── Security Awareness Tab Panel ───────────────────────────────────── -->
   <section id="tab-awareness" class="tab-panel" hidden role="tabpanel">
 
-    <!-- Superadmin tenant filter -->
-    <div id="awarenessTenantFilterWrap" class="vuln-controls-row" hidden>
-      <select id="awarenessTenantSelect" class="scan-select">
-        <option value="">— Select tenant —</option>
-      </select>
-    </div>
+
 
     <!-- Upload metadata -->
     <div class="awareness-meta-row">
