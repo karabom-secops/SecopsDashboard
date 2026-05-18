@@ -53,7 +53,7 @@ function recomputeMetrics() {
 const PUBLIC = path.join(__dirname, 'public');
 
 // Serve static assets BEFORE session/auth so the login page loads without auth.
-app.use('/secops', express.static(PUBLIC));
+app.use('/dashboard', express.static(PUBLIC));
 app.use(express.static(PUBLIC));
 
 app.use(express.json({ limit: '10mb' }));
@@ -1365,7 +1365,7 @@ app.delete('/api/awareness', requireAdmin, async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`SecOps Dashboard running on http://localhost:${PORT}`);
-  console.log(`Access via base path:   http://localhost:${PORT}/secops/`);
+  console.log(`Access via base path:   http://localhost:${PORT}/dashboard/`);
 }).on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`Port ${PORT} is already in use. Stop the existing process or change PORT in .env`);
