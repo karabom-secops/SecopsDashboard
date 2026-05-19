@@ -1389,6 +1389,41 @@ body.login-page {
 .stat-card.accent-purple {
   border-top-color: #7c3aed;
 }
+
+/* ── Awareness: missing training expand/collapse ─────────────────────────── */
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--logo-blue, #0066cc);
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 0;
+  font-family: inherit;
+}
+.btn-link:hover { text-decoration: underline; }
+
+.awareness-missing-detail td { border-top: none; }
+
+.awareness-missing-list {
+  margin: 0;
+  padding: 0 0 0 1rem;
+  list-style: disc;
+  font-size: 0.82rem;
+  line-height: 1.9;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  vertical-align: middle;
+  letter-spacing: 0.02em;
+}
+.badge-blue  { background: #dbeafe; color: #1d4ed8; }
+.badge-amber { background: #fef3c7; color: #92400e; }
+.badge-red   { background: #fee2e2; color: #991b1b; }
 /* ═══════════════════════════════════════════════════════════════════════════
    HEADER USER INFO (logout button, username, role badge)
    ═══════════════════════════════════════════════════════════════════════════ */

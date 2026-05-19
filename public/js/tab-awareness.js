@@ -599,10 +599,19 @@
             : '\u2014',
           assigned:  0,
           completed: 0,
+          missing:   [],
         };
       }
       byUser[key].assigned++;
-      if (s.status === 'Complete') byUser[key].completed++;
+      if (s.status === 'Complete') {
+        byUser[key].completed++;
+      } else if (s.status === 'Not Started') {
+        byUser[key].missing.push({
+          type:  s.session_type || '',
+          title: s.title        || '',
+          date:  s.sent_date    || null,
+        });
+      }
     });
 
     var rows = Object.values(byUser).sort(function (a, b) {
@@ -611,18 +620,65 @@
       return ratA - ratB; // worst (lowest %) first
     });
 
-    tbody.innerHTML = rows.map(function (r) {
-      var pct = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
+    var html = '';
+    rows.forEach(function (r, i) {
+      var pct      = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
       var pctClass = pct >= 80 ? 'accent-green' : pct >= 50 ? 'accent-amber' : 'accent-red';
-      return '<tr>' +
+      var detailId  = 'uc-detail-' + i;
+      var missCount = r.missing.length;
+
+      // Main row
+      html += '<tr>' +
         '<td>' + esc(r.name) + '</td>' +
         '<td><small>' + esc(r.email) + '</small></td>' +
         '<td>' + esc(r.manager) + '</td>' +
         '<td class="col-num">' + esc(String(r.assigned)) + '</td>' +
         '<td class="col-num">' + esc(String(r.completed)) + '</td>' +
         '<td class="col-num"><strong class="' + esc(pctClass) + '">' + esc(String(pct)) + '%</strong></td>' +
+        '<td class="col-num">' +
+          (missCount > 0
+            ? '<button class="btn-link awareness-missing-toggle" data-target="' + esc(detailId) + '" aria-expanded="false">' +
+                '&#9654; ' + esc(String(missCount)) +
+              '</button>'
+            : '<span class="muted">\u2014</span>') +
+        '</td>' +
         '</tr>';
-    }).join('');
+
+      // Expandable detail row listing specific missing sessions
+      if (missCount > 0) {
+        var items = r.missing.map(function (m) {
+          var dateStr = m.date
+            ? new Date(m.date).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })
+            : '';
+          var typeTag = m.type === 'Quiz'
+            ? '<span class="badge badge-amber">Quiz</span>'
+            : m.type === 'Phishing Remediation Session'
+              ? '<span class="badge badge-red">Phishing Remediation</span>'
+              : '<span class="badge badge-blue">Awareness</span>';
+          return '<li>' + typeTag + ' ' + esc(m.title) +
+            (dateStr ? ' <span class="muted">(' + esc(dateStr) + ')</span>' : '') + '</li>';
+        }).join('');
+
+        html += '<tr id="' + esc(detailId) + '" class="awareness-missing-detail" hidden>' +
+          '<td colspan="7" style="padding:0.5rem 1rem 0.75rem 2rem;background:var(--surface-alt,#f5f6f8)">' +
+          '<ul class="awareness-missing-list">' + items + '</ul>' +
+          '</td></tr>';
+      }
+    });
+
+    tbody.innerHTML = html;
+
+    // Delegate toggle clicks on the tbody (works after innerHTML replacement)
+    tbody.addEventListener('click', function (e) {
+      var btn = e.target.closest('.awareness-missing-toggle');
+      if (!btn) return;
+      var detailRow = document.getElementById(btn.getAttribute('data-target'));
+      if (!detailRow) return;
+      var expanded = btn.getAttribute('aria-expanded') === 'true';
+      detailRow.hidden = expanded;
+      btn.setAttribute('aria-expanded', String(!expanded));
+      btn.innerHTML = (expanded ? '&#9654; ' : '&#9660; ') + esc(String(detailRow.querySelectorAll('li').length));
+    });
   }
 
 })();
