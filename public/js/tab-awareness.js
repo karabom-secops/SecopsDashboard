@@ -679,6 +679,29 @@
       btn.setAttribute('aria-expanded', String(!expanded));
       btn.innerHTML = (expanded ? '&#9654; ' : '&#9660; ') + esc(String(detailRow.querySelectorAll('li').length));
     });
+
+    // Live search filter
+    var searchInput = document.getElementById('awarenessCompletionSearch');
+    if (searchInput) {
+      // Clear any previous value when re-rendering
+      searchInput.value = '';
+      searchInput.oninput = function () {
+        var term = searchInput.value.trim().toLowerCase();
+        var allRows = tbody.querySelectorAll('tr');
+        allRows.forEach(function (tr) {
+          if (tr.classList.contains('awareness-missing-detail')) return; // handled via parent
+          var text = tr.textContent.toLowerCase();
+          var show = !term || text.indexOf(term) !== -1;
+          tr.hidden = !show;
+          // Keep the associated detail row hidden when parent is hidden
+          var toggleBtn = tr.querySelector('.awareness-missing-toggle');
+          if (toggleBtn) {
+            var detailRow = document.getElementById(toggleBtn.getAttribute('data-target'));
+            if (detailRow && !show) detailRow.hidden = true;
+          }
+        });
+      };
+    }
   }
 
 })();

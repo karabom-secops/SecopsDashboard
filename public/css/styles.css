@@ -1391,6 +1391,31 @@ body.login-page {
 }
 
 /* ── Awareness: missing training expand/collapse ─────────────────────────── */
+.awareness-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.awareness-card-header .awareness-card-title { margin: 0; }
+
+.table-search-input {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  min-width: 200px;
+  transition: border-color 0.15s;
+}
+.table-search-input:focus {
+  outline: none;
+  border-color: var(--logo-blue, #0066cc);
+  box-shadow: 0 0 0 3px rgba(0,102,204,0.1);
+}
 .btn-link {
   background: none;
   border: none;
