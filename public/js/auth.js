@@ -154,6 +154,12 @@
       adminTabBtn.hidden = (user.role === 'readonly');
     }
 
+    // Sync admin visibility in side menu
+    const sideAdminBtn = document.getElementById('sideAdminBtn');
+    if (sideAdminBtn) {
+      sideAdminBtn.hidden = (user.role === 'readonly');
+    }
+
     // ── Hide admin-only action elements for readonly users ───────────────
     if (user.role === 'readonly') {
       document.querySelectorAll('[data-admin-only]').forEach(el => {

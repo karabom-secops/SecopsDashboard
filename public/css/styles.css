@@ -1448,6 +1448,186 @@ body.login-page {
 }
 .badge-blue  { background: #dbeafe; color: #1d4ed8; }
 .badge-amber { background: #fef3c7; color: #92400e; }
+
+/* ── Hamburger button ──────────────────────────────────────────────────────── */
+.hamburger-btn {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background .18s, border-color .18s, box-shadow .18s;
+}
+.hamburger-btn:hover {
+  background: var(--bg-soft);
+  border-color: var(--logo-cyan);
+  box-shadow: 0 0 0 3px rgba(0,186,223,.14);
+}
+.hamburger-btn:focus-visible {
+  outline: 2px solid var(--logo-cyan);
+  outline-offset: 2px;
+}
+.hamburger-btn span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: var(--text);
+  border-radius: 2px;
+  transition: background .18s;
+}
+.hamburger-btn:hover span { background: var(--logo-blue); }
+
+/* ── Side overlay ──────────────────────────────────────────────────────────── */
+.side-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 20, 50, .40);
+  z-index: 199;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .28s ease;
+}
+.side-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Side menu drawer ──────────────────────────────────────────────────────── */
+.side-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 280px;
+  height: 100vh;
+  background: linear-gradient(175deg, #fff 0%, #f4fbff 100%);
+  border-right: 2px solid rgba(0,186,223,.25);
+  box-shadow: 6px 0 32px rgba(0,102,204,.16);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform .28s cubic-bezier(.4,0,.2,1);
+  overflow-y: auto;
+}
+.side-menu.open {
+  transform: translateX(0);
+}
+
+.side-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.1rem 1.2rem;
+  border-bottom: 1.5px solid rgba(0,186,223,.20);
+  background: rgba(255,255,255,.96);
+  flex-shrink: 0;
+}
+
+.side-menu-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.1;
+}
+.side-menu-brand .brand-secops {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--logo-blue);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  font-family: var(--font-display);
+}
+.side-menu-sub {
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+}
+
+.side-menu-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  flex-shrink: 0;
+}
+.side-menu-close:hover {
+  background: var(--red-dim);
+  border-color: var(--red);
+  color: var(--red);
+}
+.side-menu-close:focus-visible {
+  outline: 2px solid var(--logo-cyan);
+  outline-offset: 2px;
+}
+
+/* ── Side nav items ────────────────────────────────────────────────────────── */
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem 0.6rem;
+  gap: 2px;
+  flex: 1;
+}
+
+.side-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.72rem 1rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background .15s, color .15s;
+  letter-spacing: .1px;
+}
+.side-nav-item:hover {
+  background: rgba(0,186,223,.10);
+  color: var(--logo-blue);
+}
+.side-nav-item.active {
+  background: linear-gradient(90deg, rgba(0,102,204,.10) 0%, rgba(0,186,223,.08) 100%);
+  color: var(--logo-blue);
+  font-weight: 700;
+  border-left: 3px solid var(--logo-cyan);
+  padding-left: calc(1rem - 3px);
+}
+.side-nav-item:focus-visible {
+  outline: 2px solid var(--logo-cyan);
+  outline-offset: 1px;
+}
+
+.side-nav-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  stroke: currentColor;
+}
 .badge-red   { background: #fee2e2; color: #991b1b; }
 /* ═══════════════════════════════════════════════════════════════════════════
    HEADER USER INFO (logout button, username, role badge)

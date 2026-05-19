@@ -19,6 +19,52 @@
     admin:      document.getElementById('tab-admin'),
   };
 
+  // ── Side menu ──────────────────────────────────────────────────────────────
+  const menuToggleBtn = document.getElementById('menuToggleBtn');
+  const sideMenu      = document.getElementById('sideMenu');
+  const sideOverlay   = document.getElementById('sideOverlay');
+  const sideMenuClose = document.getElementById('sideMenuClose');
+  const sideNavItems  = document.querySelectorAll('.side-nav-item');
+
+  function openMenu() {
+    sideMenu.classList.add('open');
+    sideOverlay.classList.add('open');
+    menuToggleBtn.setAttribute('aria-expanded', 'true');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeMenu() {
+    sideMenu.classList.remove('open');
+    sideOverlay.classList.remove('open');
+    menuToggleBtn.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+  }
+
+  if (menuToggleBtn) menuToggleBtn.addEventListener('click', openMenu);
+  if (sideMenuClose) sideMenuClose.addEventListener('click', closeMenu);
+  if (sideOverlay)   sideOverlay.addEventListener('click', closeMenu);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && sideMenu && sideMenu.classList.contains('open')) closeMenu();
+  });
+
+  // Each side nav item delegates to the matching tab button then closes the drawer
+  sideNavItems.forEach(item => {
+    item.addEventListener('click', () => {
+      const target = item.dataset.tab;
+      const tabBtn = document.querySelector(`.tab-btn[data-tab="${target}"]`);
+      if (tabBtn) tabBtn.click();
+      closeMenu();
+    });
+  });
+
+  // Keep side nav active state in sync with tab bar
+  function syncSideNav(activeTab) {
+    sideNavItems.forEach(item => {
+      item.classList.toggle('active', item.dataset.tab === activeTab);
+    });
+  }
+
   // ── Tab switching ──────────────────────────────────────────────────────────
   tabBtns.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -27,6 +73,8 @@
       btn.setAttribute('aria-selected', 'true');
 
       const target = btn.dataset.tab;
+      syncSideNav(target);
+
       Object.entries(tabPanels).forEach(([key, panel]) => {
         if (panel) panel.hidden = key !== target;
       });
