@@ -37,10 +37,6 @@
       item.classList.toggle('active', item.dataset.tab === target);
     });
 
-    // Update header label
-    const tabLabelEl = document.getElementById('currentTabLabel');
-    if (tabLabelEl) tabLabelEl.textContent = TAB_LABELS[target] || target;
-
     // Show/hide panels
     Object.entries(tabPanels).forEach(([key, panel]) => {
       if (panel) panel.hidden = key !== target;
