@@ -52,8 +52,7 @@
           bannerLink.addEventListener('click', function (e) {
             e.preventDefault();
             // Switch to the Admin tab and scroll to MFA section
-            var adminBtn = document.getElementById('tab-admin-btn');
-            if (adminBtn) adminBtn.click();
+            if (typeof window.switchTab === 'function') window.switchTab('admin');
             setTimeout(function () {
               var mfaSection = document.getElementById('mfaSection');
               if (mfaSection) mfaSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -148,13 +147,7 @@
       }
     }
 
-    // ── Show Admin tab for admin or superadmin ───────────────────────────
-    const adminTabBtn = document.getElementById('tab-admin-btn');
-    if (adminTabBtn) {
-      adminTabBtn.hidden = (user.role === 'readonly');
-    }
-
-    // Sync admin visibility in side menu
+    // ── Show Admin item in side menu for admin or superadmin ────────────
     const sideAdminBtn = document.getElementById('sideAdminBtn');
     if (sideAdminBtn) {
       sideAdminBtn.hidden = (user.role === 'readonly');

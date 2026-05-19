@@ -9,7 +9,6 @@
 
   const weekSelect    = document.getElementById('weekSelect');
   const dashboard     = document.getElementById('dashboard');
-  const tabBtns       = document.querySelectorAll('.tab-btn');
   const tabPanels     = {
     priorities: document.getElementById('tab-priorities'),
     orgs:       document.getElementById('tab-orgs'),
@@ -48,59 +47,44 @@
     if (e.key === 'Escape' && sideMenu && sideMenu.classList.contains('open')) closeMenu();
   });
 
-  // Each side nav item delegates to the matching tab button then closes the drawer
+  // ── Tab switching ──────────────────────────────────────────────────────────
+  function switchTab(target) {
+    // Update side nav active state
+    sideNavItems.forEach(item => {
+      item.classList.toggle('active', item.dataset.tab === target);
+    });
+
+    // Show/hide panels
+    Object.entries(tabPanels).forEach(([key, panel]) => {
+      if (panel) panel.hidden = key !== target;
+    });
+
+    // Lazy-render tabs that need it
+    if (target === 'metrics' && window._summaryData.length && window.currentWeekKey) {
+      const weekData = window._lastWeekData;
+      if (weekData) renderMetrics(weekData, window._summaryData);
+    }
+    if (target === 'vulns') {
+      renderVulns();
+    }
+    if (target === 'awareness' && typeof window.renderAwareness === 'function') {
+      window.renderAwareness();
+    }
+    if (target === 'admin' && typeof window.renderAdmin === 'function') {
+      window.renderAdmin();
+    }
+  }
+
+  // Side nav items drive tab switching directly
   sideNavItems.forEach(item => {
     item.addEventListener('click', () => {
-      const target = item.dataset.tab;
-      const tabBtn = document.querySelector(`.tab-btn[data-tab="${target}"]`);
-      if (tabBtn) tabBtn.click();
+      switchTab(item.dataset.tab);
       closeMenu();
     });
   });
 
-  // Keep side nav active state in sync with tab bar
-  function syncSideNav(activeTab) {
-    sideNavItems.forEach(item => {
-      item.classList.toggle('active', item.dataset.tab === activeTab);
-    });
-  }
-
-  // ── Tab switching ──────────────────────────────────────────────────────────
-  tabBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      tabBtns.forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
-      btn.classList.add('active');
-      btn.setAttribute('aria-selected', 'true');
-
-      const target = btn.dataset.tab;
-      syncSideNav(target);
-
-      Object.entries(tabPanels).forEach(([key, panel]) => {
-        if (panel) panel.hidden = key !== target;
-      });
-
-      // Redraw charts when metrics tab becomes visible (canvas needs visible parent)
-      if (target === 'metrics' && window._summaryData.length && window.currentWeekKey) {
-        const weekData = window._lastWeekData;
-        if (weekData) renderMetrics(weekData, window._summaryData);
-      }
-
-      // Render vulns tab when switched to
-      if (target === 'vulns') {
-        renderVulns();
-      }
-
-      // Render awareness tab when switched to
-      if (target === 'awareness' && typeof window.renderAwareness === 'function') {
-        window.renderAwareness();
-      }
-
-      // Render admin tab when switched to
-      if (target === 'admin' && typeof window.renderAdmin === 'function') {
-        window.renderAdmin();
-      }
-    });
-  });
+  // Expose so other modules can switch tabs programmatically
+  window.switchTab = switchTab;
 
   // ── Week selector ──────────────────────────────────────────────────────────
   weekSelect.addEventListener('change', () => {
