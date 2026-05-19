@@ -18,34 +18,17 @@
     admin:      document.getElementById('tab-admin'),
   };
 
-  // ── Side menu ──────────────────────────────────────────────────────────────
-  const menuToggleBtn = document.getElementById('menuToggleBtn');
-  const sideMenu      = document.getElementById('sideMenu');
-  const sideOverlay   = document.getElementById('sideOverlay');
-  const sideMenuClose = document.getElementById('sideMenuClose');
-  const sideNavItems  = document.querySelectorAll('.side-nav-item');
+  // ── Sidebar navigation ────────────────────────────────────────────────────
+  const sideNavItems = document.querySelectorAll('.side-nav-item');
 
-  function openMenu() {
-    sideMenu.classList.add('open');
-    sideOverlay.classList.add('open');
-    menuToggleBtn.setAttribute('aria-expanded', 'true');
-    document.body.style.overflow = 'hidden';
-  }
-
-  function closeMenu() {
-    sideMenu.classList.remove('open');
-    sideOverlay.classList.remove('open');
-    menuToggleBtn.setAttribute('aria-expanded', 'false');
-    document.body.style.overflow = '';
-  }
-
-  if (menuToggleBtn) menuToggleBtn.addEventListener('click', openMenu);
-  if (sideMenuClose) sideMenuClose.addEventListener('click', closeMenu);
-  if (sideOverlay)   sideOverlay.addEventListener('click', closeMenu);
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && sideMenu && sideMenu.classList.contains('open')) closeMenu();
-  });
+  const TAB_LABELS = {
+    priorities: 'Priorities',
+    orgs:       'Arctic Wolf Health',
+    metrics:    'Metrics & Trends',
+    vulns:      'Vulnerabilities',
+    awareness:  'Awareness',
+    admin:      'Admin',
+  };
 
   // ── Tab switching ──────────────────────────────────────────────────────────
   function switchTab(target) {
@@ -53,6 +36,10 @@
     sideNavItems.forEach(item => {
       item.classList.toggle('active', item.dataset.tab === target);
     });
+
+    // Update header label
+    const tabLabelEl = document.getElementById('currentTabLabel');
+    if (tabLabelEl) tabLabelEl.textContent = TAB_LABELS[target] || target;
 
     // Show/hide panels
     Object.entries(tabPanels).forEach(([key, panel]) => {
@@ -79,7 +66,6 @@
   sideNavItems.forEach(item => {
     item.addEventListener('click', () => {
       switchTab(item.dataset.tab);
-      closeMenu();
     });
   });
 

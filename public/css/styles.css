@@ -1873,3 +1873,58 @@ body.login-page {
 .age-new { color: var(--muted); font-style: italic; }
 .age-unknown { color: var(--muted); }
 
+/* ── Permanent sidebar layout ──────────────────────────────────────────────────── */
+#dashboard {
+  margin-left: 280px;
+}
+
+/* ── Header center tab label ─────────────────────────────────────────────────── */
+.header-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  min-width: 0;
+}
+.current-tab-label {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Side nav upload footer ─────────────────────────────────────────────────── */
+.side-nav-footer {
+  margin-top: auto;
+  padding: 0.75rem 0.6rem 1rem;
+  border-top: 1.5px solid rgba(0,186,223,.18);
+  flex-shrink: 0;
+}
+.side-upload-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.72rem 1rem;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--logo-blue) 0%, var(--logo-cyan) 100%);
+  color: #fff;
+  font-family: var(--font);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: opacity .18s, box-shadow .18s;
+  letter-spacing: .2px;
+  box-sizing: border-box;
+}
+.side-upload-btn:hover {
+  opacity: 0.88;
+  box-shadow: 0 4px 16px rgba(0,102,204,.30);
+}
+.side-upload-btn[hidden] { display: none; }
+
