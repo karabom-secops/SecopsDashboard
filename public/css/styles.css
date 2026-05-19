@@ -1500,25 +1500,20 @@ body.login-page {
   pointer-events: auto;
 }
 
-/* ── Side menu drawer ──────────────────────────────────────────────────────── */
+/* ── Side menu (permanent sidebar) ────────────────────────────────────────── */
 .side-menu {
   position: fixed;
-  top: 0;
+  top: 66px;
   left: 0;
   width: 280px;
-  height: 100vh;
+  height: calc(100vh - 66px);
   background: linear-gradient(175deg, #fff 0%, #f4fbff 100%);
   border-right: 2px solid rgba(0,186,223,.25);
-  box-shadow: 6px 0 32px rgba(0,102,204,.16);
-  z-index: 200;
+  box-shadow: 3px 0 20px rgba(0,102,204,.10);
+  z-index: 90;
   display: flex;
   flex-direction: column;
-  transform: translateX(-100%);
-  transition: transform .28s cubic-bezier(.4,0,.2,1);
   overflow-y: auto;
-}
-.side-menu.open {
-  transform: translateX(0);
 }
 
 .side-menu-header {
@@ -1927,4 +1922,36 @@ body.login-page {
   box-shadow: 0 4px 16px rgba(0,102,204,.30);
 }
 .side-upload-btn[hidden] { display: none; }
+
+/* ── Side menu user info ───────────────────────────────────────────────────── */
+.side-user-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1.5px solid rgba(0,186,223,.18);
+  flex-shrink: 0;
+  background: rgba(0,102,204,.04);
+}
+.side-user-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.side-username {
+  font-family: var(--font);
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.side-logout-btn {
+  flex-shrink: 0;
+  font-size: 0.78rem !important;
+  padding: 0.3rem 0.7rem !important;
+}
 

@@ -36,17 +36,19 @@
       <select id="weekSelect" title="Select a week">
         <option value="">— Select week —</option>
       </select>
-      <div class="header-user-info">
-        <span id="headerUsername" class="header-username"></span>
-        <span id="headerRole" class="header-role-badge"></span>
-        <button id="logoutBtn" class="btn btn-secondary btn-sm">Sign out</button>
-      </div>
     </div>
   </header>
 
   <!-- ── Dashboard ────────────────────────────────────────────────────────── -->
   <!-- Side navigation drawer -->
   <aside id="sideMenu" class="side-menu" aria-label="Navigation">
+    <div class="side-user-info">
+      <div class="side-user-details">
+        <span id="headerUsername" class="side-username"></span>
+        <span id="headerRole" class="header-role-badge"></span>
+      </div>
+      <button id="logoutBtn" class="btn btn-secondary btn-sm side-logout-btn">Sign out</button>
+    </div>
     <nav class="side-nav">
       <button class="side-nav-item active" data-tab="priorities">
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
