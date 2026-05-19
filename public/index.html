@@ -266,54 +266,123 @@
     <!-- Content (hidden until data loaded) -->
     <div id="awarenessContent" hidden>
 
-      <!-- Stat cards -->
-      <div id="awareness-stat-cards" class="stat-cards-row"></div>
+      <!-- ── Summary format ─────────────────────────────────────────────── -->
+      <div id="awarenessSummaryContent">
 
-      <!-- Distribution chart -->
-      <div class="awareness-chart-card">
-        <h3 class="awareness-card-title">Incomplete Sessions Distribution</h3>
-        <div class="chart-wrap">
-          <canvas id="chartAwarenessDistrib"></canvas>
-        </div>
-      </div>
+        <!-- Stat cards -->
+        <div id="awareness-stat-cards" class="stat-cards-row"></div>
 
-      <!-- Manager breakdown -->
-      <div class="awareness-table-card">
-        <h3 class="awareness-card-title">Breakdown by Manager</h3>
-        <div class="table-scroll">
-          <table class="data-table" id="awarenessManagerTable">
-            <thead>
-              <tr>
-                <th>Manager</th>
-                <th class="col-num">Reports</th>
-                <th class="col-num">Incomplete Sessions</th>
-                <th>Worst Offender</th>
-                <th class="col-num">Their Count</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+        <!-- Distribution chart -->
+        <div class="awareness-chart-card">
+          <h3 class="awareness-card-title">Incomplete Sessions Distribution</h3>
+          <div class="chart-wrap">
+            <canvas id="chartAwarenessDistrib"></canvas>
+          </div>
         </div>
-      </div>
 
-      <!-- Top offenders -->
-      <div class="awareness-table-card">
-        <h3 class="awareness-card-title">Top 10 Employees by Incomplete Sessions</h3>
-        <div class="table-scroll">
-          <table class="data-table" id="awarenessTopTable">
-            <thead>
-              <tr>
-                <th class="col-num">#</th>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Manager</th>
-                <th class="col-num">Incomplete</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+        <!-- Manager breakdown -->
+        <div class="awareness-table-card">
+          <h3 class="awareness-card-title">Breakdown by Manager</h3>
+          <div class="table-scroll">
+            <table class="data-table" id="awarenessManagerTable">
+              <thead>
+                <tr>
+                  <th>Manager</th>
+                  <th class="col-num">Reports</th>
+                  <th class="col-num">Incomplete Sessions</th>
+                  <th>Worst Offender</th>
+                  <th class="col-num">Their Count</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
-      </div>
+
+        <!-- Top offenders -->
+        <div class="awareness-table-card">
+          <h3 class="awareness-card-title">Top 10 Employees by Incomplete Sessions</h3>
+          <div class="table-scroll">
+            <table class="data-table" id="awarenessTopTable">
+              <thead>
+                <tr>
+                  <th class="col-num">#</th>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Manager</th>
+                  <th class="col-num">Incomplete</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /awarenessSummaryContent -->
+
+      <!-- ── Session History format ──────────────────────────────────────── -->
+      <div id="awarenessHistoryContent" hidden>
+
+        <!-- History stat cards -->
+        <div id="awareness-history-stat-cards" class="stat-cards-row"></div>
+
+        <!-- Training type breakdown chart -->
+        <div class="awareness-chart-card">
+          <h3 class="awareness-card-title">Training Type Breakdown</h3>
+          <div class="chart-wrap">
+            <canvas id="chartAwarenessTypeBreakdown"></canvas>
+          </div>
+        </div>
+
+        <!-- Monthly completion trend chart -->
+        <div class="awareness-chart-card">
+          <h3 class="awareness-card-title">Monthly Completion Trend</h3>
+          <div class="chart-wrap">
+            <canvas id="chartAwarenessTrend"></canvas>
+          </div>
+        </div>
+
+        <!-- Phishing click table -->
+        <div class="awareness-table-card">
+          <h3 class="awareness-card-title">Phishing Simulation — Employees Who Clicked</h3>
+          <div class="table-scroll">
+            <table class="data-table" id="awarenessPhishingTable">
+              <thead>
+                <tr>
+                  <th class="col-num">#</th>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Manager</th>
+                  <th class="col-num">Clicks</th>
+                  <th>Most Recent Simulation</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Per-user completion table -->
+        <div class="awareness-table-card">
+          <h3 class="awareness-card-title">Employee Training Completion</h3>
+          <div class="table-scroll">
+            <table class="data-table" id="awarenessUserCompletionTable">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Manager</th>
+                  <th class="col-num">Assigned</th>
+                  <th class="col-num">Completed</th>
+                  <th class="col-num">%</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /awarenessHistoryContent -->
 
     </div><!-- /awarenessContent -->
   </section>

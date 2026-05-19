@@ -18,7 +18,7 @@ const { requireAuth, requireAdmin, requireSuperAdmin } = require('./lib/auth-mid
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
 const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
-const { parseAwarenessCSV } = require('./lib/awareness-parser');
+const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -1275,46 +1275,105 @@ app.post('/api/awareness/upload', requireAdmin, awarenessUpload.single('awarenes
     const { tenantId, error: tenantErr } = resolveAwarenessTenant(req, 'body');
     if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
 
-    let parsed;
-    try {
-      parsed = parseAwarenessCSV(req.file.buffer.toString('utf8'));
-    } catch (parseErr) {
-      return res.status(400).json({ error: parseErr.message });
-    }
-
-    const { rows, totalUsers, totalIncomplete } = parsed;
+    const fileText   = req.file.buffer.toString('utf8');
+    const formatType = detectAwarenessFormat(fileText);
 
     await client.query('BEGIN');
-
-    // Delete existing upload for this tenant (cascade deletes users)
+    // Delete existing upload for this tenant (cascade deletes users + sessions)
     await client.query('DELETE FROM awareness_uploads WHERE tenant_id = $1', [tenantId]);
 
-    const uploadRes = await client.query(
-      `INSERT INTO awareness_uploads (tenant_id, uploaded_by, total_users, total_incomplete)
-       VALUES ($1, $2, $3, $4) RETURNING id, uploaded_at`,
-      [tenantId, req.session.userId, totalUsers, totalIncomplete]
-    );
-    const uploadId  = uploadRes.rows[0].id;
-    const uploadedAt = uploadRes.rows[0].uploaded_at;
+    if (formatType === 'history') {
+      // ── Session History CSV ──────────────────────────────────────────────
+      let parsed;
+      try {
+        parsed = parseSessionHistoryCSV(fileText);
+      } catch (parseErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        return res.status(400).json({ error: parseErr.message });
+      }
 
-    // Bulk insert users
-    for (const row of rows) {
-      await client.query(
-        `INSERT INTO awareness_users
-           (upload_id, manager_first_name, manager_last_name, manager_email,
-            user_first_name, user_last_name, user_email, incomplete_sessions)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          uploadId,
-          row.managerFirstName, row.managerLastName, row.managerEmail,
-          row.userFirstName,    row.userLastName,    row.userEmail,
-          row.incompleteSessions,
-        ]
+      const { rows, stats } = parsed;
+      const notStartedCount = rows.filter(r =>
+        r.status === 'Not Started' &&
+        r.sessionType !== 'Phishing Simulation'
+      ).length;
+
+      const uploadRes = await client.query(
+        `INSERT INTO awareness_uploads (tenant_id, uploaded_by, total_users, total_incomplete, upload_type)
+         VALUES ($1, $2, $3, $4, 'history') RETURNING id, uploaded_at`,
+        [tenantId, req.session.userId, stats.uniqueUsers, notStartedCount]
       );
-    }
+      const uploadId   = uploadRes.rows[0].id;
+      const uploadedAt = uploadRes.rows[0].uploaded_at;
 
-    await client.query('COMMIT');
-    return res.json({ tenantId, totalUsers, totalIncomplete, uploadedAt });
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO awareness_sessions
+             (upload_id, user_first_name, user_last_name, user_email,
+              manager_first_name, manager_last_name, manager_email,
+              sent_date, session_type, title, status,
+              completed_date, elapsed_seconds, clicked_at, quiz_score)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+          [
+            uploadId,
+            row.userFirstName, row.userLastName, row.userEmail,
+            row.managerFirstName, row.managerLastName, row.managerEmail,
+            row.sentDate        ? new Date(row.sentDate)        : null,
+            row.sessionType,
+            row.title,
+            row.status,
+            row.completedDate   ? new Date(row.completedDate)   : null,
+            row.elapsedSeconds,
+            row.clickedAt       ? new Date(row.clickedAt)       : null,
+            row.quizScore,
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+      return res.json({
+        tenantId, uploadedAt, uploadType: 'history',
+        totalUsers: stats.uniqueUsers, totalRows: stats.totalRows, notStarted: notStartedCount,
+      });
+
+    } else {
+      // ── Summary CSV (existing behaviour) ────────────────────────────────
+      let parsed;
+      try {
+        parsed = parseAwarenessCSV(fileText);
+      } catch (parseErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        return res.status(400).json({ error: parseErr.message });
+      }
+
+      const { rows, totalUsers, totalIncomplete } = parsed;
+
+      const uploadRes = await client.query(
+        `INSERT INTO awareness_uploads (tenant_id, uploaded_by, total_users, total_incomplete, upload_type)
+         VALUES ($1, $2, $3, $4, 'summary') RETURNING id, uploaded_at`,
+        [tenantId, req.session.userId, totalUsers, totalIncomplete]
+      );
+      const uploadId   = uploadRes.rows[0].id;
+      const uploadedAt = uploadRes.rows[0].uploaded_at;
+
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO awareness_users
+             (upload_id, manager_first_name, manager_last_name, manager_email,
+              user_first_name, user_last_name, user_email, incomplete_sessions)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            uploadId,
+            row.managerFirstName, row.managerLastName, row.managerEmail,
+            row.userFirstName,    row.userLastName,    row.userEmail,
+            row.incompleteSessions,
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+      return res.json({ tenantId, totalUsers, totalIncomplete, uploadedAt, uploadType: 'summary' });
+    }
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     return serverError(res, err);
@@ -1329,14 +1388,29 @@ app.get('/api/awareness', requireAuth, async (req, res) => {
     if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
 
     const uploadRes = await pool.query(
-      'SELECT id, uploaded_at, total_users, total_incomplete FROM awareness_uploads WHERE tenant_id = $1',
+      'SELECT id, uploaded_at, total_users, total_incomplete, upload_type FROM awareness_uploads WHERE tenant_id = $1',
       [tenantId]
     );
     if (uploadRes.rows.length === 0) {
-      return res.json({ upload: null, users: [] });
+      return res.json({ upload: null, users: [], sessions: [] });
     }
 
     const upload = uploadRes.rows[0];
+
+    if ((upload.upload_type || 'summary') === 'history') {
+      const sessRes = await pool.query(
+        `SELECT user_first_name, user_last_name, user_email,
+                manager_first_name, manager_last_name, manager_email,
+                sent_date, session_type, title, status,
+                completed_date, elapsed_seconds, clicked_at, quiz_score
+         FROM awareness_sessions WHERE upload_id = $1
+         ORDER BY sent_date ASC, user_last_name, user_first_name`,
+        [upload.id]
+      );
+      return res.json({ upload, sessions: sessRes.rows, users: [] });
+    }
+
+    // Summary format — existing behaviour
     const usersRes = await pool.query(
       `SELECT manager_first_name, manager_last_name, manager_email,
               user_first_name, user_last_name, user_email, incomplete_sessions
@@ -1344,8 +1418,7 @@ app.get('/api/awareness', requireAuth, async (req, res) => {
        ORDER BY incomplete_sessions DESC, user_last_name, user_first_name`,
       [upload.id]
     );
-
-    return res.json({ upload, users: usersRes.rows });
+    return res.json({ upload, users: usersRes.rows, sessions: [] });
   } catch (err) {
     return serverError(res, err);
   }
