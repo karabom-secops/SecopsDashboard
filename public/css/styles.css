@@ -1279,6 +1279,24 @@ body.login-page {
   background: var(--surface2);
 }
 
+.login-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 1rem 0 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--border);
+}
+.login-divider span {
+  padding: 0 0.75rem;
+}
+
 .enroll-qr {
   display: block;
   margin: 0.75rem auto;

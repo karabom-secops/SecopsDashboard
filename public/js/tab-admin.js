@@ -211,11 +211,13 @@
 
       tbody.innerHTML = data.map(u => {
         const isSelf   = window.currentUser && u.id === window.currentUser.id;
+        const isSso    = u.auth_type === 'saml';
         const roleTag  = u.role === 'superadmin'
           ? '<span class="role-badge role-superadmin">Super Admin</span>'
           : u.role === 'admin'
             ? '<span class="role-badge role-admin">Admin</span>'
             : '<span class="role-badge role-readonly">Read-only</span>';
+        const ssoTag   = isSso ? ' <span class="role-badge">SSO</span>' : '';
         const tenantCell = showTenantCol
           ? `<td>${escapeHtml(u.tenant_name || '—')}</td>`
           : '';
@@ -225,13 +227,14 @@
 
         return `<tr>
           <td>${escapeHtml(u.username)}${isSelf ? ' <span class="admin-self-label">(you)</span>' : ''}</td>
-          <td>${roleTag}</td>
+          <td>${roleTag}${ssoTag}</td>
           ${tenantCell}
           <td>${formatDate(u.created_at)}</td>
           <td>${formatDate(u.last_login)}</td>
           <td class="admin-actions">
             <button class="btn btn-secondary btn-sm" data-action="edit-user"
               data-id="${u.id}" data-username="${escapeHtml(u.username)}" data-role="${u.role}"
+              data-auth-type="${u.auth_type || 'local'}"
               ${isSelf ? 'disabled title="Cannot change your own role"' : ''}>
               Edit
             </button>
@@ -298,7 +301,7 @@
 
   // ── Edit user modal ───────────────────────────────────────────────────────
 
-  function openEditModal(userId, username, currentRole, currentTenantIds) {
+  function openEditModal(userId, username, currentRole, currentTenantIds, authType) {
     const modal = document.getElementById('editUserModal');
     if (!modal) return;
 
@@ -306,6 +309,11 @@
     document.getElementById('editUserTitle').textContent = `Edit: ${username}`;
     document.getElementById('editUserPassword').value    = '';
     document.getElementById('editUserError').hidden      = true;
+
+    // Hide password field for SSO users
+    const pwdGroup = document.getElementById('editUserPassword') &&
+                     document.getElementById('editUserPassword').closest('.form-group');
+    if (pwdGroup) pwdGroup.hidden = (authType === 'saml');
 
     const roleSelect  = document.getElementById('editUserRole');
     const allowedRoles = isSuperAdmin()
@@ -491,8 +499,9 @@
         const userId     = parseInt(btn.dataset.id, 10);
         const username   = btn.dataset.username || '';
         const tenantIds  = JSON.parse(btn.dataset.tenantIds || '[]');
+        const authType   = btn.dataset.authType || 'local';
         if (action === 'delete-user') handleDeleteUser(userId, username);
-        else if (action === 'edit-user') openEditModal(userId, username, btn.dataset.role, tenantIds);
+        else if (action === 'edit-user') openEditModal(userId, username, btn.dataset.role, tenantIds, authType);
       });
     }
 

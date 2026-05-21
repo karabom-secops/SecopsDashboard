@@ -30,8 +30,8 @@ CREATE TABLE IF NOT EXISTS tenants (
 
 CREATE TABLE IF NOT EXISTS users (
   id               SERIAL PRIMARY KEY,
-  username         VARCHAR(30) UNIQUE NOT NULL,
-  password_hash    TEXT        NOT NULL,
+  username         VARCHAR(254) UNIQUE NOT NULL,
+  password_hash    TEXT,
   role             VARCHAR(15) NOT NULL DEFAULT 'readonly'
                      CONSTRAINT users_role_chk CHECK (role IN ('superadmin', 'admin', 'readonly')),
   tenant_id        INT         REFERENCES tenants(id) ON DELETE SET NULL,
@@ -39,8 +39,13 @@ CREATE TABLE IF NOT EXISTS users (
   last_login       TIMESTAMPTZ,
   totp_secret      TEXT,
   totp_enabled     BOOLEAN     NOT NULL DEFAULT FALSE,
-  totp_required    BOOLEAN     NOT NULL DEFAULT FALSE
+  totp_required    BOOLEAN     NOT NULL DEFAULT FALSE,
+  auth_type        VARCHAR(10) NOT NULL DEFAULT 'local',
+  saml_nameid      TEXT
 );
+CREATE UNIQUE INDEX IF NOT EXISTS users_saml_nameid_unique
+  ON users(saml_nameid)
+  WHERE saml_nameid IS NOT NULL;
 
 -- ── Vulnerability Scans ───────────────────────────────────────────────────
 -- month_key is unique per tenant, not globally unique.

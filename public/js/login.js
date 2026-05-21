@@ -10,6 +10,23 @@
   var errEl   = document.getElementById('login-error');
   var btn     = document.getElementById('login-btn');
 
+  // ── SSO button ────────────────────────────────────────────────────────
+  var ssoSection = document.getElementById('sso-section');
+  var ssoBtn     = document.getElementById('sso-btn');
+
+  fetch('api/auth/saml/enabled', { credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.enabled && ssoSection) ssoSection.hidden = false;
+    })
+    .catch(function () {});
+
+  if (ssoBtn) {
+    ssoBtn.addEventListener('click', function () {
+      window.location.href = 'api/auth/saml/login';
+    });
+  }
+
   // ── Step 2a: TOTP verify ───────────────────────────────────────────────
   var mfaStep    = document.getElementById('mfa-step');
   var mfaCode    = document.getElementById('mfa-code');

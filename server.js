@@ -19,6 +19,7 @@ const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
 const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
+const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -299,6 +300,122 @@ app.get('/api/auth/me', (req, res) => {
   });
 });
 
+// ── SAML / SSO routes (public — no requireAuth) ─────────────────────────
+
+// Reports whether SSO is configured so the login page can show the button.
+app.get('/api/auth/saml/enabled', (req, res) => {
+  res.json({ enabled: isSamlEnabled() });
+});
+
+// Initiates SSO: redirects browser to Azure AD login page.
+app.get('/api/auth/saml/login', async (req, res) => {
+  if (!isSamlEnabled()) {
+    return res.status(404).json({ error: 'SSO is not enabled.' });
+  }
+  try {
+    const url = await getSamlLoginUrl();
+    res.redirect(url);
+  } catch (err) {
+    console.error('[saml] login redirect error:', err.message);
+    res.status(500).send('SSO login failed. Please try again or use your local account.');
+  }
+});
+
+// ACS endpoint: Azure AD POSTs the SAML assertion here.
+// External URL: https://secops.reflex.co.za/secops/api/auth/saml/callback
+// Express sees: POST /api/auth/saml/callback  (nginx strips /secops/)
+app.post('/api/auth/saml/callback', async (req, res) => {
+  if (!isSamlEnabled()) {
+    return res.status(404).json({ error: 'SSO is not enabled.' });
+  }
+  try {
+    const { profile } = await validateSamlResponse(req.body);
+    if (!profile || !profile.nameID) {
+      return res.status(401).send('SSO failed: no identity returned.');
+    }
+
+    const nameId = profile.nameID.trim();
+
+    // Look up existing SAML account
+    let userResult = await pool.query(
+      'SELECT id, username, role, tenant_id, auth_type FROM users WHERE saml_nameid = $1',
+      [nameId]
+    );
+
+    let user;
+    if (userResult.rows.length === 0) {
+      // New SSO user — provision with readonly role, no tenant
+      try {
+        const inserted = await pool.query(
+          `INSERT INTO users (username, auth_type, saml_nameid, role, tenant_id)
+           VALUES ($1, 'saml', $2, 'readonly', NULL)
+           RETURNING id, username, role, tenant_id`,
+          [nameId, nameId]
+        );
+        user = inserted.rows[0];
+        console.log('[saml] provisioned new user:', nameId);
+      } catch (insertErr) {
+        if (insertErr.code === '23505') {
+          // Username collision with an existing local account
+          console.error('[saml] username collision for nameID:', nameId);
+          return res.status(409).send(
+            'An account with this email already exists as a local user. ' +
+            'Please contact your administrator to link your SSO account.'
+          );
+        }
+        throw insertErr;
+      }
+    } else {
+      user = userResult.rows[0];
+    }
+
+    await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+
+    // Load tenant assignments
+    let tenantIds = [];
+    if (user.role !== 'superadmin') {
+      const tRes = await pool.query(
+        'SELECT tenant_id FROM user_tenants WHERE user_id = $1 ORDER BY tenant_id',
+        [user.id]
+      );
+      tenantIds = tRes.rows.map(r => r.tenant_id);
+    }
+
+    req.session.userId     = user.id;
+    req.session.username   = user.username;
+    req.session.role       = user.role;
+    req.session.tenantId   = user.tenant_id || (tenantIds[0] || null);
+    req.session.tenantIds  = tenantIds;
+    req.session.totpEnabled = false;
+
+    // Redirect to dashboard (full public path with nginx prefix)
+    req.session.save(err => {
+      if (err) {
+        console.error('[saml] session save error:', err.message);
+        return res.status(500).send('SSO session error. Please try again.');
+      }
+      res.redirect('/secops/');
+    });
+  } catch (err) {
+    console.error('[saml] callback error:', err.message);
+    res.status(401).send('SSO authentication failed. Please try again.');
+  }
+});
+
+// Returns SP metadata XML — useful for Azure AD app registration.
+app.get('/api/auth/saml/metadata', (req, res) => {
+  if (!isSamlEnabled()) {
+    return res.status(404).json({ error: 'SSO is not enabled.' });
+  }
+  try {
+    const xml = getSamlMetadata();
+    res.set('Content-Type', 'application/xml');
+    res.send(xml);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── All remaining /api/* routes require a valid session ───────────────────
 
 app.use('/api', requireAuth);
@@ -497,7 +614,7 @@ app.get('/api/users', requireAdmin, async (req, res) => {
     let result;
     if (isSA) {
       result = await pool.query(
-        `SELECT u.id, u.username, u.role, u.tenant_id, t.name AS tenant_name,
+        `SELECT u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name AS tenant_name,
                 u.created_at, u.last_login,
                 COALESCE(
                   ARRAY_AGG(DISTINCT ut.tenant_id) FILTER (WHERE ut.tenant_id IS NOT NULL),
@@ -506,12 +623,12 @@ app.get('/api/users', requireAdmin, async (req, res) => {
          FROM users u
          LEFT JOIN tenants t  ON t.id  = u.tenant_id
          LEFT JOIN user_tenants ut ON ut.user_id = u.id
-         GROUP BY u.id, u.username, u.role, u.tenant_id, t.name, u.created_at, u.last_login
+         GROUP BY u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name, u.created_at, u.last_login
          ORDER BY u.created_at ASC`
       );
     } else {
       result = await pool.query(
-        `SELECT u.id, u.username, u.role, u.tenant_id, t.name AS tenant_name,
+        `SELECT u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name AS tenant_name,
                 u.created_at, u.last_login,
                 COALESCE(
                   ARRAY_AGG(DISTINCT ut.tenant_id) FILTER (WHERE ut.tenant_id IS NOT NULL),
@@ -521,7 +638,7 @@ app.get('/api/users', requireAdmin, async (req, res) => {
          LEFT JOIN tenants t  ON t.id  = u.tenant_id
          LEFT JOIN user_tenants ut ON ut.user_id = u.id
          WHERE u.tenant_id = $1
-         GROUP BY u.id, u.username, u.role, u.tenant_id, t.name, u.created_at, u.last_login
+         GROUP BY u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name, u.created_at, u.last_login
          ORDER BY u.created_at ASC`,
         [req.session.tenantId]
       );
@@ -611,12 +728,17 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
     const isSA = req.session.role === 'superadmin';
 
     // Tenant admin can only edit users in their own tenant.
+    let targetAuthType = 'local';
     if (!isSA) {
-      const check = await pool.query('SELECT tenant_id FROM users WHERE id=$1', [targetId]);
+      const check = await pool.query('SELECT tenant_id, auth_type FROM users WHERE id=$1', [targetId]);
       if (check.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
       if (check.rows[0].tenant_id !== req.session.tenantId) {
         return res.status(403).json({ error: 'You can only edit users in your own organisation.' });
       }
+      targetAuthType = check.rows[0].auth_type || 'local';
+    } else {
+      const check = await pool.query('SELECT auth_type FROM users WHERE id=$1', [targetId]);
+      if (check.rows.length > 0) targetAuthType = check.rows[0].auth_type || 'local';
     }
 
     const { role, password, tenantIds } = req.body;
@@ -636,6 +758,9 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
     }
 
     if (password !== undefined) {
+      if (targetAuthType === 'saml') {
+        return res.status(400).json({ error: 'Cannot set a password for SSO users.' });
+      }
       if (String(password).length < 8) {
         return res.status(400).json({ error: 'Password must be at least 8 characters.' });
       }
