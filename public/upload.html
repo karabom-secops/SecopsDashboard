@@ -182,6 +182,35 @@
       </form>
     </div>
 
+    <!-- ── Incidents (MDR Tickets) Upload ────────────────────────────────── -->
+    <div class="upload-card">
+      <div class="card-section-label">Incidents</div>
+      <h2>Upload MDR Ticket Overview</h2>
+      <p class="card-subtitle">Upload an Arctic Wolf MDR ticket export CSV to track incident status and resolution metrics.</p>
+
+      <form id="incidentsUploadForm" novalidate>
+        <!-- Tenant selector — shown to superadmin only (upload.js controls visibility) -->
+        <div id="incidentsTenantSelectWrap" class="form-group" hidden>
+          <label for="incidentsTenantId">Organisation</label>
+          <select id="incidentsTenantId" class="scan-select">
+            <option value="">&mdash; Select tenant &mdash;</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="incidentsFile">MDR Ticket CSV</label>
+          <input type="file" id="incidentsFile" accept=".csv,text/csv" required />
+        </div>
+
+        <div id="incidentsUploadError" class="upload-error" hidden></div>
+
+        <button type="submit" id="btnIncidentsUpload" class="btn btn-primary btn-block">
+          <span id="incidentsBtnLabel">Upload CSV</span>
+          <span id="incidentsSpinner" class="spinner" hidden></span>
+        </button>
+      </form>
+    </div>
+
   </main>
 
   <script src="js/auth.js"></script>
