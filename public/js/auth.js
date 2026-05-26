@@ -121,8 +121,6 @@
                   window.renderVulns();
                 } else if (activePanel.id === 'tab-awareness' && typeof window.renderAwareness === 'function') {
                   window.renderAwareness();
-                } else if (activePanel.id === 'tab-incidents' && typeof window.renderIncidents === 'function') {
-                  window.renderIncidents();
                 }
               }
             });

@@ -288,24 +288,8 @@
     var btnIncidents   = document.getElementById('btnIncidentsUpload');
     var incidentsLabel = document.getElementById('incidentsBtnLabel');
     var incidentsSpinner = document.getElementById('incidentsSpinner');
-    var tenantWrap     = document.getElementById('incidentsTenantSelectWrap');
-    var tenantSel      = document.getElementById('incidentsTenantId');
 
     if (!incidentsForm) return;
-
-    if (window.currentUser && window.currentUser.role === 'superadmin') {
-      try {
-        const res = await fetch('api/tenants');
-        const tenants = res.ok ? await res.json() : [];
-        tenants.forEach(t => {
-          const opt = document.createElement('option');
-          opt.value = t.id;
-          opt.textContent = t.name;
-          tenantSel.appendChild(opt);
-        });
-        if (tenantWrap) tenantWrap.hidden = false;
-      } catch (_) {}
-    }
 
     function showIncidentsError(msg) { incidentsErr.textContent = msg; incidentsErr.hidden = false; }
     function clearIncidentsError() { incidentsErr.hidden = true; incidentsErr.textContent = ''; }
@@ -322,17 +306,8 @@
       const file = incidentsFile.files[0];
       if (!file) { showIncidentsError('Please select a CSV file.'); return; }
 
-      const isSA = window.currentUser && window.currentUser.role === 'superadmin';
-      if (isSA && tenantSel && !tenantSel.value) {
-        showIncidentsError('Please select a tenant / organisation.');
-        return;
-      }
-
       const fd = new FormData();
       fd.append('mdrFile', file);
-      if (isSA && tenantSel && tenantSel.value) {
-        fd.append('tenantId', tenantSel.value);
-      }
 
       setIncidentsLoading(true);
       try {

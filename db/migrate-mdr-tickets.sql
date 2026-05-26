@@ -9,14 +9,13 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS mdr_uploads (
   id               SERIAL PRIMARY KEY,
-  tenant_id        INT         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tenant_id        INT         REFERENCES tenants(id) ON DELETE CASCADE,
   uploaded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   uploaded_by      INT         REFERENCES users(id) ON DELETE SET NULL,
   total_tickets    INT         NOT NULL DEFAULT 0,
   resolved_count   INT         NOT NULL DEFAULT 0,
   pending_count    INT         NOT NULL DEFAULT 0,
-  avg_resolution_hours NUMERIC(10, 2),
-  UNIQUE (tenant_id)   -- latest-only: one upload per tenant
+  avg_resolution_hours NUMERIC(10, 2)
 );
 
 CREATE INDEX IF NOT EXISTS idx_mdr_uploads_tenant ON mdr_uploads (tenant_id);

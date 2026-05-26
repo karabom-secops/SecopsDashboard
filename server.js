@@ -54,6 +54,9 @@ function recomputeMetrics() {
 
 const PUBLIC = path.join(__dirname, 'public');
 
+// Trust proxy — required when behind nginx/reverse proxy for X-Forwarded-For headers
+app.set('trust proxy', 1);
+
 // Serve static assets BEFORE session/auth so the login page loads without auth.
 app.use('/secops', express.static(PUBLIC));
 app.use(express.static(PUBLIC));
@@ -1592,9 +1595,6 @@ app.post('/api/mdr/upload', requireAdmin, mdrUpload.single('mdrFile'), async (re
       return res.status(400).json({ error: 'No file uploaded.' });
     }
 
-    const { tenantId, error: tenantErr } = resolveMdrTenant(req, 'body');
-    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
-
     const fileText = req.file.buffer.toString('utf8');
     let parsed;
     try {
@@ -1606,15 +1606,15 @@ app.post('/api/mdr/upload', requireAdmin, mdrUpload.single('mdrFile'), async (re
     const { tickets, stats } = parsed;
 
     await client.query('BEGIN');
-    // Delete existing upload for this tenant (cascade deletes tickets)
-    await client.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
+    // Delete all existing uploads (system-wide, non-tenant-scoped)
+    await client.query('DELETE FROM mdr_uploads WHERE tenant_id IS NULL');
 
     const uploadRes = await client.query(
       `INSERT INTO mdr_uploads
          (tenant_id, uploaded_by, total_tickets, resolved_count, pending_count, avg_resolution_hours)
-       VALUES ($1, $2, $3, $4, $5, $6)
+       VALUES (NULL, $1, $2, $3, $4, $5)
        RETURNING id, uploaded_at`,
-      [tenantId, req.session.userId, stats.total, stats.resolved, stats.pending, stats.avgResolutionHours]
+      [req.session.userId, stats.total, stats.resolved, stats.pending, stats.avgResolutionHours]
     );
     const uploadId = uploadRes.rows[0].id;
     const uploadedAt = uploadRes.rows[0].uploaded_at;
@@ -1641,8 +1641,8 @@ app.post('/api/mdr/upload', requireAdmin, mdrUpload.single('mdrFile'), async (re
     }
 
     await client.query('COMMIT');
-    console.log(`[mdr] Upload (tenant ${tenantId}): ${stats.total} tickets, ${stats.resolved} resolved`);
-    return res.json({ tenantId, uploadedAt, stats });
+    console.log(`[mdr] Upload: ${stats.total} tickets, ${stats.resolved} resolved`);
+    return res.json({ uploadedAt, stats });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     return serverError(res, err);
@@ -1653,13 +1653,10 @@ app.post('/api/mdr/upload', requireAdmin, mdrUpload.single('mdrFile'), async (re
 
 app.get('/api/mdr', requireAuth, async (req, res) => {
   try {
-    const { tenantId, error: tenantErr } = resolveMdrTenant(req, 'query');
-    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
-
     const uploadRes = await pool.query(
       `SELECT id, uploaded_at, total_tickets, resolved_count, pending_count, avg_resolution_hours
-       FROM mdr_uploads WHERE tenant_id = $1`,
-      [tenantId]
+       FROM mdr_uploads WHERE tenant_id IS NULL
+       ORDER BY uploaded_at DESC LIMIT 1`
     );
 
     if (uploadRes.rows.length === 0) {
@@ -1685,10 +1682,7 @@ app.get('/api/mdr', requireAuth, async (req, res) => {
 
 app.get('/api/mdr/trends', requireAuth, async (req, res) => {
   try {
-    const { tenantId, error: tenantErr } = resolveMdrTenant(req, 'query');
-    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
-
-    // Get ticket status distribution from latest upload
+    // Get ticket status distribution from latest system-wide upload
     const statsRes = await pool.query(
       `SELECT
          (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND status = 'solved')::int AS solved,
@@ -1698,9 +1692,9 @@ app.get('/api/mdr/trends', requireAuth, async (req, res) => {
          (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND severity = 'MEDIUM')::int AS medium_severity,
          (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND severity = 'LOW')::int AS low_severity
        FROM mdr_uploads mu
-       WHERE mu.tenant_id = $1
-       LIMIT 1`,
-      [tenantId]
+       WHERE mu.tenant_id IS NULL
+       ORDER BY mu.uploaded_at DESC
+       LIMIT 1`
     );
 
     const stats = statsRes.rows.length > 0 ? statsRes.rows[0] : null;
@@ -1712,10 +1706,7 @@ app.get('/api/mdr/trends', requireAuth, async (req, res) => {
 
 app.delete('/api/mdr', requireAdmin, async (req, res) => {
   try {
-    const { tenantId, error: tenantErr } = resolveMdrTenant(req, 'query');
-    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
-
-    await pool.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
+    await pool.query('DELETE FROM mdr_uploads WHERE tenant_id IS NULL');
     return res.json({ ok: true });
   } catch (err) {
     return serverError(res, err);

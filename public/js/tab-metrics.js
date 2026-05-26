@@ -4,13 +4,24 @@
   'use strict';
 
   // ── Public render ──────────────────────────────────────────────────────────
-  window.renderMetrics = function renderMetrics(weekData, summaryData) {
+  window.renderMetrics = async function renderMetrics(weekData, summaryData) {
     const weekKey = window.currentWeekKey;
 
     // Find the metrics entry for the current week
     const currentMetrics = summaryData.find(m => m.weekKey === weekKey) || null;
 
-    renderStatCards(currentMetrics);
+    // Fetch incidents data to enhance metrics display
+    let incidentsData = null;
+    try {
+      const res = await fetch('api/mdr');
+      if (res.ok) {
+        incidentsData = await res.json();
+      }
+    } catch (_) {
+      // Non-critical: incidents data is optional enhancement
+    }
+
+    renderStatCards(currentMetrics, incidentsData);
 
     // Draw all four line charts
     const labels = summaryData.map(m => fmtLabel(m.weekCommencing));
@@ -65,25 +76,32 @@
   };
 
   // ── Stat cards ─────────────────────────────────────────────────────────────
-  function renderStatCards(m) {
+  function renderStatCards(m, incidentsData) {
     const container = document.getElementById('metrics-stat-cards');
-    if (!m) {
+    if (!m && (!incidentsData || !incidentsData.upload)) {
       container.innerHTML = '<p style="color:var(--muted);font-size:.87rem">No metrics available for this week.</p>';
       return;
     }
 
-    const d = m.deltas || {};
+    const d = m ? (m.deltas || {}) : {};
+    const upload = incidentsData ? incidentsData.upload : null;
 
-    container.innerHTML = [
-      metricCard('Total Alerts',      m.orgs.totalAlerts,          deltaHtml(d.totalAlerts,      'worse-up'),   'accent-red'),
-      metricCard('Escalated',         m.orgs.totalEscalated,       deltaHtml(d.totalEscalated,   'worse-up'),   'accent-amber'),
-      metricCard('Resolution Rate',   m.priorities.resolutionRate + '%', deltaHtml(d.resolutionRate, 'better-up'), 'accent-green'),
-      metricCard('Avg Coverage',      m.orgs.avgCoverageScore !== null ? m.orgs.avgCoverageScore + '%' : '—',
-                                                                   deltaHtml(d.avgCoverageScore, 'better-up'),  'accent-blue'),
-      metricCard('Critical Open',     m.priorities.criticalOpen,   deltaHtml(d.criticalOpen,     'worse-up'),   m.priorities.criticalOpen > 0 ? 'accent-red' : 'accent-green'),
-      metricCard('Sysmon Deploy',     m.agents.sysmonDeploymentRate !== null ? m.agents.sysmonDeploymentRate + '%' : '—',
-                                                                   deltaHtml(d.sysmonDeploymentRate, 'better-up'), 'accent-blue'),
-    ].join('');
+    const cards = [
+      metricCard('Total Alerts',      m ? m.orgs.totalAlerts : '—',          m ? deltaHtml(d.totalAlerts,      'worse-up') : '', 'accent-red'),
+      metricCard('Escalated',         m ? m.orgs.totalEscalated : '—',       m ? deltaHtml(d.totalEscalated,   'worse-up') : '', 'accent-amber'),
+      metricCard('Resolution Rate',   m ? (m.priorities.resolutionRate + '%') : '—', m ? deltaHtml(d.resolutionRate, 'better-up') : '', 'accent-green'),
+      metricCard('Avg Coverage',      m && m.orgs.avgCoverageScore !== null ? (m.orgs.avgCoverageScore + '%') : '—',
+                                                                   m ? deltaHtml(d.avgCoverageScore, 'better-up') : '',  'accent-blue'),
+      metricCard('Critical Open',     m ? m.priorities.criticalOpen : '—',   m ? deltaHtml(d.criticalOpen,     'worse-up') : '', m && m.priorities.criticalOpen > 0 ? 'accent-red' : 'accent-green'),
+      metricCard('Sysmon Deploy',     m && m.agents.sysmonDeploymentRate !== null ? (m.agents.sysmonDeploymentRate + '%') : '—',
+                                                                   m ? deltaHtml(d.sysmonDeploymentRate, 'better-up') : '', 'accent-blue'),
+      // Incidents cards
+      metricCard('Open Incidents',    upload ? upload.pending_count : '—', '', 'accent-red'),
+      metricCard('Resolved Incidents', upload ? upload.resolved_count : '—', '', 'accent-green'),
+      metricCard('Total MDR Tickets',  upload ? upload.total_tickets : '—', '', 'accent-blue'),
+    ];
+
+    container.innerHTML = cards.join('');
   }
 
   /**

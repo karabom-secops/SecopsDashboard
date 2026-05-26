@@ -15,12 +15,6 @@
       .replace(/'/g, '&#39;');
   }
 
-  function tenantParam(sep) {
-    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
-    if (!isSA || !window.globalTenantId) return '';
-    return sep + 'tenantId=' + encodeURIComponent(window.globalTenantId);
-  }
-
   function formatDate(dateStr) {
     if (!dateStr) return '—';
     const d = new Date(dateStr);
@@ -119,10 +113,9 @@
   }
 
   async function loadIncidents() {
-    const tenantQuery = tenantParam('?');
     const [mdrRes, trendsRes] = await Promise.all([
-      fetch('api/mdr' + tenantQuery),
-      fetch('api/mdr/trends' + tenantQuery),
+      fetch('api/mdr'),
+      fetch('api/mdr/trends'),
     ]);
 
     if (!mdrRes.ok) {
