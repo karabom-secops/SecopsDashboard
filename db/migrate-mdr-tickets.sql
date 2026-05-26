@@ -20,6 +20,13 @@ CREATE TABLE IF NOT EXISTS mdr_uploads (
 
 CREATE INDEX IF NOT EXISTS idx_mdr_uploads_tenant ON mdr_uploads (tenant_id);
 
+-- If this migration is applied to an existing deployment, allow system-wide uploads by
+-- making tenant_id nullable and removing any tenant-level uniqueness constraint.
+ALTER TABLE mdr_uploads ALTER COLUMN tenant_id DROP NOT NULL;
+ALTER TABLE mdr_uploads DROP CONSTRAINT IF EXISTS mdr_uploads_tenant_id_key;
+ALTER TABLE mdr_uploads DROP INDEX IF EXISTS idx_mdr_uploads_tenant;
+CREATE INDEX IF NOT EXISTS idx_mdr_uploads_tenant ON mdr_uploads (tenant_id);
+
 -- ── MDR Tickets ────────────────────────────────────────────────────────────
 -- Individual ticket records
 
