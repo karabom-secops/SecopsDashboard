@@ -10,8 +10,6 @@
   const weekSelect    = document.getElementById('weekSelect');
   const dashboard     = document.getElementById('dashboard');
   const tabPanels     = {
-    priorities: document.getElementById('tab-priorities'),
-    orgs:       document.getElementById('tab-orgs'),
     operations: document.getElementById('tab-operations'),
     metrics:    document.getElementById('tab-metrics'),
     vulns:      document.getElementById('tab-vulns'),
@@ -24,8 +22,6 @@
   const sideNavItems = document.querySelectorAll('.side-nav-item');
 
   const TAB_LABELS = {
-    priorities: 'Priorities',
-    orgs:       'Arctic Wolf Health',
     operations: 'Operations',
     metrics:    'Metrics & Trends',
     vulns:      'Vulnerabilities',
@@ -138,10 +134,7 @@
     // Ensure dashboard is visible
     dashboard.hidden = false;
 
-    // Render all three tabs (metrics only if panel is visible to avoid 0-size canvas)
-    renderPriorities(weekData);
-    renderOrgs(weekData);
-
+    // Render the operations section and other visible tabs (metrics only if panel is visible to avoid 0-size canvas)
     const metricsPanel = tabPanels.metrics;
     if (!metricsPanel.hidden) {
       renderMetrics(weekData, summaryData);
@@ -177,8 +170,6 @@
       ]);
       window._lastWeekData = weekData;
       window._summaryData  = summaryData;
-      renderPriorities(weekData);
-      renderOrgs(weekData);
       if (!tabPanels.metrics.hidden) renderMetrics(weekData, summaryData);
       if (!tabPanels.vulns.hidden) renderVulns();
       if (!tabPanels.operations.hidden) {

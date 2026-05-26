@@ -47,15 +47,7 @@
       <button id="logoutBtn" class="btn btn-secondary btn-sm side-logout-btn">Sign out</button>
     </div>
     <nav class="side-nav">
-      <button class="side-nav-item active" data-tab="priorities">
-        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Priorities
-      </button>
-      <button class="side-nav-item" data-tab="orgs">
-        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        Arctic Wolf Health
-      </button>
-      <button class="side-nav-item" data-tab="operations">
+      <button class="side-nav-item active" data-tab="operations">
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         Operations
       </button>
@@ -90,37 +82,8 @@
 
   <div id="dashboard">
 
-    <!-- Tab: Priorities -->
-    <section id="tab-priorities" class="tab-panel" role="tabpanel">
-      <div id="priorities-stat-cards" class="stat-grid"></div>
-      <div id="priority-filters" class="filter-chips"></div>
-      <div id="priority-list" class="priority-list"></div>
-    </section>
-
-    <!-- Tab: Orgs -->
-    <section id="tab-orgs" class="tab-panel" hidden role="tabpanel">
-      <div id="orgs-stat-cards" class="stat-grid"></div>
-      <div class="table-wrapper">
-        <table id="orgs-table" class="data-table">
-          <thead>
-            <tr>
-              <th data-sort="orgName">Org Name <span class="sort-arrow"></span></th>
-              <th data-sort="alerts">Alerts <span class="sort-arrow"></span></th>
-              <th data-sort="escalated">Escalated <span class="sort-arrow"></span></th>
-              <th data-sort="escalationPct">Esc% <span class="sort-arrow"></span></th>
-              <th data-sort="coverageScore">Coverage <span class="sort-arrow"></span></th>
-              <th data-sort="irPlan">IR Plan <span class="sort-arrow"></span></th>
-              <th id="orgVulnCriticalTh" class="vuln-th" hidden data-sort="vulnCritical">Crit Vulns <span class="sort-arrow"></span></th>
-              <th id="orgVulnHighTh" class="vuln-th" hidden data-sort="vulnHigh">High Vulns <span class="sort-arrow"></span></th>
-            </tr>
-          </thead>
-          <tbody id="orgs-tbody"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- Tab: Operations -->
-    <section id="tab-operations" class="tab-panel" hidden role="tabpanel">
+      <!-- Tab: Operations -->
+    <section id="tab-operations" class="tab-panel" role="tabpanel">
       <div class="operations-section">
         <h2 class="section-heading">Priorities</h2>
         <div id="operations-priorities-stat-cards" class="stat-grid"></div>
