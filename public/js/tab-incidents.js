@@ -133,72 +133,6 @@
     _currentTrends  = trendsRes.ok ? await trendsRes.json() : {};
   }
 
-  function showUploadError(msg) {
-    const errorDiv = document.getElementById('incidentsUploadError');
-    if (!errorDiv) return;
-    errorDiv.textContent = msg;
-    errorDiv.hidden = false;
-  }
-
-  function clearUploadError() {
-    const errorDiv = document.getElementById('incidentsUploadError');
-    if (!errorDiv) return;
-    errorDiv.hidden = true;
-    errorDiv.textContent = '';
-  }
-
-  function setUploadLoading(loading) {
-    const btn = document.getElementById('btnIncidentsUpload');
-    const spinner = document.getElementById('incidentsUploadSpinner');
-    if (btn) btn.disabled = loading;
-    if (spinner) spinner.hidden = !loading;
-  }
-
-  async function initIncidentsUpload() {
-    const form = document.getElementById('incidentsUploadForm');
-    if (!form) return;
-
-    form.addEventListener('submit', async function (e) {
-      e.preventDefault();
-      clearUploadError();
-
-      const fileInput = document.getElementById('incidentsFile');
-      const file = fileInput && fileInput.files.length > 0 ? fileInput.files[0] : null;
-      if (!file) {
-        showUploadError('Please select a CSV file to upload.');
-        return;
-      }
-
-      const isSA = window.currentUser && window.currentUser.role === 'superadmin';
-      if (isSA && !window.globalTenantId) {
-        showUploadError('Please select a tenant in the header before uploading.');
-        return;
-      }
-
-      const fd = new FormData();
-      fd.append('mdrFile', file);
-      if (isSA && window.globalTenantId) {
-        fd.append('tenantId', window.globalTenantId);
-      }
-
-      setUploadLoading(true);
-      try {
-        const res = await fetch('api/mdr/upload', { method: 'POST', body: fd });
-        const data = await res.json();
-        if (!res.ok || data.error) {
-          showUploadError(data.error || `Server error (${res.status})`);
-          return;
-        }
-
-        await window.renderIncidents();
-      } catch (err) {
-        showUploadError('Network error: ' + err.message);
-      } finally {
-        setUploadLoading(false);
-      }
-    });
-  }
-
   function renderAll() {
     const hasUpload = _currentMdrData && _currentMdrData.upload;
     renderStatCards();
@@ -220,10 +154,4 @@
     }
     renderAll();
   };
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initIncidentsUpload);
-  } else {
-    initIncidentsUpload();
-  }
 })();

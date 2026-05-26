@@ -170,22 +170,6 @@
     <section id="tab-incidents" class="tab-panel" hidden role="tabpanel">
       <div id="incidents-stat-cards" class="stat-grid"></div>
       <div id="incidents-upload-info" class="info-row"></div>
-      <div id="incidents-upload-panel" class="upload-panel" data-admin-only>
-        <form id="incidentsUploadForm" class="upload-form">
-          <div class="form-row">
-            <label for="incidentsFile">Arctic Wolf MDR ticket CSV</label>
-            <input type="file" id="incidentsFile" name="mdrFile" accept=".csv,text/csv" />
-          </div>
-          <div id="incidentsUploadError" class="form-error" hidden></div>
-          <div class="form-actions">
-            <button id="btnIncidentsUpload" class="btn btn-primary" type="submit">
-              <span id="incidentsUploadLabel">Upload incident CSV</span>
-              <span id="incidentsUploadSpinner" class="spinner" hidden></span>
-            </button>
-          </div>
-          <p class="upload-note">Admins can upload the Arctic Wolf MDR ticket export here. Superadmins must select a tenant using the global tenant selector.</p>
-        </form>
-      </div>
       <div id="incidents-empty-state" class="empty-state" hidden>
         <div class="vuln-empty-card">
           <p>No ticket overview has been uploaded for this tenant yet.</p>
