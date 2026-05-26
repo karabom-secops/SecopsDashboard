@@ -13,7 +13,6 @@
     operations: document.getElementById('tab-operations'),
     metrics:    document.getElementById('tab-metrics'),
     vulns:      document.getElementById('tab-vulns'),
-    incidents:  document.getElementById('tab-incidents'),
     awareness:  document.getElementById('tab-awareness'),
     admin:      document.getElementById('tab-admin'),
   };
@@ -57,9 +56,6 @@
       if (typeof window.renderIncidents === 'function') {
         window.renderIncidents('operations').catch(() => {});
       }
-    }
-    if (target === 'incidents' && typeof window.renderIncidents === 'function') {
-      window.renderIncidents();
     }
     if (target === 'awareness' && typeof window.renderAwareness === 'function') {
       window.renderAwareness();
@@ -145,11 +141,6 @@
       renderVulns();
     }
 
-    const incidentsPanel = tabPanels.incidents;
-    if (!incidentsPanel.hidden && typeof window.renderIncidents === 'function') {
-      window.renderIncidents();
-    }
-
     const operationsPanel = tabPanels.operations;
     if (!operationsPanel.hidden) {
       renderPriorities(weekData, 'operations');
@@ -217,10 +208,6 @@
       // Redirect from awareness upload
       if (weeks.length > 0) await loadWeek(weeks[0].key);
       const targetBtn = document.querySelector('.side-nav-item[data-tab="awareness"]');
-      if (targetBtn) targetBtn.click();
-    } else if (tabParam === 'incidents') {
-      if (weeks.length > 0) await loadWeek(weeks[0].key);
-      const targetBtn = document.querySelector('.side-nav-item[data-tab="incidents"]');
       if (targetBtn) targetBtn.click();
     } else if (tabParam === 'operations') {
       if (weeks.length > 0) await loadWeek(weeks[0].key);
