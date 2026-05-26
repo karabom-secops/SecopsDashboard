@@ -14,6 +14,7 @@
     orgs:       document.getElementById('tab-orgs'),
     metrics:    document.getElementById('tab-metrics'),
     vulns:      document.getElementById('tab-vulns'),
+    incidents:  document.getElementById('tab-incidents'),
     awareness:  document.getElementById('tab-awareness'),
     admin:      document.getElementById('tab-admin'),
   };
@@ -49,6 +50,9 @@
     }
     if (target === 'vulns') {
       renderVulns();
+    }
+    if (target === 'incidents' && typeof window.renderIncidents === 'function') {
+      window.renderIncidents();
     }
     if (target === 'awareness' && typeof window.renderAwareness === 'function') {
       window.renderAwareness();
@@ -136,6 +140,11 @@
     if (!vulnsPanel.hidden) {
       renderVulns();
     }
+
+    const incidentsPanel = tabPanels.incidents;
+    if (!incidentsPanel.hidden && typeof window.renderIncidents === 'function') {
+      window.renderIncidents();
+    }
   };
 
   // ── Refresh current week after a status PATCH ─────────────────────────────
@@ -177,19 +186,23 @@
 
       // Switch to a specific tab if redirected from upload
       if (tabParam && tabPanels[tabParam]) {
-        const targetBtn = document.querySelector(`.tab-btn[data-tab="${tabParam}"]`);
+        const targetBtn = document.querySelector(`.side-nav-item[data-tab="${tabParam}"]`);
         if (targetBtn) targetBtn.click();
       }
     } else if (tabParam === 'vulns') {
       // Redirect from Nessus upload — switch straight to vulns tab
       if (weeks.length > 0) await loadWeek(weeks[0].key);
-      const targetBtn = document.querySelector('.tab-btn[data-tab="vulns"]');
+      const targetBtn = document.querySelector('.side-nav-item[data-tab="vulns"]');
       if (targetBtn) targetBtn.click();
       if (monthParam) renderVulns(monthParam);
     } else if (tabParam === 'awareness') {
       // Redirect from awareness upload
       if (weeks.length > 0) await loadWeek(weeks[0].key);
-      const targetBtn = document.querySelector('.tab-btn[data-tab="awareness"]');
+      const targetBtn = document.querySelector('.side-nav-item[data-tab="awareness"]');
+      if (targetBtn) targetBtn.click();
+    } else if (tabParam === 'incidents') {
+      if (weeks.length > 0) await loadWeek(weeks[0].key);
+      const targetBtn = document.querySelector('.side-nav-item[data-tab="incidents"]');
       if (targetBtn) targetBtn.click();
     } else if (weeks.length > 0) {
       // Auto-load the most recent week (first in the list — sorted desc)

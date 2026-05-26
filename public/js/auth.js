@@ -114,13 +114,15 @@
             globalWrap.hidden = false;
             globalSel.addEventListener('change', function () {
               window.globalTenantId = globalSel.value ? parseInt(globalSel.value, 10) : null;
-              // Re-render whichever of the two tenant-scoped tabs is currently visible
+              // Re-render whichever of the tenant-scoped tabs is currently visible
               var activePanel = document.querySelector('.tab-panel:not([hidden])');
               if (activePanel) {
                 if (activePanel.id === 'tab-vulns' && typeof window.renderVulns === 'function') {
                   window.renderVulns();
                 } else if (activePanel.id === 'tab-awareness' && typeof window.renderAwareness === 'function') {
                   window.renderAwareness();
+                } else if (activePanel.id === 'tab-incidents' && typeof window.renderIncidents === 'function') {
+                  window.renderIncidents();
                 }
               }
             });

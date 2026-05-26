@@ -19,6 +19,7 @@ const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
 const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
+const { parseMdrTicketsCSV } = require('./lib/mdr-parser');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
 
 const app  = express();
@@ -1374,6 +1375,11 @@ const awarenessUpload = multer({
   limits:  { fileSize: 10 * 1024 * 1024 },
 });
 
+const mdrUpload = multer({
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: 10 * 1024 * 1024 },
+});
+
 /**
  * Resolve which tenant's awareness data to act on.
  * Mirrors resolveVulnTenant.
@@ -1560,6 +1566,170 @@ app.delete('/api/awareness', requireAdmin, async (req, res) => {
     return serverError(res, err);
   }
 });
+
+// ── Arctic Wolf MDR Ticket routes ──────────────────────────────────────────
+
+/**
+ * Resolve which tenant's MDR data to act on.
+ * Mirrors resolveVulnTenant and resolveAwarenessTenant.
+ */
+function resolveMdrTenant(req, source) {
+  if (req.session.role === 'superadmin') {
+    const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+app.post('/api/mdr/upload', requireAdmin, mdrUpload.single('mdrFile'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded.' });
+    }
+
+    const { tenantId, error: tenantErr } = resolveMdrTenant(req, 'body');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
+    const fileText = req.file.buffer.toString('utf8');
+    let parsed;
+    try {
+      parsed = parseMdrTicketsCSV(fileText);
+    } catch (parseErr) {
+      return res.status(400).json({ error: parseErr.message });
+    }
+
+    const { tickets, stats } = parsed;
+
+    await client.query('BEGIN');
+    // Delete existing upload for this tenant (cascade deletes tickets)
+    await client.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
+
+    const uploadRes = await client.query(
+      `INSERT INTO mdr_uploads
+         (tenant_id, uploaded_by, total_tickets, resolved_count, pending_count, avg_resolution_hours)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, uploaded_at`,
+      [tenantId, req.session.userId, stats.total, stats.resolved, stats.pending, stats.avgResolutionHours]
+    );
+    const uploadId = uploadRes.rows[0].id;
+    const uploadedAt = uploadRes.rows[0].uploaded_at;
+
+    for (const ticket of tickets) {
+      await client.query(
+        `INSERT INTO mdr_tickets
+           (upload_id, ticket_number, subject, status, ticket_type, severity,
+            created_at, resolved_at, updated_at, assigned_to)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          uploadId,
+          ticket.ticketNumber,
+          ticket.subject,
+          ticket.status,
+          ticket.ticketType || null,
+          ticket.severity || 'MEDIUM',
+          ticket.createdAt || null,
+          ticket.resolvedAt || null,
+          ticket.updatedAt || null,
+          ticket.assignedTo || null,
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+    console.log(`[mdr] Upload (tenant ${tenantId}): ${stats.total} tickets, ${stats.resolved} resolved`);
+    return res.json({ tenantId, uploadedAt, stats });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return serverError(res, err);
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/mdr', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error: tenantErr } = resolveMdrTenant(req, 'query');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
+    const uploadRes = await pool.query(
+      `SELECT id, uploaded_at, total_tickets, resolved_count, pending_count, avg_resolution_hours
+       FROM mdr_uploads WHERE tenant_id = $1`,
+      [tenantId]
+    );
+
+    if (uploadRes.rows.length === 0) {
+      return res.json({ upload: null, tickets: [], stats: null });
+    }
+
+    const upload = uploadRes.rows[0];
+
+    const ticketsRes = await pool.query(
+      `SELECT ticket_number AS "ticketNumber", subject, status, ticket_type AS "ticketType",
+              severity, created_at AS "createdAt", resolved_at AS "resolvedAt",
+              updated_at AS "updatedAt", assigned_to AS "assignedTo"
+       FROM mdr_tickets WHERE upload_id = $1
+       ORDER BY created_at DESC, ticket_number ASC`,
+      [upload.id]
+    );
+
+    res.json({ upload, tickets: ticketsRes.rows });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+app.get('/api/mdr/trends', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error: tenantErr } = resolveMdrTenant(req, 'query');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
+    // Get ticket status distribution from latest upload
+    const statsRes = await pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND status = 'solved')::int AS solved,
+         (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND status = 'closed')::int AS closed,
+         (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND status = 'pending')::int AS pending,
+         (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND severity = 'HIGH')::int AS high_severity,
+         (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND severity = 'MEDIUM')::int AS medium_severity,
+         (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND severity = 'LOW')::int AS low_severity
+       FROM mdr_uploads mu
+       WHERE mu.tenant_id = $1
+       LIMIT 1`,
+      [tenantId]
+    );
+
+    const stats = statsRes.rows.length > 0 ? statsRes.rows[0] : null;
+    res.json(stats || {});
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+app.delete('/api/mdr', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error: tenantErr } = resolveMdrTenant(req, 'query');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
+    await pool.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
+    return res.json({ ok: true });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// ── Error handler helper ──────────────────────────────────────────────────
+
+function serverError(res, err, status = 500) {
+  console.error('[error]', err.message);
+  res.status(status).json({ error: err.message });
+}
+
+// ── Start server ───────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
   console.log(`SecOps Dashboard running on http://localhost:${PORT}`);
