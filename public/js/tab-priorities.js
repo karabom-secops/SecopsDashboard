@@ -10,23 +10,23 @@
   const P_LEVEL_CLASS = { 1: 'p1', 2: 'p2', 3: 'p3', 4: 'p4', 5: 'p5' };
 
   // ── Public render function ─────────────────────────────────────────────────
-  window.renderPriorities = function renderPriorities(weekData) {
+  window.renderPriorities = function renderPriorities(weekData, section = '') {
     _weekData = weekData;
     const priorities = weekData.priorities || [];
 
-    renderStatCards(priorities);
-    renderFilterChips(priorities);
-    renderCards(priorities);
+    renderStatCards(priorities, section);
+    renderFilterChips(priorities, section);
+    renderCards(priorities, section);
   };
 
   // ── Stat cards ─────────────────────────────────────────────────────────────
-  function renderStatCards(priorities) {
+  function renderStatCards(priorities, section = '') {
     const total = priorities.length;
     const open  = priorities.filter(p => p.status === 'open').length;
     const wip   = priorities.filter(p => p.status === 'wip').length;
     const done  = priorities.filter(p => p.status === 'done').length;
 
-    const container = document.getElementById('priorities-stat-cards');
+    const container = document.getElementById(`${section ? section + '-' : ''}priorities-stat-cards`);
     container.innerHTML = [
       statCard('Total', total, 'accent-blue'),
       statCard('Open',  open,  'accent-red'),
@@ -36,7 +36,7 @@
   }
 
   // ── Filter chips ──────────────────────────────────────────────────────────
-  function renderFilterChips(priorities) {
+  function renderFilterChips(priorities, section = '') {
     const open = priorities.filter(p => p.status === 'open').length;
     const wip  = priorities.filter(p => p.status === 'wip').length;
     const done = priorities.filter(p => p.status === 'done').length;
@@ -48,7 +48,8 @@
       { key: 'done', label: `Done (${done})` },
     ];
 
-    const container = document.getElementById('priority-filters');
+    const container = document.getElementById(`${section ? section + '-' : ''}priority-filters`);
+    if (!container) return;
     container.innerHTML = chips.map(c =>
       `<button class="chip${_activeFilter === c.key ? ' active' : ''}" data-filter="${c.key}">${c.label}</button>`
     ).join('');
@@ -58,18 +59,19 @@
         _activeFilter = btn.dataset.filter;
         // Update chip active state
         container.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.filter === _activeFilter));
-        renderCards(_weekData.priorities || []);
+        renderCards(_weekData.priorities || [], section);
       });
     });
   }
 
   // ── Priority cards ─────────────────────────────────────────────────────────
-  function renderCards(priorities) {
+  function renderCards(priorities, section = '') {
     const filtered = _activeFilter === 'all'
       ? priorities
       : priorities.filter(p => p.status === _activeFilter);
 
-    const container = document.getElementById('priority-list');
+    const container = document.getElementById(`${section ? section + '-' : ''}priority-list`);
+    if (!container) return;
     container.innerHTML = '';
 
     if (filtered.length === 0) {
@@ -80,11 +82,11 @@
     filtered.forEach((p, filteredIdx) => {
       // Find the real index in the original priorities array for PATCH calls
       const realIdx = priorities.indexOf(p);
-      container.appendChild(buildCard(p, realIdx));
+      container.appendChild(buildCard(p, realIdx, section));
     });
   }
 
-  function buildCard(priority, realIdx) {
+  function buildCard(priority, realIdx, section = '') {
     const pClass   = P_LEVEL_CLASS[priority.priority] || 'p5';
     const isDone   = priority.status === 'done';
     const card     = document.createElement('div');
@@ -130,7 +132,7 @@
         // Update local state and re-render
         window._lastWeekData = updated;
         _weekData = updated;
-        renderPriorities(updated);
+        renderPriorities(updated, section);
       } catch (err) {
         console.error('PATCH failed:', err);
       } finally {

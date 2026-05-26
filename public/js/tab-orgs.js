@@ -9,7 +9,7 @@
   let _vulnSummary = null; // latest vuln summary per tenant (superadmin only)
 
   // ── Public render function ─────────────────────────────────────────────────
-  window.renderOrgs = async function renderOrgs(weekData) {
+  window.renderOrgs = async function renderOrgs(weekData, section = '') {
     const orgs = weekData.orgs || [];
 
     // Enrich with escalationPct for sorting/display
@@ -45,23 +45,24 @@
 
     // Show/hide vuln columns header
     ['orgVulnCriticalTh', 'orgVulnHighTh'].forEach(id => {
-      const el = document.getElementById(id);
+      const el = document.getElementById(`${section ? section + '-' : ''}${id}`);
       if (el) el.hidden = !isSA;
     });
 
-    renderStatCards(_orgs);
-    renderTable();
-    attachSortHandlers();
+    renderStatCards(_orgs, section);
+    renderTable(section);
+    attachSortHandlers(section);
   };
 
   // ── Stat cards ─────────────────────────────────────────────────────────────
-  function renderStatCards(orgs) {
-    const totalOrgs     = orgs.length;
-    const totalAlerts   = orgs.reduce((s, o) => s + (o.alerts || 0), 0);
+  function renderStatCards(orgs, section = '') {
+    const totalOrgs      = orgs.length;
+    const totalAlerts    = orgs.reduce((s, o) => s + (o.alerts || 0), 0);
     const totalEscalated = orgs.reduce((s, o) => s + (o.escalated || 0), 0);
-    const noIRPlan      = orgs.filter(o => !o.irPlan).length;
+    const noIRPlan       = orgs.filter(o => !o.irPlan).length;
 
-    const container = document.getElementById('orgs-stat-cards');
+    const container = document.getElementById(`${section ? section + '-' : ''}orgs-stat-cards`);
+    if (!container) return;
     container.innerHTML = [
       statCard('Organisations', totalOrgs,     'accent-blue'),
       statCard('Total Alerts',  totalAlerts,   'accent-red'),
@@ -71,9 +72,10 @@
   }
 
   // ── Table rendering ────────────────────────────────────────────────────────
-  function renderTable() {
+  function renderTable(section = '') {
     const sorted = sortOrgs(_orgs, _sortKey, _sortAsc);
-    const tbody  = document.getElementById('orgs-tbody');
+    const tbody  = document.getElementById(`${section ? section + '-' : ''}orgs-tbody`);
+    if (!tbody) return;
     tbody.innerHTML = '';
     const isSA = window.currentUser && window.currentUser.role === 'superadmin';
 
@@ -102,12 +104,12 @@
       tbody.appendChild(tr);
     });
 
-    updateSortArrows();
+    updateSortArrows(section);
   }
 
   // ── Sort ──────────────────────────────────────────────────────────────────
-  function attachSortHandlers() {
-    const ths = document.querySelectorAll('#orgs-table th[data-sort]');
+  function attachSortHandlers(section = '') {
+    const ths = document.querySelectorAll(`#${section ? section + '-' : ''}orgs-table th[data-sort]`);
     ths.forEach(th => {
       // Remove old listeners by cloning
       const fresh = th.cloneNode(true);
@@ -120,8 +122,8 @@
           _sortKey = key;
           _sortAsc = true;
         }
-        renderTable();
-        attachSortHandlers(); // re-bind since we replaced nodes
+        renderTable(section);
+        attachSortHandlers(section); // re-bind since we replaced nodes
       });
     });
   }
@@ -136,8 +138,8 @@
     });
   }
 
-  function updateSortArrows() {
-    document.querySelectorAll('#orgs-table th[data-sort]').forEach(th => {
+  function updateSortArrows(section = '') {
+    document.querySelectorAll(`#${section ? section + '-' : ''}orgs-table th[data-sort]`).forEach(th => {
       const arrow = th.querySelector('.sort-arrow');
       if (!arrow) return;
       if (th.dataset.sort === _sortKey) {

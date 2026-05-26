@@ -12,6 +12,7 @@
   const tabPanels     = {
     priorities: document.getElementById('tab-priorities'),
     orgs:       document.getElementById('tab-orgs'),
+    operations: document.getElementById('tab-operations'),
     metrics:    document.getElementById('tab-metrics'),
     vulns:      document.getElementById('tab-vulns'),
     incidents:  document.getElementById('tab-incidents'),
@@ -25,6 +26,7 @@
   const TAB_LABELS = {
     priorities: 'Priorities',
     orgs:       'Arctic Wolf Health',
+    operations: 'Operations',
     metrics:    'Metrics & Trends',
     vulns:      'Vulnerabilities',
     awareness:  'Awareness',
@@ -50,6 +52,15 @@
     }
     if (target === 'vulns') {
       renderVulns();
+    }
+    if (target === 'operations') {
+      if (window._lastWeekData) {
+        renderPriorities(window._lastWeekData, 'operations');
+        renderOrgs(window._lastWeekData, 'operations');
+      }
+      if (typeof window.renderIncidents === 'function') {
+        window.renderIncidents('operations').catch(() => {});
+      }
     }
     if (target === 'incidents' && typeof window.renderIncidents === 'function') {
       window.renderIncidents();
@@ -145,6 +156,15 @@
     if (!incidentsPanel.hidden && typeof window.renderIncidents === 'function') {
       window.renderIncidents();
     }
+
+    const operationsPanel = tabPanels.operations;
+    if (!operationsPanel.hidden) {
+      renderPriorities(weekData, 'operations');
+      renderOrgs(weekData, 'operations');
+      if (typeof window.renderIncidents === 'function') {
+        window.renderIncidents('operations').catch(() => {});
+      }
+    }
   };
 
   // ── Refresh current week after a status PATCH ─────────────────────────────
@@ -161,6 +181,13 @@
       renderOrgs(weekData);
       if (!tabPanels.metrics.hidden) renderMetrics(weekData, summaryData);
       if (!tabPanels.vulns.hidden) renderVulns();
+      if (!tabPanels.operations.hidden) {
+        renderPriorities(weekData, 'operations');
+        renderOrgs(weekData, 'operations');
+        if (typeof window.renderIncidents === 'function') {
+          window.renderIncidents('operations').catch(() => {});
+        }
+      }
     } catch (err) {
       console.error('Refresh failed:', err);
     }
@@ -203,6 +230,10 @@
     } else if (tabParam === 'incidents') {
       if (weeks.length > 0) await loadWeek(weeks[0].key);
       const targetBtn = document.querySelector('.side-nav-item[data-tab="incidents"]');
+      if (targetBtn) targetBtn.click();
+    } else if (tabParam === 'operations') {
+      if (weeks.length > 0) await loadWeek(weeks[0].key);
+      const targetBtn = document.querySelector('.side-nav-item[data-tab="operations"]');
       if (targetBtn) targetBtn.click();
     } else if (weeks.length > 0) {
       // Auto-load the most recent week (first in the list — sorted desc)

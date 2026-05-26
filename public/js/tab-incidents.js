@@ -30,8 +30,9 @@
       </div>`;
   }
 
-  function renderUploadInfo(upload) {
-    const el = document.getElementById('incidents-upload-info');
+  function renderUploadInfo(upload, section = '') {
+    const prefix = section ? `${section}-` : '';
+    const el = document.getElementById(`${prefix}incidents-upload-info`);
     if (!el) return;
     if (!upload) {
       el.textContent = '';
@@ -55,8 +56,9 @@
       </div>`;
   }
 
-  function renderStatCards() {
-    const container = document.getElementById('incidents-stat-cards');
+  function renderStatCards(section = '') {
+    const prefix = section ? `${section}-` : '';
+    const container = document.getElementById(`${prefix}incidents-stat-cards`);
     if (!container) return;
 
     const upload = _currentMdrData && _currentMdrData.upload ? _currentMdrData.upload : null;
@@ -75,8 +77,9 @@
     container.innerHTML = cards.map(card => statCard(card.label, card.value, card.accent)).join('');
   }
 
-  function renderTicketTable() {
-    const tbody = document.getElementById('incidents-tbody');
+  function renderTicketTable(section = '') {
+    const prefix = section ? `${section}-` : '';
+    const tbody = document.getElementById(`${prefix}incidents-tbody`);
     if (!tbody) return;
     const tickets = _currentMdrData && Array.isArray(_currentMdrData.tickets) ? _currentMdrData.tickets : [];
 
@@ -99,9 +102,10 @@
     `).join('');
   }
 
-  function renderEmptyState(hasUpload) {
-    const emptyEl = document.getElementById('incidents-empty-state');
-    const contentEl = document.getElementById('incidents-content');
+  function renderEmptyState(hasUpload, section = '') {
+    const prefix = section ? `${section}-` : '';
+    const emptyEl = document.getElementById(`${prefix}incidents-empty-state`);
+    const contentEl = document.getElementById(`${prefix}incidents-content`);
     if (!emptyEl || !contentEl) return;
     if (!hasUpload) {
       emptyEl.hidden = false;
@@ -126,18 +130,21 @@
     _currentTrends  = trendsRes.ok ? await trendsRes.json() : {};
   }
 
-  function renderAll() {
+  function renderAll(section = '') {
+    const prefix = section ? `${section}-` : '';
     const hasUpload = _currentMdrData && _currentMdrData.upload;
-    renderStatCards();
-    renderUploadInfo(_currentMdrData && _currentMdrData.upload ? _currentMdrData.upload : null);
-    renderEmptyState(hasUpload);
+    renderStatCards(section);
+    renderUploadInfo(_currentMdrData && _currentMdrData.upload ? _currentMdrData.upload : null, section);
+    renderEmptyState(hasUpload, section);
     if (hasUpload) {
-      renderTicketTable();
+      renderTicketTable(section);
     }
-    document.title = hasUpload ? 'SecOps — Incidents' : 'SecOps Dashboard';
+    if (!section) {
+      document.title = hasUpload ? 'SecOps — Incidents' : 'SecOps Dashboard';
+    }
   }
 
-  window.renderIncidents = async function renderIncidents() {
+  window.renderIncidents = async function renderIncidents(section = '') {
     try {
       await loadIncidents();
     } catch (err) {
@@ -145,6 +152,6 @@
       _currentMdrData = null;
       _currentTrends  = {};
     }
-    renderAll();
+    renderAll(section);
   };
 })();
