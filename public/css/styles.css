@@ -958,14 +958,86 @@ input[type="file"] {
 }
 
 /* Empty state card on vulns tab */
+/* ── Empty states ──────────────────────────────────────────────────────────── */
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  padding: 2rem;
+}
+
+.empty-state-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  text-align: center;
+  max-width: 420px;
+}
+
+.empty-state-icon {
+  font-size: 3.5rem;
+  line-height: 1;
+  display: inline-block;
+  opacity: 0.75;
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+.empty-state-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #2d5a7b;
+  letter-spacing: .3px;
+  margin: 0;
+}
+
+.empty-state-description {
+  font-size: 0.9rem;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.empty-state-cta {
+  margin-top: 0.5rem;
+}
+
 .vuln-empty-card {
   text-align: center;
   padding: 3rem 2rem;
+  background: linear-gradient(135deg, rgba(255,255,255,.3) 0%, rgba(0,186,223,.02) 100%);
+  border: 1.5px solid rgba(0,186,223,.15);
+  border-radius: var(--radius);
   color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+.vuln-empty-card::before {
+  content: '📊';
+  font-size: 2.8rem;
+  display: block;
+  opacity: 0.7;
+  animation: float 3s ease-in-out infinite;
 }
 .vuln-empty-card p {
-  margin-bottom: 1rem;
-  font-size: 1rem;
+  margin: 0;
+  font-size: 0.95rem;
+}
+.vuln-empty-card p:first-of-type {
+  font-weight: 600;
+  color: #2d5a7b;
+}
+.vuln-empty-card p:last-of-type {
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
 /* Vuln scan month selector bar */
@@ -1496,21 +1568,35 @@ body.login-page {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1rem;
-  padding: 3rem 1rem;
+  gap: 1.2rem;
+  padding: 3rem 2rem;
   color: var(--muted);
   text-align: center;
+  background: linear-gradient(135deg, rgba(255,255,255,.3) 0%, rgba(124,58,237,.02) 100%);
+  border: 1.5px solid rgba(124,58,237,.12);
+  border-radius: var(--radius);
+  margin: 1.5rem 0;
+}
+.awareness-empty::before {
+  content: '🎓';
+  font-size: 2.8rem;
+  display: block;
+  opacity: 0.7;
+  animation: float 3s ease-in-out infinite;
+}
+.awareness-empty p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.awareness-empty p:first-of-type {
+  font-weight: 600;
+  color: #2d5a7b;
 }
 
 .table-scroll {
   max-height: 320px;
   overflow-y: auto;
   overflow-x: auto;
-}
-
-.awareness-empty p {
-  margin: 0;
-  font-size: 1rem;
 }
 
 /* purple stat card accent (for Awareness) */
@@ -1866,7 +1952,14 @@ body.login-page {
   text-align: center;
   color: var(--muted);
   padding: 2rem !important;
-  font-style: italic;
+  font-size: 0.9rem;
+  font-style: normal;
+  font-weight: 500;
+  background: linear-gradient(135deg, rgba(255,255,255,.2) 0%, rgba(0,102,204,.02) 100%);
+}
+.admin-table-empty::before {
+  content: '⏳ ';
+  margin-right: 0.4rem;
 }
 
 .admin-actions {
