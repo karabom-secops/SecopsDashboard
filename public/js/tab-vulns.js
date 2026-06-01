@@ -12,6 +12,7 @@
   let _statusFilter  = 'All';  // status filter
   let _trendCanvas   = null;
   let _trendTooltip  = null;
+  let _pendingVulnNotice = '';
 
   const STATUS_LABELS = {
     open:          'Open',
@@ -125,6 +126,7 @@
   // ── Full render ────────────────────────────────────────────────────────────
   function _renderAll() {
     _renderStatCards();
+    _renderVulnNotice();
     _renderEmptyOrContent();
     // Show/hide export button
     const exportBtn = document.getElementById('vulnExportCsvBtn');
@@ -367,6 +369,24 @@
 
     canvas.onmouseleave = () => { tooltip.hidden = true; };
   }
+
+  function _renderVulnNotice() {
+    const notice = document.getElementById('vulnUploadNotice');
+    if (!notice) return;
+    if (!_pendingVulnNotice) {
+      notice.hidden = true;
+      notice.textContent = '';
+      return;
+    }
+    notice.textContent = _pendingVulnNotice;
+    notice.hidden = false;
+    _pendingVulnNotice = '';
+  }
+
+  window.showVulnAutoClosedNotice = function (message) {
+    _pendingVulnNotice = String(message || '');
+    _renderVulnNotice();
+  };
 
   // ── Top vulnerabilities table ──────────────────────────────────────────────
   function _renderTopVulns() {

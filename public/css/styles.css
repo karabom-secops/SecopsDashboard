@@ -368,6 +368,16 @@ input[type="file"] {
   margin-top: 0.75rem;
 }
 
+.upload-success {
+  background: #effaf3;
+  border: 1px solid #22c55e;
+  border-radius: var(--radius);
+  color: #166534;
+  font-size: 0.85rem;
+  padding: 0.6rem 0.9rem;
+  margin-top: 0.75rem;
+}
+
 /* ── Spinner ───────────────────────────────────────────────────────────────── */
 .spinner {
   display: inline-block;

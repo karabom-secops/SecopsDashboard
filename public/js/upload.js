@@ -134,6 +134,8 @@
       }
     }
 
+    const vulnSuccessDiv = document.getElementById('vulnUploadSuccess');
+
     function showVulnError(msg) {
       vulnErrorDiv.textContent = msg;
       vulnErrorDiv.hidden = false;
@@ -142,6 +144,16 @@
     function clearVulnError() {
       vulnErrorDiv.hidden = true;
       vulnErrorDiv.textContent = '';
+    }
+
+    function showVulnSuccess(msg) {
+      vulnSuccessDiv.textContent = msg;
+      vulnSuccessDiv.hidden = false;
+    }
+
+    function clearVulnSuccess() {
+      vulnSuccessDiv.hidden = true;
+      vulnSuccessDiv.textContent = '';
     }
 
     function setVulnLoading(loading) {
@@ -184,6 +196,7 @@
       }
 
       setVulnLoading(true);
+      clearVulnSuccess();
       try {
         const res  = await fetch('api/vulns/upload', { method: 'POST', body: fd });
         const data = await res.json();
@@ -193,18 +206,14 @@
           return;
         }
 
-        // Show carry-over summary then redirect
-        const c = data.carriedCounts || {};
-        const total = (c.fixed || 0) + (c.accepted || 0) + (c['in-progress'] || 0);
-        if (total > 0) {
-          const parts = [];
-          if (c.fixed)            parts.push(`${c.fixed} fixed`);
-          if (c.accepted)         parts.push(`${c.accepted} accepted risk`);
-          if (c['in-progress'])   parts.push(`${c['in-progress']} in progress`);
-          alert(`Upload successful!\n\n${total} finding${total !== 1 ? 's' : ''} automatically carried over from the previous scan:\n  • ${parts.join('\n  • ')}`);
+        const autoClosed = Number(data.autoClosedCount || 0);
+        let successMsg = 'Upload successful.';
+        if (autoClosed > 0) {
+          successMsg += ` ${autoClosed} previously identified finding${autoClosed !== 1 ? 's were' : ' was'} automatically marked fixed because it no longer appears in the ${monthKey} scan.`;
         }
+        showVulnSuccess(successMsg);
 
-        window.location.href = '/secops/?tab=vulns&month=' + encodeURIComponent(data.monthKey);
+        window.location.href = '/secops/?tab=vulns&month=' + encodeURIComponent(data.monthKey) + '&autoClosed=' + encodeURIComponent(autoClosed);
       } catch (err) {
         showVulnError('Network error: ' + err.message);
       } finally {

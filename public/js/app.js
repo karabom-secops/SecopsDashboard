@@ -180,13 +180,14 @@
     const weeks = await populateWeeks();
 
     // Check if redirected from upload page with a specific week/tab
-    const params       = new URLSearchParams(location.search);
-    const preselectKey = params.get('week');
-    const tabParam     = params.get('tab');
-    const monthParam   = params.get('month');
+    const params           = new URLSearchParams(location.search);
+    const preselectKey     = params.get('week');
+    const tabParam         = params.get('tab');
+    const monthParam       = params.get('month');
+    const autoClosedParam  = params.get('autoClosed');
 
     // Clean the URL without reloading
-    if (preselectKey || tabParam || monthParam) {
+    if (preselectKey || tabParam || monthParam || autoClosedParam) {
       history.replaceState(null, '', '/secops/');
     }
 
@@ -197,13 +198,25 @@
       if (tabParam && tabPanels[tabParam]) {
         const targetBtn = document.querySelector(`.side-nav-item[data-tab="${tabParam}"]`);
         if (targetBtn) targetBtn.click();
+        if (autoClosedParam && tabParam === 'vulns') {
+          const n = parseInt(autoClosedParam, 10);
+          if (!isNaN(n) && n > 0 && typeof window.showVulnAutoClosedNotice === 'function') {
+            window.showVulnAutoClosedNotice(`${n} previously identified finding${n !== 1 ? 's were' : ' was'} automatically marked fixed because they no longer appear in the uploaded scan.`);
+          }
+        }
       }
     } else if (tabParam === 'vulns') {
       // Redirect from Nessus upload — switch straight to vulns tab
       if (weeks.length > 0) await loadWeek(weeks[0].key);
       const targetBtn = document.querySelector('.side-nav-item[data-tab="vulns"]');
       if (targetBtn) targetBtn.click();
-      if (monthParam) renderVulns(monthParam);
+      if (monthParam) {
+        renderVulns(monthParam);
+        const n = parseInt(autoClosedParam || '0', 10);
+        if (!isNaN(n) && n > 0 && typeof window.showVulnAutoClosedNotice === 'function') {
+          window.showVulnAutoClosedNotice(`${n} previously identified finding${n !== 1 ? 's were' : ' was'} automatically marked fixed because they no longer appear in the uploaded scan.`);
+        }
+      }
     } else if (tabParam === 'awareness') {
       // Redirect from awareness upload
       if (weeks.length > 0) await loadWeek(weeks[0].key);
