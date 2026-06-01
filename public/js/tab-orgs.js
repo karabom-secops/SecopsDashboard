@@ -50,9 +50,76 @@
     });
 
     renderStatCards(_orgs, section);
-    renderTable(section);
-    attachSortHandlers(section);
+    renderCarousel(section);
+    // Sorting still works in carousel rendering, but we don't attach handlers to hidden table
   };
+
+  // ── Carousel rendering ─────────────────────────────────────────────────────
+  function renderCarousel(section = '') {
+    const prefix = section ? `${section}-` : '';
+    const slidesContainer = document.getElementById(`${prefix}orgs-carousel-slides`);
+    const controlsContainer = document.getElementById(`${prefix}orgs-carousel-controls`);
+    
+    if (!slidesContainer || !controlsContainer) return;
+
+    const sorted = sortOrgs(_orgs, _sortKey, _sortAsc);
+    slidesContainer.innerHTML = '';
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+
+    if (sorted.length === 0) {
+      const slide = document.createElement('div');
+      slide.className = 'carousel-slide';
+      slide.innerHTML = '<p style="color:var(--muted);font-size:.87rem;padding:1rem">No org data available.</p>';
+      slidesContainer.appendChild(slide);
+    } else {
+      sorted.forEach(org => {
+        const slide = document.createElement('div');
+        slide.className = 'carousel-slide';
+        const vulnHtml = isSA ? `
+          <div>
+            <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Crit Vulns</div>
+            <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${org.vulnCritical != null ? org.vulnCritical : '—'}</div>
+          </div>
+          <div>
+            <div style="color:var(--muted);font-size:0.8rem;font-weight:600">High Vulns</div>
+            <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${org.vulnHigh != null ? org.vulnHigh : '—'}</div>
+          </div>
+        ` : '';
+        slide.innerHTML = `
+          <div style="display:grid;grid-template-columns:repeat(${isSA ? 4 : 3},1fr);gap:1rem;font-size:0.9rem">
+            <div>
+              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Org Name</div>
+              <div style="margin-top:0.25rem;color:var(--text);font-weight:500;max-width:150px;word-wrap:break-word">${escHtml(org.orgName)}</div>
+            </div>
+            <div>
+              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Alerts</div>
+              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${org.alerts}</div>
+            </div>
+            <div>
+              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Escalated</div>
+              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${org.escalated} (${org.escalationPct}%)</div>
+            </div>
+            <div>
+              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Coverage</div>
+              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${org.coverageScore}%</div>
+            </div>
+            <div>
+              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">IR Plan</div>
+              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${org.irPlan ? 'Yes' : 'No'}</div>
+            </div>
+            ${vulnHtml}
+          </div>
+        `;
+        slidesContainer.appendChild(slide);
+      });
+    }
+
+    // Initialize or reinitialize carousel
+    if (window._orgsCarousel) {
+      window._orgsCarousel.destroy();
+    }
+    window._orgsCarousel = window.initCarousel(`#${prefix}orgs-carousel`);
+    updateSortArrows(section);
 
   // ── Stat cards ─────────────────────────────────────────────────────────────
   function renderStatCards(orgs, section = '') {

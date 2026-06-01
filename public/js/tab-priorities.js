@@ -16,7 +16,7 @@
 
     renderStatCards(priorities, section);
     renderFilterChips(priorities, section);
-    renderCards(priorities, section);
+    renderCarousel(priorities, section);
   };
 
   // ── Stat cards ─────────────────────────────────────────────────────────────
@@ -59,31 +59,43 @@
         _activeFilter = btn.dataset.filter;
         // Update chip active state
         container.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.filter === _activeFilter));
-        renderCards(_weekData.priorities || [], section);
+        renderCarousel(_weekData.priorities || [], section);
       });
     });
   }
 
-  // ── Priority cards ─────────────────────────────────────────────────────────
-  function renderCards(priorities, section = '') {
+  // ── Carousel rendering ─────────────────────────────────────────────────────
+  function renderCarousel(priorities, section = '') {
     const filtered = _activeFilter === 'all'
       ? priorities
       : priorities.filter(p => p.status === _activeFilter);
 
-    const container = document.getElementById(`${section ? section + '-' : ''}priority-list`);
-    if (!container) return;
-    container.innerHTML = '';
+    const slidesContainer = document.getElementById(`${section ? section + '-' : ''}priorities-carousel-slides`);
+    const controlsContainer = document.getElementById(`${section ? section + '-' : ''}priorities-carousel-controls`);
+    if (!slidesContainer || !controlsContainer) return;
+
+    slidesContainer.innerHTML = '';
 
     if (filtered.length === 0) {
-      container.innerHTML = '<p style="color:var(--muted);font-size:.87rem;padding:.5rem 0">No priorities in this filter.</p>';
-      return;
+      const slide = document.createElement('div');
+      slide.className = 'carousel-slide';
+      slide.innerHTML = '<p style="color:var(--muted);font-size:.87rem;padding:.5rem 0">No priorities in this filter.</p>';
+      slidesContainer.appendChild(slide);
+    } else {
+      filtered.forEach((p, filteredIdx) => {
+        const realIdx = priorities.indexOf(p);
+        const slide = document.createElement('div');
+        slide.className = 'carousel-slide';
+        slide.appendChild(buildCard(p, realIdx, section));
+        slidesContainer.appendChild(slide);
+      });
     }
 
-    filtered.forEach((p, filteredIdx) => {
-      // Find the real index in the original priorities array for PATCH calls
-      const realIdx = priorities.indexOf(p);
-      container.appendChild(buildCard(p, realIdx, section));
-    });
+    // Initialize or reinitialize carousel
+    if (window._prioritiesCarousel) {
+      window._prioritiesCarousel.destroy();
+    }
+    window._prioritiesCarousel = window.initCarousel(`#${section ? section + '-' : ''}priorities-carousel`);
   }
 
   function buildCard(priority, realIdx, section = '') {
