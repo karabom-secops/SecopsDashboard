@@ -202,7 +202,8 @@
     if (!_currentScan) {
       // Build dynamic upload href for superadmin
       const isSA = window.currentUser && window.currentUser.role === 'superadmin';
-      const uploadHref = 'upload.html' + (isSA && _activeTenantId ? '?tenantId=' + encodeURIComponent(_activeTenantId) : '');
+      const tenantId = window.globalTenantId;
+      const uploadHref = 'upload.html' + (isSA && tenantId ? '?tenantId=' + encodeURIComponent(tenantId) : '');
       emptyEl.innerHTML = `
         <div class="vuln-empty-card">
           <p>No Nessus scan uploaded yet.</p>
@@ -592,7 +593,7 @@
         if (indices.length === 0) return;
 
         const monthKey = _currentScan.monthKey;
-        const body     = { status, indices, tenantId: _activeTenantId };
+        const body     = { status, indices, tenantId: window.globalTenantId };
 
         applyBtn.disabled = true;
         applyBtn.textContent = 'Saving…';
@@ -757,7 +758,7 @@
       const res = await fetch(`api/vulns/${_currentScan.monthKey}/finding/${origIdx}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ status, notes, tenantId: _activeTenantId }),
+        body:    JSON.stringify({ status, notes, tenantId: window.globalTenantId }),
       });
 
       if (!res.ok) {
