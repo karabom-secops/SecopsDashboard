@@ -94,6 +94,9 @@ const loginLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  // Use the remote IP directly to avoid unexpected X-Forwarded-For parsing
+  // when behind proxies that might not be configured consistently.
+  keyGenerator: (req /*, res*/) => req.ip,
   message: { error: 'Too many login attempts. Please try again later.' },
 });
 
