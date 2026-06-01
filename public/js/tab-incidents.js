@@ -77,70 +77,29 @@
     container.innerHTML = cards.map(card => statCard(card.label, card.value, card.accent)).join('');
   }
 
-  function renderTicketCarousel(section = '') {
+  function renderTicketTable(section = '') {
     const prefix = section ? `${section}-` : '';
-    const slidesContainer = document.getElementById(`${prefix}incidents-carousel-slides`);
-    const controlsContainer = document.getElementById(`${prefix}incidents-carousel-controls`);
-    
-    if (!slidesContainer || !controlsContainer) return;
-
+    const tbody = document.getElementById(`${prefix}incidents-tbody`);
+    if (!tbody) return;
     const tickets = _currentMdrData && Array.isArray(_currentMdrData.tickets) ? _currentMdrData.tickets : [];
-    slidesContainer.innerHTML = '';
 
     if (tickets.length === 0) {
-      const slide = document.createElement('div');
-      slide.className = 'carousel-slide';
-      slide.innerHTML = '<p style="color:var(--muted);font-size:.87rem;padding:1rem">No tickets available.</p>';
-      slidesContainer.appendChild(slide);
-    } else {
-      tickets.forEach(ticket => {
-        const slide = document.createElement('div');
-        slide.className = 'carousel-slide';
-        slide.innerHTML = `
-          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:1rem;font-size:0.9rem">
-            <div>
-              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Ticket #</div>
-              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${escHtml(ticket.ticketNumber)}</div>
-            </div>
-            <div>
-              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Status</div>
-              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${escHtml(ticket.status)}</div>
-            </div>
-            <div>
-              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Severity</div>
-              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${escHtml(ticket.severity || '—')}</div>
-            </div>
-            <div>
-              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Type</div>
-              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${escHtml(ticket.ticketType || '—')}</div>
-            </div>
-            <div style="grid-column:1/-1">
-              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Subject</div>
-              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${escHtml(ticket.subject)}</div>
-            </div>
-            <div>
-              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Created</div>
-              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${formatDate(ticket.createdAt)}</div>
-            </div>
-            <div>
-              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Updated</div>
-              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${formatDate(ticket.updatedAt)}</div>
-            </div>
-            <div>
-              <div style="color:var(--muted);font-size:0.8rem;font-weight:600">Assigned To</div>
-              <div style="margin-top:0.25rem;color:var(--text);font-weight:500">${escHtml(ticket.assignedTo || '—')}</div>
-            </div>
-          </div>
-        `;
-        slidesContainer.appendChild(slide);
-      });
+      tbody.innerHTML = '<tr><td colspan="8">No tickets available.</td></tr>';
+      return;
     }
 
-    // Initialize or reinitialize carousel
-    if (window._incidentsCarousel) {
-      window._incidentsCarousel.destroy();
-    }
-    window._incidentsCarousel = window.initCarousel(`#${prefix}incidents-carousel`);
+    tbody.innerHTML = tickets.map(ticket => `
+      <tr>
+        <td>${escHtml(ticket.ticketNumber)}</td>
+        <td>${escHtml(ticket.subject)}</td>
+        <td>${escHtml(ticket.status)}</td>
+        <td>${escHtml(ticket.ticketType || '—')}</td>
+        <td>${escHtml(ticket.severity || '—')}</td>
+        <td>${formatDate(ticket.createdAt)}</td>
+        <td>${formatDate(ticket.updatedAt)}</td>
+        <td>${escHtml(ticket.assignedTo || '—')}</td>
+      </tr>
+    `).join('');
   }
 
   function renderEmptyState(hasUpload, section = '') {
@@ -178,7 +137,7 @@
     renderUploadInfo(_currentMdrData && _currentMdrData.upload ? _currentMdrData.upload : null, section);
     renderEmptyState(hasUpload, section);
     if (hasUpload) {
-      renderTicketCarousel(section);
+      renderTicketTable(section);
     }
     if (!section) {
       document.title = hasUpload ? 'SecOps — Incidents' : 'SecOps Dashboard';

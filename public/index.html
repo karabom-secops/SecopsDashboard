@@ -80,86 +80,83 @@
 
       <!-- Tab: Operations -->
     <section id="tab-operations" class="tab-panel" role="tabpanel">
-      <div class="operations-section">
-        <h2 class="section-heading">Priorities</h2>
-        <div id="operations-priorities-stat-cards" class="stat-grid"></div>
-        <div id="operations-priority-filters" class="filter-chips"></div>
-        <div id="operations-priorities-carousel" class="carousel-wrapper">
-          <div class="carousel-container">
-            <div class="carousel-slides" id="operations-priorities-carousel-slides"></div>
-          </div>
-          <div id="operations-priorities-carousel-controls" class="carousel-controls"></div>
-        </div>
-        <!-- Keep priority-list hidden for compatibility -->
-        <div id="operations-priority-list" class="priority-list" hidden></div>
-      </div>
-
-      <div class="operations-section">
-        <h2 class="section-heading">Arctic Wolf Health</h2>
-        <div id="operations-orgs-stat-cards" class="stat-grid"></div>
-        <div id="operations-orgs-carousel" class="carousel-wrapper">
-          <div class="carousel-container">
-            <div class="carousel-slides" id="operations-orgs-carousel-slides"></div>
-          </div>
-          <div id="operations-orgs-carousel-controls" class="carousel-controls"></div>
-        </div>
-        <!-- Keep table hidden for compatibility -->
-        <div class="table-wrapper" hidden>
-          <table id="operations-orgs-table" class="data-table">
-            <thead>
-              <tr>
-                <th data-sort="orgName">Org Name <span class="sort-arrow"></span></th>
-                <th data-sort="alerts">Alerts <span class="sort-arrow"></span></th>
-                <th data-sort="escalated">Escalated <span class="sort-arrow"></span></th>
-                <th data-sort="escalationPct">Esc% <span class="sort-arrow"></span></th>
-                <th data-sort="coverageScore">Coverage <span class="sort-arrow"></span></th>
-                <th data-sort="irPlan">IR Plan <span class="sort-arrow"></span></th>
-                <th id="operations-orgVulnCriticalTh" class="vuln-th" hidden data-sort="vulnCritical">Crit Vulns <span class="sort-arrow"></span></th>
-                <th id="operations-orgVulnHighTh" class="vuln-th" hidden data-sort="vulnHigh">High Vulns <span class="sort-arrow"></span></th>
-              </tr>
-            </thead>
-            <tbody id="operations-orgs-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="operations-section">
-        <h2 class="section-heading">Incidents</h2>
-        <div id="operations-incidents-stat-cards" class="stat-grid"></div>
-        <div id="operations-incidents-upload-info" class="info-row"></div>
-        <div id="operations-incidents-empty-state" class="empty-state" hidden>
-          <div class="vuln-empty-card">
-            <p>No ticket overview has been uploaded yet.</p>
-            <p>Upload the Arctic Wolf MDR ticket export via the API or your scheduled ingestion process.</p>
-          </div>
-        </div>
-        <div id="operations-incidents-content" hidden>
-          <h3 class="section-heading">Ticket Overview</h3>
-          <div id="operations-incidents-carousel" class="carousel-wrapper">
-            <div class="carousel-container">
-              <div class="carousel-slides" id="operations-incidents-carousel-slides"></div>
+      <div id="operations-carousel" class="carousel-wrapper">
+        <div class="carousel-container">
+          <div class="carousel-slides">
+            
+            <!-- Slide 1: Priorities -->
+            <div class="carousel-slide">
+              <div class="operations-section">
+                <h2 class="section-heading">Priorities</h2>
+                <div id="operations-priorities-stat-cards" class="stat-grid"></div>
+                <div id="operations-priority-filters" class="filter-chips"></div>
+                <div id="operations-priority-list" class="priority-list"></div>
+              </div>
             </div>
-            <div id="operations-incidents-carousel-controls" class="carousel-controls"></div>
-          </div>
-          <!-- Keep table hidden for compatibility -->
-          <div class="table-wrapper table-scroll" hidden>
-            <table class="data-table" id="operations-incidents-table">
-              <thead>
-                <tr>
-                  <th>Ticket #</th>
-                  <th>Subject</th>
-                  <th>Status</th>
-                  <th>Type</th>
-                  <th>Severity</th>
-                  <th>Created</th>
-                  <th>Updated</th>
-                  <th>Assigned To</th>
-                </tr>
-              </thead>
-              <tbody id="operations-incidents-tbody"></tbody>
-            </table>
+
+            <!-- Slide 2: Arctic Wolf Health -->
+            <div class="carousel-slide">
+              <div class="operations-section">
+                <h2 class="section-heading">Arctic Wolf Health</h2>
+                <div id="operations-orgs-stat-cards" class="stat-grid"></div>
+                <div class="table-wrapper">
+                  <table id="operations-orgs-table" class="data-table">
+                    <thead>
+                      <tr>
+                        <th data-sort="orgName">Org Name <span class="sort-arrow"></span></th>
+                        <th data-sort="alerts">Alerts <span class="sort-arrow"></span></th>
+                        <th data-sort="escalated">Escalated <span class="sort-arrow"></span></th>
+                        <th data-sort="escalationPct">Esc% <span class="sort-arrow"></span></th>
+                        <th data-sort="coverageScore">Coverage <span class="sort-arrow"></span></th>
+                        <th data-sort="irPlan">IR Plan <span class="sort-arrow"></span></th>
+                        <th id="operations-orgVulnCriticalTh" class="vuln-th" hidden data-sort="vulnCritical">Crit Vulns <span class="sort-arrow"></span></th>
+                        <th id="operations-orgVulnHighTh" class="vuln-th" hidden data-sort="vulnHigh">High Vulns <span class="sort-arrow"></span></th>
+                      </tr>
+                    </thead>
+                    <tbody id="operations-orgs-tbody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Slide 3: Incidents -->
+            <div class="carousel-slide">
+              <div class="operations-section">
+                <h2 class="section-heading">Incidents</h2>
+                <div id="operations-incidents-stat-cards" class="stat-grid"></div>
+                <div id="operations-incidents-upload-info" class="info-row"></div>
+                <div id="operations-incidents-empty-state" class="empty-state" hidden>
+                  <div class="vuln-empty-card">
+                    <p>No ticket overview has been uploaded yet.</p>
+                    <p>Upload the Arctic Wolf MDR ticket export via the API or your scheduled ingestion process.</p>
+                  </div>
+                </div>
+                <div id="operations-incidents-content" hidden>
+                  <h3 class="section-heading">Ticket Overview</h3>
+                  <div class="table-wrapper table-scroll">
+                    <table class="data-table" id="operations-incidents-table">
+                      <thead>
+                        <tr>
+                          <th>Ticket #</th>
+                          <th>Subject</th>
+                          <th>Status</th>
+                          <th>Type</th>
+                          <th>Severity</th>
+                          <th>Created</th>
+                          <th>Updated</th>
+                          <th>Assigned To</th>
+                        </tr>
+                      </thead>
+                      <tbody id="operations-incidents-tbody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
           </div>
         </div>
+        <div id="operations-carousel-controls" class="carousel-controls"></div>
       </div>
     </section>
 

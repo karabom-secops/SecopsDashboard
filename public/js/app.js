@@ -55,6 +55,12 @@
       }
       if (typeof window.renderIncidents === 'function') {
         window.renderIncidents('operations').catch(() => {});
+           // Initialize carousel for sections if carousel utility is available
+           if (target === 'operations' && window.initCarousel) {
+             setTimeout(() => {
+               window._operationsCarousel = window.initCarousel('#operations-carousel');
+             }, 100);
+           }
       }
     }
     if (target === 'awareness' && typeof window.renderAwareness === 'function') {
@@ -164,6 +170,16 @@
       if (!tabPanels.metrics.hidden) renderMetrics(weekData, summaryData);
       if (!tabPanels.vulns.hidden) renderVulns();
       if (!tabPanels.operations.hidden) {
+             // Reinitialize carousel after data refresh
+             if (!tabPanels.operations.hidden && window._operationsCarousel) {
+               window._operationsCarousel.destroy();
+               window._operationsCarousel = null;
+             }
+             if (!tabPanels.operations.hidden && window.initCarousel) {
+               setTimeout(() => {
+                 window._operationsCarousel = window.initCarousel('#operations-carousel');
+               }, 100);
+             }
         renderPriorities(weekData, 'operations');
         renderOrgs(weekData, 'operations');
         if (typeof window.renderIncidents === 'function') {

@@ -16,7 +16,7 @@
 
     renderStatCards(priorities, section);
     renderFilterChips(priorities, section);
-    renderCarousel(priorities, section);
+    renderCards(priorities, section);
   };
 
   // ── Stat cards ─────────────────────────────────────────────────────────────
@@ -59,43 +59,31 @@
         _activeFilter = btn.dataset.filter;
         // Update chip active state
         container.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.filter === _activeFilter));
-        renderCarousel(_weekData.priorities || [], section);
+        renderCards(_weekData.priorities || [], section);
       });
     });
   }
 
-  // ── Carousel rendering ─────────────────────────────────────────────────────
-  function renderCarousel(priorities, section = '') {
+  // ── Priority cards ─────────────────────────────────────────────────────────
+  function renderCards(priorities, section = '') {
     const filtered = _activeFilter === 'all'
       ? priorities
       : priorities.filter(p => p.status === _activeFilter);
 
-    const slidesContainer = document.getElementById(`${section ? section + '-' : ''}priorities-carousel-slides`);
-    const controlsContainer = document.getElementById(`${section ? section + '-' : ''}priorities-carousel-controls`);
-    if (!slidesContainer || !controlsContainer) return;
-
-    slidesContainer.innerHTML = '';
+    const container = document.getElementById(`${section ? section + '-' : ''}priority-list`);
+    if (!container) return;
+    container.innerHTML = '';
 
     if (filtered.length === 0) {
-      const slide = document.createElement('div');
-      slide.className = 'carousel-slide';
-      slide.innerHTML = '<p style="color:var(--muted);font-size:.87rem;padding:.5rem 0">No priorities in this filter.</p>';
-      slidesContainer.appendChild(slide);
-    } else {
-      filtered.forEach((p, filteredIdx) => {
-        const realIdx = priorities.indexOf(p);
-        const slide = document.createElement('div');
-        slide.className = 'carousel-slide';
-        slide.appendChild(buildCard(p, realIdx, section));
-        slidesContainer.appendChild(slide);
-      });
+      container.innerHTML = '<p style="color:var(--muted);font-size:.87rem;padding:.5rem 0">No priorities in this filter.</p>';
+      return;
     }
 
-    // Initialize or reinitialize carousel
-    if (window._prioritiesCarousel) {
-      window._prioritiesCarousel.destroy();
-    }
-    window._prioritiesCarousel = window.initCarousel(`#${section ? section + '-' : ''}priorities-carousel`);
+    filtered.forEach((p, filteredIdx) => {
+      // Find the real index in the original priorities array for PATCH calls
+      const realIdx = priorities.indexOf(p);
+      container.appendChild(buildCard(p, realIdx, section));
+    });
   }
 
   function buildCard(priority, realIdx, section = '') {
