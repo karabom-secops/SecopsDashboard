@@ -991,8 +991,6 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
       return res.status(400).json({ error: 'No findings parsed. Check it is a valid Nessus CSV, .nessus XML, or Arctic Wolf Managed Risk CSV export.' });
     }
 
-    const summary = computeVulnSummary(findings);
-
     const prevScan = await client.query(
       `SELECT id FROM vuln_scans WHERE tenant_id=$1 AND month_key < $2 ORDER BY month_key DESC LIMIT 1`,
       [tenantId, monthKey]
@@ -1002,13 +1000,14 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
     if (prevScan.rows.length > 0) {
       const prevId = prevScan.rows[0].id;
       const prevFindings = await client.query(
-        `SELECT plugin_id, host, port, status, notes, status_updated_at, first_seen_at
+        `SELECT plugin_id, name, risk, host, port, protocol,
+                cve, cvss_v2, cvss_v3, synopsis, solution,
+                status, notes, status_updated_at, first_seen_at
          FROM vuln_findings WHERE scan_id = $1`,
         [prevId]
       );
       prevFindings.rows.forEach(pf => {
         const key = `${pf.plugin_id}|${pf.host}|${pf.port}`;
-        // If duplicate key, keep the one with status data or earliest first_seen_at
         if (!prevMap.has(key) || pf.status !== 'open') {
           prevMap.set(key, pf);
         }
@@ -1017,8 +1016,12 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
 
     let carried = 0;
     const uploadNow = new Date();
+    const newKeys = new Set();
     findings.forEach(f => {
-      const match = prevMap.get(`${f.pluginId}|${f.host}|${f.port}`);
+      const key = `${f.pluginId}|${f.host}|${f.port}`;
+      newKeys.add(key);
+
+      const match = prevMap.get(key);
       if (match) {
         f.status          = match.status;
         f.notes           = match.notes || '';
@@ -1026,10 +1029,42 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
         f.firstSeenAt     = match.first_seen_at || uploadNow;
         carried++;
       } else {
-        // Preserve firstSeenAt supplied by the parser (e.g. Arctic Wolf First Detected Time)
         f.firstSeenAt = f.firstSeenAt || uploadNow;
       }
     });
+
+    const autoClosedFindings = [];
+    for (const [key, prev] of prevMap.entries()) {
+      if (newKeys.has(key)) continue;
+      const prevStatus = String(prev.status || 'open');
+      if (prevStatus === 'fixed' || prevStatus === 'accepted') continue;
+
+      autoClosedFindings.push({
+        pluginId:        prev.plugin_id,
+        name:            prev.name,
+        risk:            prev.risk,
+        host:            prev.host,
+        port:            prev.port,
+        protocol:        prev.protocol,
+        cve:             prev.cve,
+        cvssV2:          prev.cvss_v2,
+        cvssV3:          prev.cvss_v3,
+        synopsis:        prev.synopsis,
+        solution:        prev.solution,
+        status:          'fixed',
+        notes:           prev.notes
+                          ? `${prev.notes}\nAuto-closed because this finding no longer appears in the ${monthKey} scan.`
+                          : `Auto-closed because this finding no longer appears in the ${monthKey} scan.`,
+        statusUpdatedAt: uploadNow.toISOString(),
+        firstSeenAt:     prev.first_seen_at || uploadNow,
+      });
+    }
+
+    if (autoClosedFindings.length > 0) {
+      findings = findings.concat(autoClosedFindings);
+    }
+
+    const summary = computeVulnSummary(findings);
 
     await client.query('BEGIN');
     await client.query('DELETE FROM vuln_scans WHERE tenant_id=$1 AND month_key=$2', [tenantId, monthKey]);
@@ -1070,8 +1105,9 @@ app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async
       }
     });
 
-    console.log(`[vulns] Upload ${monthKey} (tenant ${tenantId}): ${findings.length} findings, ${carried} carried over`);
-    return res.json({ monthKey, tenantId, summary, carriedCounts });
+    const autoClosedCount = autoClosedFindings.length;
+    console.log(`[vulns] Upload ${monthKey} (tenant ${tenantId}): ${findings.length} findings, ${carried} carried over, ${autoClosedCount} auto-closed`);
+    return res.json({ monthKey, tenantId, summary, carriedCounts, autoClosedCount });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     return serverError(res, err);
