@@ -1793,11 +1793,11 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
           try {
             const sessResult = await pool.query(
               `SELECT
-                 COUNT(*) FILTER (WHERE status = 'Completed') AS completed,
+                 COUNT(*) FILTER (WHERE LOWER(status) LIKE '%complet%') AS completed,
                  COUNT(*) AS total
                FROM awareness_sessions
                WHERE upload_id = $1
-                 AND session_type != 'Phishing Simulation'`,
+                 AND (session_type IS NULL OR LOWER(session_type) NOT LIKE '%phishing simulation%')`,
               [row.id]
             );
             totalN    = parseInt(sessResult.rows[0].total,     10) || 0;
