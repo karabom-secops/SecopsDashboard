@@ -47,6 +47,13 @@
 
   // ── Public render entry point ──────────────────────────────────────────────
   window.renderVulns = async function renderVulns(monthKey) {
+    const loadingEl = document.getElementById('vulns-loading');
+    const emptyEl   = document.getElementById('vulns-empty-state');
+    const contentEl = document.getElementById('vulns-content');
+    if (loadingEl) { loadingEl.hidden = false; }
+    if (emptyEl)   { emptyEl.hidden   = true; }
+    if (contentEl) { contentEl.hidden = true; }
+
     // Fetch scan list + trends together
     try {
       const [listRes, trendsRes] = await Promise.all([
@@ -79,6 +86,7 @@
       _trendsData  = [];
     }
 
+    if (loadingEl) loadingEl.hidden = true;
     _renderAll();
   };
 

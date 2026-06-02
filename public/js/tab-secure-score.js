@@ -40,77 +40,93 @@ const SecureScoreTab = (() => {
   }
 
   function renderScoreGauge(container, score) {
-    const gaugeSize = 200;
-    const radius = 70;
-    const circumference = 2 * Math.PI * radius;
-    const offset = circumference * (1 - score / 100);
+    const w = 220, h = 130;
+    const cx = w / 2, cy = h - 10;
+    const r = 90;
+    // Semi-circle arc: from left (180°) to right (0°), top half
+    const startX = cx - r, startY = cy;
+    const endX   = cx + r, endY   = cy;
+    const color  = getScoreColor(score);
+
+    // Arc length for the semi-circle
+    const arcLen = Math.PI * r;
+    // Offset = portion to leave un-filled (from the end)
+    const targetOffset = arcLen * (1 - score / 100);
 
     const svg = `
-      <svg width="${gaugeSize}" height="${gaugeSize}" viewBox="0 0 ${gaugeSize} ${gaugeSize}" class="score-gauge">
-        <!-- Background circle -->
-        <circle cx="${gaugeSize / 2}" cy="${gaugeSize / 2}" r="${radius}" 
-                fill="none" stroke="#ecf0f1" stroke-width="8"/>
-        
-        <!-- Score circle -->
-        <circle cx="${gaugeSize / 2}" cy="${gaugeSize / 2}" r="${radius}" 
-                fill="none" stroke="${getScoreColor(score)}" stroke-width="8"
-                stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
-                stroke-linecap="round" style="transform: rotate(-90deg); transform-origin: center; transition: stroke-dashoffset 0.5s ease;"/>
-        
-        <!-- Score text -->
-        <text x="50%" y="45%" text-anchor="middle" font-size="48" font-weight="bold" fill="${getScoreColor(score)}">
+      <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" class="score-gauge" style="overflow:visible">
+        <defs>
+          <filter id="gauge-shadow">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+          </filter>
+        </defs>
+        <!-- Track arc -->
+        <path d="M ${startX} ${cy} A ${r} ${r} 0 0 1 ${endX} ${endY}"
+              fill="none" stroke="#dde8f0" stroke-width="12" stroke-linecap="round"/>
+        <!-- Score arc — animated via JS -->
+        <path id="gauge-arc" d="M ${startX} ${cy} A ${r} ${r} 0 0 1 ${endX} ${endY}"
+              fill="none" stroke="${color}" stroke-width="12" stroke-linecap="round"
+              stroke-dasharray="${arcLen}" stroke-dashoffset="${arcLen}"
+              filter="url(#gauge-shadow)"/>
+        <!-- Score number -->
+        <text x="${cx}" y="${cy - 20}" text-anchor="middle"
+              font-size="42" font-weight="700" fill="${color}" font-family="Manrope,sans-serif">
           ${Math.round(score)}
         </text>
-        <text x="50%" y="60%" text-anchor="middle" font-size="14" fill="#7f8c8d">
+        <!-- Rating label -->
+        <text x="${cx}" y="${cy - 2}" text-anchor="middle"
+              font-size="12" font-weight="600" fill="#7a9bb0" font-family="Manrope,sans-serif"
+              text-transform="uppercase" letter-spacing="1">
           ${getScoreRating(score)}
         </text>
       </svg>
     `;
 
     container.innerHTML = svg;
+
+    // Animate arc filling in
+    const arc = container.querySelector('#gauge-arc');
+    if (arc) {
+      requestAnimationFrame(() => {
+        arc.style.transition = 'stroke-dashoffset 0.8s cubic-bezier(0.4,0,0.2,1)';
+        arc.style.strokeDashoffset = targetOffset;
+      });
+    }
   }
 
   function renderComponentScores(container, components) {
+    const items = [
+      { label: 'Vulnerabilities',    weight: '40%', score: components.vulnerabilities.score,   desc: 'Based on critical, high, medium, and low findings' },
+      { label: 'Security Awareness', weight: '35%', score: components.awareness.score,          desc: 'Training completion rate' },
+      { label: 'Incident Response',  weight: '25%', score: components.incidentResponse.score,   desc: 'Ticket resolution & speed' },
+    ];
+
     const html = `
       <div class="component-scores">
-        <div class="component-card">
-          <div class="component-header">
-            <h4>Vulnerabilities</h4>
-            <span class="component-weight">(40%)</span>
+        ${items.map((item, i) => `
+          <div class="component-card">
+            <div class="component-header">
+              <h4>${item.label}</h4>
+              <span class="component-weight">(${item.weight})</span>
+            </div>
+            <div class="component-score-bar">
+              <div class="score-bar-fill" data-score="${item.score}"
+                   style="width: 0%; background-color: ${getScoreColor(item.score)};"></div>
+            </div>
+            <div class="component-score-text">${item.score}/100</div>
+            <small>${item.desc}</small>
           </div>
-          <div class="component-score-bar">
-            <div class="score-bar-fill" style="width: ${components.vulnerabilities.score}%; background-color: ${getScoreColor(components.vulnerabilities.score)};"></div>
-          </div>
-          <div class="component-score-text">${components.vulnerabilities.score}/100</div>
-          <small>Based on critical, high, medium, and low findings</small>
-        </div>
-
-        <div class="component-card">
-          <div class="component-header">
-            <h4>Security Awareness</h4>
-            <span class="component-weight">(35%)</span>
-          </div>
-          <div class="component-score-bar">
-            <div class="score-bar-fill" style="width: ${components.awareness.score}%; background-color: ${getScoreColor(components.awareness.score)};"></div>
-          </div>
-          <div class="component-score-text">${components.awareness.score}/100</div>
-          <small>Training completion rate</small>
-        </div>
-
-        <div class="component-card">
-          <div class="component-header">
-            <h4>Incident Response</h4>
-            <span class="component-weight">(25%)</span>
-          </div>
-          <div class="component-score-bar">
-            <div class="score-bar-fill" style="width: ${components.incidentResponse.score}%; background-color: ${getScoreColor(components.incidentResponse.score)};"></div>
-          </div>
-          <div class="component-score-text">${components.incidentResponse.score}/100</div>
-          <small>Ticket resolution & speed</small>
-        </div>
+        `).join('')}
       </div>
     `;
     container.innerHTML = html;
+
+    // Animate bars in after paint
+    setTimeout(() => {
+      container.querySelectorAll('.score-bar-fill').forEach(bar => {
+        bar.style.width = bar.dataset.score + '%';
+      });
+    }, 60);
   }
 
   function renderRecommendations(container, recommendations) {
@@ -193,13 +209,35 @@ const SecureScoreTab = (() => {
   }
 
   async function loadAndRender() {
-    const scoreData = await fetchSecureScore();
-    const historyData = await fetchScoreHistory();
+    const container = document.getElementById('secure-score-container');
+    if (container) {
+      container.innerHTML = '<div class="loading-overlay"><div class="loading-spinner"></div><span>Loading score…</span></div>';
+    }
+
+    const [scoreData, historyData] = await Promise.all([fetchSecureScore(), fetchScoreHistory()]);
 
     if (!scoreData) {
-      document.getElementById('secure-score-container').innerHTML =
-        '<div class="error-message">Failed to load Secure Score data.</div>';
+      if (container) container.innerHTML = '<div class="error-message" style="padding:2rem;color:var(--red)">Failed to load Secure Score data.</div>';
       return;
+    }
+
+    // Restore the original inner structure (wipe spinner)
+    if (container) {
+      container.innerHTML = `
+        <div class="secure-score-main">
+          <div id="secure-score-gauge" class="score-gauge-container"></div>
+          <div id="secure-score-data-age" class="data-age-info"></div>
+        </div>
+        <div id="secure-score-components" class="secure-score-section"></div>
+        <div class="secure-score-section">
+          <h3 class="secure-score-section-title">6-Month Trend</h3>
+          <div id="secure-score-trend" class="trend-chart-container"></div>
+        </div>
+        <div class="secure-score-section">
+          <h3 class="secure-score-section-title">Improvement Recommendations</h3>
+          <div id="secure-score-recommendations" class="recommendations-container"></div>
+        </div>
+      `;
     }
 
     currentScore = scoreData;

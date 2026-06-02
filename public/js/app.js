@@ -36,9 +36,19 @@
       item.classList.toggle('active', item.dataset.tab === target);
     });
 
-    // Show/hide panels
+    // Show/hide panels with fade transition
     Object.entries(tabPanels).forEach(([key, panel]) => {
-      if (panel) panel.hidden = key !== target;
+      if (!panel) return;
+      if (key === target) {
+        panel.style.display = 'block';
+        // rAF lets the browser register display:block before the transition fires
+        requestAnimationFrame(() => panel.classList.add('is-active'));
+      } else {
+        panel.classList.remove('is-active');
+        panel.addEventListener('transitionend', () => {
+          if (!panel.classList.contains('is-active')) panel.style.display = 'none';
+        }, { once: true });
+      }
     });
 
     // Lazy-render tabs that need it
@@ -204,6 +214,12 @@
 
   // ── Init ───────────────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', async () => {
+    // Activate default (operations) panel without triggering switchTab
+    if (tabPanels.operations) {
+      tabPanels.operations.style.display = 'block';
+      requestAnimationFrame(() => tabPanels.operations.classList.add('is-active'));
+    }
+
     const weeks = await populateWeeks();
 
     // Check if redirected from upload page with a specific week/tab

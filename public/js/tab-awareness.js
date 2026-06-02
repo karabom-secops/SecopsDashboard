@@ -23,6 +23,13 @@
 
   // ── Public entry point ──────────────────────────────────────────────────────
   window.renderAwareness = async function renderAwareness() {
+    var contentEl = document.getElementById('awarenessContent');
+    var emptyEl   = document.getElementById('awarenessEmpty');
+    var spinEl    = document.getElementById('awarenessLoading');
+    if (spinEl)    spinEl.hidden   = false;
+    if (contentEl) contentEl.hidden = true;
+    if (emptyEl)   emptyEl.hidden   = true;
+
     try {
       var res = await fetch('api/awareness' + tenantParam('?'), { credentials: 'same-origin' });
       _data = res.ok ? await res.json() : { upload: null, users: [] };
@@ -30,6 +37,7 @@
       _data = { upload: null, users: [] };
     }
 
+    if (spinEl) spinEl.hidden = true;
     _renderAll();
   };
 

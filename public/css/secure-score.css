@@ -99,7 +99,8 @@
 .score-bar-fill {
   height: 100%;
   border-radius: 5px;
-  transition: width 0.5s ease;
+  width: 0%;
+  transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .component-score-text {
@@ -153,39 +154,49 @@
   background: var(--surface2);
   border-left: 4px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 1rem 1.25rem;
+  padding: 0.875rem 1.25rem;
   transition: all 0.2s ease;
 }
 
 .recommendation-card:hover {
   box-shadow: var(--shadow-sm);
-  border-left-color: var(--blue);
+  transform: translateX(2px);
 }
 
 .recommendation-card.priority-high {
   border-left-color: var(--red);
-  background: rgba(232, 57, 74, 0.05);
+  background: rgba(232, 57, 74, 0.04);
+  box-shadow: inset 3px 0 0 var(--red);
 }
 
 .recommendation-card.priority-medium {
   border-left-color: var(--amber);
-  background: rgba(245, 158, 11, 0.05);
+  background: rgba(245, 158, 11, 0.04);
 }
 
 .recommendation-card.priority-info {
   border-left-color: var(--green);
-  background: rgba(34, 197, 94, 0.05);
+  background: rgba(34, 197, 94, 0.04);
 }
 
 .recommendation-header {
   display: flex;
-  gap: 1rem;
+  align-items: center;
+  gap: 0.875rem;
   margin-bottom: 0.5rem;
 }
 
 .recommendation-icon {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--surface);
   flex-shrink: 0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
 
 .recommendation-header h5 {
