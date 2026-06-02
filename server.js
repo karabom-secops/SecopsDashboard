@@ -1777,7 +1777,7 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       if (vulnResult.rows.length > 0) vulnData = { summary: vulnResult.rows[0].summary };
     } catch (_) { /* table may not exist yet */ }
 
-    // Fetch latest awareness upload
+    // Fetch latest awareness upload — normalise to session-level completion rate
     let awarenessData = null;
     try {
       const awarenessResult = await pool.query(
@@ -1785,7 +1785,33 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
          FROM awareness_uploads WHERE tenant_id = $1 ORDER BY uploaded_at DESC LIMIT 1`,
         [tenantId]
       );
-      if (awarenessResult.rows.length > 0) awarenessData = { upload: awarenessResult.rows[0] };
+      if (awarenessResult.rows.length > 0) {
+        const row = awarenessResult.rows[0];
+        if (row.upload_type === 'history') {
+          // For history uploads total_incomplete counts not-started sessions, not users.
+          // Query sessions directly for an accurate completion rate.
+          const sessResult = await pool.query(
+            `SELECT
+               COUNT(*) FILTER (WHERE status = 'Completed') AS completed,
+               COUNT(*) AS total
+             FROM awareness_sessions
+             WHERE upload_id = $1
+               AND session_type != 'Phishing Simulation'`,
+            [row.id]
+          );
+          const { completed, total } = sessResult.rows[0];
+          const totalN = parseInt(total, 10);
+          awarenessData = {
+            upload: {
+              ...row,
+              total_users: totalN,
+              total_incomplete: totalN - parseInt(completed, 10),
+            },
+          };
+        } else {
+          awarenessData = { upload: row };
+        }
+      }
     } catch (_) { /* table may not exist yet */ }
 
     // Fetch latest MDR upload — try tenant-specific first, then system-wide
