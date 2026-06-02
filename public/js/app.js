@@ -10,11 +10,12 @@
   const weekSelect    = document.getElementById('weekSelect');
   const dashboard     = document.getElementById('dashboard');
   const tabPanels     = {
-    operations: document.getElementById('tab-operations'),
-    metrics:    document.getElementById('tab-metrics'),
-    vulns:      document.getElementById('tab-vulns'),
-    awareness:  document.getElementById('tab-awareness'),
-    admin:      document.getElementById('tab-admin'),
+    operations:   document.getElementById('tab-operations'),
+    metrics:      document.getElementById('tab-metrics'),
+    vulns:        document.getElementById('tab-vulns'),
+    awareness:    document.getElementById('tab-awareness'),
+    'secure-score': document.getElementById('tab-secure-score'),
+    admin:        document.getElementById('tab-admin'),
   };
 
   // ── Sidebar navigation ────────────────────────────────────────────────────
