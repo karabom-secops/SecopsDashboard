@@ -21,6 +21,7 @@ const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, com
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
 const { parseMdrTicketsCSV } = require('./lib/mdr-parser');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
+const { calculateSecureScore, generateRecommendations } = require('./lib/secure-score');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -1747,6 +1748,133 @@ app.delete('/api/mdr', requireAdmin, async (req, res) => {
   try {
     await pool.query('DELETE FROM mdr_uploads WHERE tenant_id IS NULL');
     return res.json({ ok: true });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// ── Secure Score routes ────────────────────────────────────────────────────
+
+/**
+ * GET /api/secure-score
+ * Get the latest Secure Score for the current tenant.
+ * Calculates on-the-fly from latest vuln/awareness/mdr data.
+ */
+app.get('/api/secure-score', requireAuth, async (req, res) => {
+  try {
+    const tenantId = req.session.tenantId;
+    if (!tenantId) {
+      return res.status(400).json({ error: 'No tenant context.' });
+    }
+
+    // Fetch latest vulnerability scan
+    const vulnResult = await pool.query(
+      `SELECT summary FROM vuln_scans WHERE tenant_id = $1 ORDER BY month_key DESC LIMIT 1`,
+      [tenantId]
+    );
+    const vulnData = vulnResult.rows.length > 0
+      ? { summary: vulnResult.rows[0].summary }
+      : null;
+
+    // Fetch latest awareness upload
+    const awarenessResult = await pool.query(
+      `SELECT id, uploaded_at, total_users, total_incomplete, upload_type
+       FROM awareness_uploads WHERE tenant_id = $1 ORDER BY uploaded_at DESC LIMIT 1`,
+      [tenantId]
+    );
+    const awarenessData = awarenessResult.rows.length > 0
+      ? { upload: awarenessResult.rows[0] }
+      : null;
+
+    // Fetch latest MDR upload (system-wide, not tenant-specific)
+    const mdrResult = await pool.query(
+      `SELECT total_tickets, resolved_count, avg_resolution_hours, uploaded_at
+       FROM mdr_uploads WHERE tenant_id IS NULL ORDER BY uploaded_at DESC LIMIT 1`
+    );
+    const mdrData = mdrResult.rows.length > 0
+      ? { upload: mdrResult.rows[0] }
+      : null;
+
+    // Calculate score
+    const { composite, vulnScore, awarenessScore, mdrScore } = calculateSecureScore(vulnData, awarenessData, mdrData);
+    const recommendations = generateRecommendations(vulnScore, awarenessScore, mdrScore);
+
+    // Determine rating
+    let rating = 'Critical';
+    if (composite >= 80) rating = 'Excellent';
+    else if (composite >= 70) rating = 'Good';
+    else if (composite >= 50) rating = 'Fair';
+    else rating = 'Poor';
+
+    res.json({
+      tenantId,
+      score: composite,
+      rating,
+      components: {
+        vulnerabilities: { score: vulnScore, weight: 0.40 },
+        awareness: { score: awarenessScore, weight: 0.35 },
+        incidentResponse: { score: mdrScore, weight: 0.25 },
+      },
+      dataAge: {
+        vulns: vulnData ? 'current' : 'no data',
+        awareness: awarenessData ? awarenessData.upload.uploaded_at : 'no data',
+        mdr: mdrData ? mdrData.upload.uploaded_at : 'no data',
+      },
+      recommendations,
+    });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+/**
+ * GET /api/secure-score/history
+ * Get historical Secure Score trend (last 90 days by fetching latest scan each month).
+ */
+app.get('/api/secure-score/history', requireAuth, async (req, res) => {
+  try {
+    const tenantId = req.session.tenantId;
+    if (!tenantId) {
+      return res.status(400).json({ error: 'No tenant context.' });
+    }
+
+    // Get monthly vuln data (last 6 months for trend)
+    const vulnTrend = await pool.query(
+      `SELECT month_key, summary FROM vuln_scans
+       WHERE tenant_id = $1
+       ORDER BY month_key DESC LIMIT 6`,
+      [tenantId]
+    );
+
+    // For each month, calculate the score
+    const history = [];
+    for (const row of vulnTrend.rows) {
+      const vulnData = { summary: row.summary };
+
+      // For simplicity, use latest awareness/mdr for all historical points
+      // (In a production system, you might store historical snapshots)
+      const awarenessResult = await pool.query(
+        `SELECT total_users, total_incomplete FROM awareness_uploads
+         WHERE tenant_id = $1 ORDER BY uploaded_at DESC LIMIT 1`,
+        [tenantId]
+      );
+      const awarenessData = awarenessResult.rows.length > 0
+        ? { upload: awarenessResult.rows[0] }
+        : null;
+
+      const mdrResult = await pool.query(
+        `SELECT total_tickets, resolved_count, avg_resolution_hours FROM mdr_uploads
+         WHERE tenant_id IS NULL ORDER BY uploaded_at DESC LIMIT 1`
+      );
+      const mdrData = mdrResult.rows.length > 0
+        ? { upload: mdrResult.rows[0] }
+        : null;
+
+      const { composite } = calculateSecureScore(vulnData, awarenessData, mdrData);
+      history.push({ monthKey: row.month_key, score: composite });
+    }
+
+    res.json({ tenantId, history: history.reverse() });
   } catch (err) {
     return serverError(res, err);
   }
