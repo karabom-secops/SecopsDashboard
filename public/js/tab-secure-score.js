@@ -96,18 +96,39 @@ const SecureScoreTab = (() => {
 
   function renderComponentScores(container, components) {
     const items = [
-      { label: 'Vulnerabilities',    weight: '40%', score: components.vulnerabilities.score,   desc: 'Based on critical, high, medium, and low findings' },
-      { label: 'Security Awareness', weight: '35%', score: components.awareness.score,          desc: 'Training completion rate' },
-      { label: 'Incident Response',  weight: '25%', score: components.incidentResponse.score,   desc: 'Ticket resolution & speed' },
+      {
+        label: 'Vulnerabilities', weight: '40%',
+        score: components.vulnerabilities.score,
+        desc: 'Based on critical, high, medium, and low findings',
+        tooltip: 'Score starts at 100. Each finding deducts points:<br>• Critical: −20 pts<br>• High: −10 pts<br>• Medium: −5 pts<br>• Low: −1 pt<br>Minimum score is 0.',
+      },
+      {
+        label: 'Security Awareness', weight: '35%',
+        score: components.awareness.score,
+        desc: 'Training completion rate',
+        tooltip: 'Score = % of training sessions completed (phishing simulations excluded).<br>100% completion = 100/100.',
+      },
+      {
+        label: 'Incident Response', weight: '25%',
+        score: components.incidentResponse.score,
+        desc: 'Ticket resolution & speed',
+        tooltip: 'Score based on ticket resolution rate minus a speed penalty.<br>• Resolution rate forms the base score.<br>• Avg resolution &gt; 24 hrs deducts up to 20 pts.',
+      },
     ];
 
     const html = `
       <div class="component-scores">
-        ${items.map((item, i) => `
+        ${items.map(item => `
           <div class="component-card">
             <div class="component-header">
               <h4>${item.label}</h4>
-              <span class="component-weight">(${item.weight})</span>
+              <div class="component-header-right">
+                <span class="component-weight">(${item.weight})</span>
+                <div class="score-tooltip-wrap">
+                  <button class="score-info-btn" aria-label="How is this calculated?">?</button>
+                  <div class="score-tooltip" role="tooltip">${item.tooltip}</div>
+                </div>
+              </div>
             </div>
             <div class="component-score-bar">
               <div class="score-bar-fill" data-score="${item.score}"

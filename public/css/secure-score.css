@@ -79,12 +79,82 @@
   color: var(--text);
 }
 
+.component-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
 .component-weight {
   font-size: 0.8rem;
   color: var(--muted);
   background: var(--surface2);
   padding: 0.25rem 0.5rem;
   border-radius: var(--radius-sm);
+}
+
+/* ── Score tooltip ─────────────────────────────────────────────────────────── */
+.score-tooltip-wrap {
+  position: relative;
+}
+
+.score-info-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--logo-cyan);
+  background: transparent;
+  color: var(--logo-cyan);
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.score-info-btn:hover,
+.score-info-btn:focus {
+  background: var(--logo-cyan);
+  color: #fff;
+  outline: none;
+}
+
+.score-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 240px;
+  background: var(--text);
+  color: #fff;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  z-index: 100;
+  white-space: normal;
+  pointer-events: none;
+}
+
+.score-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 6px;
+  border: 6px solid transparent;
+  border-top-color: var(--text);
+}
+
+.score-tooltip-wrap:hover .score-tooltip,
+.score-info-btn:focus + .score-tooltip {
+  display: block;
 }
 
 .component-score-bar {
