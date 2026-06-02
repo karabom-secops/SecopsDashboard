@@ -239,3 +239,5 @@ const SecureScoreTab = (() => {
     loadAndRender,
   };
 })();
+
+window.SecureScoreTab = SecureScoreTab;

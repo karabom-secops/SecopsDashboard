@@ -45,15 +45,22 @@
 
       this.controlsEl.innerHTML = '';
 
+      // Collect slide titles from section headings
+      this.slideTitles = this.slides.map(slide => {
+        const heading = slide.querySelector('.section-heading');
+        return heading ? heading.textContent.trim() : '';
+      });
+
       // Previous button
       const prevBtn = document.createElement('button');
-      prevBtn.className = 'carousel-btn';
-      prevBtn.textContent = '‹';
-      prevBtn.title = 'Previous slide';
+      prevBtn.className = 'carousel-btn carousel-btn-prev';
+      prevBtn.innerHTML = '&#8249;';
+      prevBtn.title = 'Previous';
+      prevBtn.setAttribute('aria-label', 'Previous slide');
       prevBtn.addEventListener('click', () => this.prev());
       this.controlsEl.appendChild(prevBtn);
 
-      // Dots container
+      // Dots + slide title label
       const dotsContainer = document.createElement('div');
       dotsContainer.className = 'carousel-dots';
 
@@ -61,34 +68,27 @@
       for (let i = 0; i < this.slides.length; i++) {
         const dot = document.createElement('button');
         dot.className = 'carousel-dot' + (i === 0 ? ' active' : '');
-        dot.title = `Go to slide ${i + 1}`;
+        dot.title = this.slideTitles[i] || `Slide ${i + 1}`;
+        dot.setAttribute('aria-label', this.slideTitles[i] || `Slide ${i + 1}`);
         dot.addEventListener('click', () => this.goToSlide(i));
         dotsContainer.appendChild(dot);
         this.dots.push(dot);
       }
       this.controlsEl.appendChild(dotsContainer);
 
-      // Play/Pause toggle
-      const toggleBtn = document.createElement('button');
-      toggleBtn.className = 'carousel-toggle';
-      toggleBtn.textContent = '▶';
-      toggleBtn.title = 'Toggle autoplay';
-      toggleBtn.addEventListener('click', () => this.toggleAutoplay());
-      this.controlsEl.appendChild(toggleBtn);
-      this.toggleBtn = toggleBtn;
-
-      // Slide counter
-      const counter = document.createElement('span');
-      counter.className = 'carousel-slide-counter';
-      counter.textContent = `${this.currentIndex + 1} / ${this.slides.length}`;
-      this.controlsEl.appendChild(counter);
-      this.counterEl = counter;
+      // Slide title label
+      const titleLabel = document.createElement('span');
+      titleLabel.className = 'carousel-slide-title';
+      titleLabel.textContent = this.slideTitles[0] || '';
+      this.controlsEl.appendChild(titleLabel);
+      this.titleLabelEl = titleLabel;
 
       // Next button
       const nextBtn = document.createElement('button');
-      nextBtn.className = 'carousel-btn';
-      nextBtn.textContent = '›';
-      nextBtn.title = 'Next slide';
+      nextBtn.className = 'carousel-btn carousel-btn-next';
+      nextBtn.innerHTML = '&#8250;';
+      nextBtn.title = 'Next';
+      nextBtn.setAttribute('aria-label', 'Next slide');
       nextBtn.addEventListener('click', () => this.next());
       this.controlsEl.appendChild(nextBtn);
 
@@ -112,8 +112,8 @@
       this.dots.forEach((dot, i) => {
         dot.classList.toggle('active', i === this.currentIndex);
       });
-      if (this.counterEl) {
-        this.counterEl.textContent = `${this.currentIndex + 1} / ${this.slides.length}`;
+      if (this.titleLabelEl && this.slideTitles) {
+        this.titleLabelEl.textContent = this.slideTitles[this.currentIndex] || '';
       }
     }
 

@@ -58,9 +58,13 @@
         window.renderIncidents('operations').catch(() => {});
       }
       if (window.initCarousel) {
+        if (window._operationsCarousel) {
+          window._operationsCarousel.destroy();
+          window._operationsCarousel = null;
+        }
         setTimeout(() => {
           window._operationsCarousel = window.initCarousel('#operations-carousel');
-        }, 100);
+        }, 50);
       }
     }
     if (target === 'awareness' && typeof window.renderAwareness === 'function') {
@@ -156,6 +160,10 @@
       renderOrgs(weekData, 'operations');
       if (typeof window.renderIncidents === 'function') {
         window.renderIncidents('operations').catch(() => {});
+      }
+      // Init carousel for default operations tab (switchTab is never called for the default tab)
+      if (window.initCarousel && !window._operationsCarousel) {
+        window._operationsCarousel = window.initCarousel('#operations-carousel');
       }
     }
   };
