@@ -1768,32 +1768,38 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
     }
 
     // Fetch latest vulnerability scan
-    const vulnResult = await pool.query(
-      `SELECT summary FROM vuln_scans WHERE tenant_id = $1 ORDER BY month_key DESC LIMIT 1`,
-      [tenantId]
-    );
-    const vulnData = vulnResult.rows.length > 0
-      ? { summary: vulnResult.rows[0].summary }
-      : null;
+    let vulnData = null;
+    try {
+      const vulnResult = await pool.query(
+        `SELECT summary FROM vuln_scans WHERE tenant_id = $1 ORDER BY month_key DESC LIMIT 1`,
+        [tenantId]
+      );
+      if (vulnResult.rows.length > 0) vulnData = { summary: vulnResult.rows[0].summary };
+    } catch (_) { /* table may not exist yet */ }
 
     // Fetch latest awareness upload
-    const awarenessResult = await pool.query(
-      `SELECT id, uploaded_at, total_users, total_incomplete, upload_type
-       FROM awareness_uploads WHERE tenant_id = $1 ORDER BY uploaded_at DESC LIMIT 1`,
-      [tenantId]
-    );
-    const awarenessData = awarenessResult.rows.length > 0
-      ? { upload: awarenessResult.rows[0] }
-      : null;
+    let awarenessData = null;
+    try {
+      const awarenessResult = await pool.query(
+        `SELECT id, uploaded_at, total_users, total_incomplete, upload_type
+         FROM awareness_uploads WHERE tenant_id = $1 ORDER BY uploaded_at DESC LIMIT 1`,
+        [tenantId]
+      );
+      if (awarenessResult.rows.length > 0) awarenessData = { upload: awarenessResult.rows[0] };
+    } catch (_) { /* table may not exist yet */ }
 
-    // Fetch latest MDR upload (system-wide, not tenant-specific)
-    const mdrResult = await pool.query(
-      `SELECT total_tickets, resolved_count, avg_resolution_hours, uploaded_at
-       FROM mdr_uploads WHERE tenant_id IS NULL ORDER BY uploaded_at DESC LIMIT 1`
-    );
-    const mdrData = mdrResult.rows.length > 0
-      ? { upload: mdrResult.rows[0] }
-      : null;
+    // Fetch latest MDR upload — try tenant-specific first, then system-wide
+    let mdrData = null;
+    try {
+      const mdrResult = await pool.query(
+        `SELECT total_tickets, resolved_count, avg_resolution_hours, uploaded_at
+         FROM mdr_uploads
+         WHERE tenant_id = $1 OR tenant_id IS NULL
+         ORDER BY uploaded_at DESC LIMIT 1`,
+        [tenantId]
+      );
+      if (mdrResult.rows.length > 0) mdrData = { upload: mdrResult.rows[0] };
+    } catch (_) { /* table may not exist yet */ }
 
     // Calculate score
     const { composite, vulnScore, awarenessScore, mdrScore } = calculateSecureScore(vulnData, awarenessData, mdrData);
@@ -1839,40 +1845,47 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
     }
 
     // Get monthly vuln data (last 6 months for trend)
-    const vulnTrend = await pool.query(
-      `SELECT month_key, summary FROM vuln_scans
-       WHERE tenant_id = $1
-       ORDER BY month_key DESC LIMIT 6`,
-      [tenantId]
-    );
+    let vulnTrendRows = [];
+    try {
+      const vulnTrend = await pool.query(
+        `SELECT month_key, summary FROM vuln_scans
+         WHERE tenant_id = $1
+         ORDER BY month_key DESC LIMIT 6`,
+        [tenantId]
+      );
+      vulnTrendRows = vulnTrend.rows;
+    } catch (_) { /* table may not exist yet */ }
 
-    // For each month, calculate the score
-    const history = [];
-    for (const row of vulnTrend.rows) {
-      const vulnData = { summary: row.summary };
-
-      // For simplicity, use latest awareness/mdr for all historical points
-      // (In a production system, you might store historical snapshots)
-      const awarenessResult = await pool.query(
+    // Pre-fetch latest awareness + MDR once for all months
+    let latestAwarenessData = null;
+    try {
+      const ar = await pool.query(
         `SELECT total_users, total_incomplete FROM awareness_uploads
          WHERE tenant_id = $1 ORDER BY uploaded_at DESC LIMIT 1`,
         [tenantId]
       );
-      const awarenessData = awarenessResult.rows.length > 0
-        ? { upload: awarenessResult.rows[0] }
-        : null;
+      if (ar.rows.length > 0) latestAwarenessData = { upload: ar.rows[0] };
+    } catch (_) { /* table may not exist yet */ }
 
-      const mdrResult = await pool.query(
+    let latestMdrData = null;
+    try {
+      const mr = await pool.query(
         `SELECT total_tickets, resolved_count, avg_resolution_hours FROM mdr_uploads
-         WHERE tenant_id IS NULL ORDER BY uploaded_at DESC LIMIT 1`
+         WHERE tenant_id = $1 OR tenant_id IS NULL
+         ORDER BY uploaded_at DESC LIMIT 1`,
+        [tenantId]
       );
-      const mdrData = mdrResult.rows.length > 0
-        ? { upload: mdrResult.rows[0] }
-        : null;
+      if (mr.rows.length > 0) latestMdrData = { upload: mr.rows[0] };
+    } catch (_) { /* table may not exist yet */ }
 
-      const { composite } = calculateSecureScore(vulnData, awarenessData, mdrData);
-      history.push({ monthKey: row.month_key, score: composite });
-    }
+    const history = vulnTrendRows.map(row => {
+      const { composite } = calculateSecureScore(
+        { summary: row.summary },
+        latestAwarenessData,
+        latestMdrData
+      );
+      return { monthKey: row.month_key, score: composite };
+    });
 
     res.json({ tenantId, history: history.reverse() });
   } catch (err) {
