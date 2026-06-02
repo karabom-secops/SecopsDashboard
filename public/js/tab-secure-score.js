@@ -5,7 +5,7 @@ const SecureScoreTab = (() => {
 
   async function fetchSecureScore() {
     try {
-      const res = await fetch('/api/secure-score');
+      const res = await fetch('api/secure-score');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     } catch (err) {
@@ -16,7 +16,7 @@ const SecureScoreTab = (() => {
 
   async function fetchScoreHistory() {
     try {
-      const res = await fetch('/api/secure-score/history');
+      const res = await fetch('api/secure-score/history');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     } catch (err) {
