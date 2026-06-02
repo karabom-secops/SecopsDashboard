@@ -55,16 +55,18 @@
       }
       if (typeof window.renderIncidents === 'function') {
         window.renderIncidents('operations').catch(() => {});
-           // Initialize carousel for sections if carousel utility is available
-           if (target === 'operations' && window.initCarousel) {
-             setTimeout(() => {
-               window._operationsCarousel = window.initCarousel('#operations-carousel');
-             }, 100);
-           }
+      }
+      if (window.initCarousel) {
+        setTimeout(() => {
+          window._operationsCarousel = window.initCarousel('#operations-carousel');
+        }, 100);
       }
     }
     if (target === 'awareness' && typeof window.renderAwareness === 'function') {
       window.renderAwareness();
+    }
+    if (target === 'secure-score' && typeof window.SecureScoreTab !== 'undefined') {
+      window.SecureScoreTab.loadAndRender();
     }
     if (target === 'admin' && typeof window.renderAdmin === 'function') {
       window.renderAdmin();

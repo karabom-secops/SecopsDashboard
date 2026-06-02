@@ -236,17 +236,6 @@ const SecureScoreTab = (() => {
   }
 
   return {
-    init() {
-      loadAndRender();
-      // Refresh every 5 minutes
-      setInterval(loadAndRender, 5 * 60 * 1000);
-    },
+    loadAndRender,
   };
 })();
-
-// Auto-initialize when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => SecureScoreTab.init());
-} else {
-  SecureScoreTab.init();
-}
