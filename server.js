@@ -1790,22 +1790,29 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
         if (row.upload_type === 'history') {
           // For history uploads total_incomplete counts not-started sessions, not users.
           // Query sessions directly for an accurate completion rate.
-          const sessResult = await pool.query(
-            `SELECT
-               COUNT(*) FILTER (WHERE status = 'Completed') AS completed,
-               COUNT(*) AS total
-             FROM awareness_sessions
-             WHERE upload_id = $1
-               AND session_type != 'Phishing Simulation'`,
-            [row.id]
-          );
-          const { completed, total } = sessResult.rows[0];
-          const totalN = parseInt(total, 10);
+          let totalN = 0, completedN = 0;
+          try {
+            const sessResult = await pool.query(
+              `SELECT
+                 COUNT(*) FILTER (WHERE status = 'Completed') AS completed,
+                 COUNT(*) AS total
+               FROM awareness_sessions
+               WHERE upload_id = $1
+                 AND session_type != 'Phishing Simulation'`,
+              [row.id]
+            );
+            totalN    = parseInt(sessResult.rows[0].total,     10) || 0;
+            completedN = parseInt(sessResult.rows[0].completed, 10) || 0;
+          } catch (_) {
+            // awareness_sessions table not yet migrated — fall back to upload totals
+            totalN     = parseInt(row.total_users,      10) || 0;
+            completedN = Math.max(0, totalN - (parseInt(row.total_incomplete, 10) || 0));
+          }
           awarenessData = {
             upload: {
               ...row,
-              total_users: totalN,
-              total_incomplete: totalN - parseInt(completed, 10),
+              total_users:      totalN,
+              total_incomplete: totalN - completedN,
             },
           };
         } else {
