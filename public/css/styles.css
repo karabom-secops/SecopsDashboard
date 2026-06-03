@@ -862,6 +862,7 @@ input[type="file"] {
 
 .chart-wrap {
   position: relative;
+  height: 240px;
 }
 
 .chart-wrap canvas {
@@ -1176,6 +1177,24 @@ input[type="file"] {
   border-radius: 3px;
   transition: width 0.4s ease;
 }
+
+/* ── Vuln quick-search ─────────────────────────────────────────────────────── */
+.vuln-search-bar { margin-bottom: 0.75rem; }
+.vuln-search-bar input {
+  width: 100%;
+  padding: 0.45rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.vuln-search-bar input:focus {
+  outline: none;
+  border-color: var(--logo-cyan);
+  box-shadow: 0 0 0 2px rgba(0,180,216,0.12);
+}
+.vuln-search-bar input::placeholder { color: var(--muted); }
 
 /* ── Status filter chips ───────────────────────────────────────────────────── */
 .filter-chips-status { margin-top: 0.35rem; }

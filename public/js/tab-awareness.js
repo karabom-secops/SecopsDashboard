@@ -5,6 +5,9 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
   var _data           = null;  // { upload, users }
+  var _chartDist      = null;
+  var _chartType      = null;
+  var _chartTrend     = null;
 
 
   // ── XSS helper ─────────────────────────────────────────────────────────────
@@ -83,13 +86,16 @@
     if (summaryEl) summaryEl.hidden = isHistory;
     if (historyEl) historyEl.hidden = !isHistory;
 
+    var exportBtn = document.getElementById('awarenessExportCsvBtn');
+
     if (isHistory) {
       _renderHistoryStatCards();
       _renderTypeBreakdownChart();
       _renderMonthlyTrendChart();
       _renderPhishingClickTable();
-      _renderUserCompletionTable();
+      _renderUserCompletionTable(); // also shows exportBtn
     } else {
+      if (exportBtn) exportBtn.hidden = true;
       _renderStatCards();
       _renderChart();
       _renderManagerTable();
@@ -138,102 +144,52 @@
       '</div>';
   }
 
-  // ── Distribution bar chart ──────────────────────────────────────────────────
+  // ── Distribution bar chart (Chart.js) ──────────────────────────────────────
   function _renderChart() {
     var canvas = document.getElementById('chartAwarenessDistrib');
     if (!canvas || !_data) return;
+    if (_chartDist) { _chartDist.destroy(); _chartDist = null; }
 
     var users   = _data.users || [];
     var buckets = [
-      { label: '1\u20135',   min: 1,  max: 5  },
-      { label: '6\u201310',  min: 6,  max: 10 },
-      { label: '11\u201315', min: 11, max: 15 },
-      { label: '16\u201320', min: 16, max: 20 },
-      { label: '20+',       min: 21, max: Infinity },
+      { label: '1–5',   min: 1,  max: 5  },
+      { label: '6–10',  min: 6,  max: 10 },
+      { label: '11–15', min: 11, max: 15 },
+      { label: '16–20', min: 16, max: 20 },
+      { label: '20+',        min: 21, max: Infinity },
     ];
-
     var counts = buckets.map(function (b) {
       return users.filter(function (u) {
         return u.incomplete_sessions >= b.min && u.incomplete_sessions <= b.max;
       }).length;
     });
-    var labels = buckets.map(function (b) { return b.label; });
 
-    var DPR   = window.devicePixelRatio || 1;
-    var W     = (canvas.parentElement.clientWidth || 400);
-    var H     = 220;
-    canvas.width  = W * DPR;
-    canvas.height = H * DPR;
-    canvas.style.width  = W + 'px';
-    canvas.style.height = H + 'px';
-
-    var ctx   = canvas.getContext('2d');
-    ctx.scale(DPR, DPR);
-
-    var textColor  = '#374151';
-    var gridColor  = '#e5e7eb';
-    var barColor   = '#2563eb';
-
-    var padL = 50, padR = 20, padT = 20, padB = 40;
-    var chartW = W - padL - padR;
-    var chartH = H - padT - padB;
-
-    ctx.clearRect(0, 0, W, H);
-
-    var maxVal = Math.max.apply(null, counts.concat([1]));
-
-    // Grid lines
-    ctx.strokeStyle = gridColor;
-    ctx.lineWidth   = 1;
-    var gridLines = 4;
-    for (var g = 0; g <= gridLines; g++) {
-      var y = padT + chartH - (g / gridLines) * chartH;
-      ctx.beginPath();
-      ctx.moveTo(padL, y);
-      ctx.lineTo(padL + chartW, y);
-      ctx.stroke();
-
-      ctx.fillStyle = textColor;
-      ctx.font = '11px system-ui, sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText(Math.round((g / gridLines) * maxVal), padL - 6, y + 4);
-    }
-
-    // Bars
-    var barW = chartW / counts.length * 0.6;
-    var gap  = chartW / counts.length;
-
-    ctx.fillStyle = barColor;
-    counts.forEach(function (val, i) {
-      var bh = (val / maxVal) * chartH;
-      var x  = padL + i * gap + (gap - barW) / 2;
-      var y  = padT + chartH - bh;
-      ctx.fillRect(x, y, barW, bh);
-
-      // Value label above bar
-      if (val > 0) {
-        ctx.fillStyle = textColor;
-        ctx.font = 'bold 11px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(val, x + barW / 2, y - 4);
-        ctx.fillStyle = barColor;
-      }
+    _chartDist = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: buckets.map(function (b) { return b.label; }),
+        datasets: [{
+          label: 'Employees',
+          data: counts,
+          backgroundColor: 'rgba(37,99,235,0.75)',
+          borderColor: '#2563eb',
+          borderWidth: 1,
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: { beginAtZero: true, ticks: { color: '#7a9bb0', precision: 0 }, grid: { color: 'rgba(0,0,0,0.06)' } },
+          x: { title: { display: true, text: 'Incomplete Sessions Range', color: '#7a9bb0', font: { size: 11 } }, ticks: { color: '#7a9bb0' }, grid: { display: false } },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: function (ctx) { return ' ' + ctx.parsed.y + ' employee' + (ctx.parsed.y !== 1 ? 's' : ''); } } },
+        },
+      },
     });
-
-    // X-axis labels
-    ctx.fillStyle = textColor;
-    ctx.font = '11px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    labels.forEach(function (lbl, i) {
-      var x = padL + i * gap + gap / 2;
-      ctx.fillText(lbl, x, padT + chartH + 18);
-    });
-
-    // Axis label
-    ctx.fillStyle = textColor;
-    ctx.font = '11px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Incomplete Sessions Range', padL + chartW / 2, H - 4);
   }
 
   // ── Manager breakdown table ─────────────────────────────────────────────────
@@ -348,97 +304,55 @@
       _card('Avg Quiz Score',           avgQuiz + (avgQuiz !== 'N/A' ? '%' : ''), 'accent-amber', quizRows.length + ' quiz attempts');
   }
 
-  // ── History: training type breakdown chart ──────────────────────────────────
+  // ── History: training type breakdown chart (Chart.js) ─────────────────────
   function _renderTypeBreakdownChart() {
     var canvas = document.getElementById('chartAwarenessTypeBreakdown');
     if (!canvas || !_data) return;
+    if (_chartType) { _chartType.destroy(); _chartType = null; }
 
     var sessions = _data.sessions || [];
     var types    = ['Awareness Session', 'Quiz', 'Phishing Remediation Session'];
     var labels   = ['Awareness', 'Quiz', 'Phishing Remediation'];
-    var colors   = { completed: '#16a34a', notStarted: '#dc2626', na: '#9ca3af' };
 
-    var counts = types.map(function (t) {
-      var rows      = sessions.filter(function (s) { return s.session_type === t; });
-      var completed = rows.filter(function (s) { return s.status === 'Complete'; }).length;
-      var pending   = rows.filter(function (s) { return s.status === 'Not Started'; }).length;
-      return { total: rows.length, completed: completed, pending: pending };
+    var completed  = types.map(function (t) {
+      return sessions.filter(function (s) { return s.session_type === t && s.status === 'Complete'; }).length;
+    });
+    var notStarted = types.map(function (t) {
+      return sessions.filter(function (s) { return s.session_type === t && s.status === 'Not Started'; }).length;
     });
 
-    var DPR = window.devicePixelRatio || 1;
-    var W   = canvas.parentElement.clientWidth || 500;
-    var H   = 240;
-    canvas.width  = W * DPR; canvas.height = H * DPR;
-    canvas.style.width  = W + 'px'; canvas.style.height = H + 'px';
-
-    var ctx = canvas.getContext('2d');
-    ctx.scale(DPR, DPR);
-
-    var textColor = '#374151', gridColor = '#e5e7eb';
-    var padL = 55, padR = 20, padT = 20, padB = 45;
-    var chartW = W - padL - padR, chartH = H - padT - padB;
-
-    ctx.clearRect(0, 0, W, H);
-
-    var maxVal = Math.max.apply(null, counts.map(function (c) { return c.total; }).concat([1]));
-    var gridLines = 4;
-    for (var g = 0; g <= gridLines; g++) {
-      var y = padT + chartH - (g / gridLines) * chartH;
-      ctx.strokeStyle = gridColor; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + chartW, y); ctx.stroke();
-      ctx.fillStyle = textColor; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'right';
-      ctx.fillText(Math.round((g / gridLines) * maxVal), padL - 6, y + 4);
-    }
-
-    var groupW  = chartW / counts.length;
-    var barW    = groupW * 0.28;
-    var barGap  = groupW * 0.04;
-
-    counts.forEach(function (c, i) {
-      var gx = padL + i * groupW + groupW * 0.1;
-
-      // Completed bar
-      var bh1 = c.completed > 0 ? Math.max(2, (c.completed / maxVal) * chartH) : 0;
-      ctx.fillStyle = colors.completed;
-      ctx.fillRect(gx, padT + chartH - bh1, barW, bh1);
-      if (c.completed > 0) {
-        ctx.fillStyle = textColor; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(c.completed, gx + barW / 2, padT + chartH - bh1 - 3);
-      }
-
-      // Not-started bar
-      var bh2 = c.pending > 0 ? Math.max(2, (c.pending / maxVal) * chartH) : 0;
-      ctx.fillStyle = colors.notStarted;
-      ctx.fillRect(gx + barW + barGap, padT + chartH - bh2, barW, bh2);
-      if (c.pending > 0) {
-        ctx.fillStyle = textColor; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(c.pending, gx + barW + barGap + barW / 2, padT + chartH - bh2 - 3);
-      }
-
-      // X label
-      ctx.fillStyle = textColor; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(labels[i], padL + i * groupW + groupW / 2, padT + chartH + 16);
-    });
-
-    // Legend
-    var lx = padL, ly = H - 14;
-    [[colors.completed, 'Completed'], [colors.notStarted, 'Not Started']].forEach(function (item) {
-      ctx.fillStyle = item[0];
-      ctx.fillRect(lx, ly - 9, 12, 10);
-      ctx.fillStyle = textColor; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(item[1], lx + 15, ly);
-      lx += 100;
+    _chartType = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: 'Completed',  data: completed,  backgroundColor: 'rgba(22,163,74,0.8)',  borderColor: '#16a34a', borderWidth: 1, borderRadius: 4 },
+          { label: 'Not Started', data: notStarted, backgroundColor: 'rgba(220,38,38,0.8)', borderColor: '#dc2626', borderWidth: 1, borderRadius: 4 },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: { beginAtZero: true, ticks: { color: '#7a9bb0', precision: 0 }, grid: { color: 'rgba(0,0,0,0.06)' } },
+          x: { ticks: { color: '#7a9bb0' }, grid: { display: false } },
+        },
+        plugins: {
+          legend: { position: 'bottom', labels: { color: '#7a9bb0', boxWidth: 12, padding: 16 } },
+          tooltip: { mode: 'index', intersect: false },
+        },
+      },
     });
   }
 
-  // ── History: monthly trend chart ────────────────────────────────────────────
+  // ── History: monthly trend chart (Chart.js) ──────────────────────────────
   function _renderMonthlyTrendChart() {
     var canvas = document.getElementById('chartAwarenessTrend');
     if (!canvas || !_data) return;
+    if (_chartTrend) { _chartTrend.destroy(); _chartTrend = null; }
 
     var sessions = _data.sessions || [];
 
-    // Group completions by YYYY-MM from sent_date
     var monthMap = {};
     sessions.forEach(function (s) {
       if (!s.sent_date || s.session_type === 'Phishing Simulation') return;
@@ -449,83 +363,40 @@
       if (s.status === 'Complete') monthMap[key].completed++;
     });
 
-    var keys    = Object.keys(monthMap).sort();
-    var labels  = keys.map(function (k) {
+    var keys = Object.keys(monthMap).sort();
+    var labelsFmt = keys.map(function (k) {
       var parts = k.split('-');
       return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1)
-        .toLocaleDateString('en-ZA', { month: 'short', year: '2-digit' });
+        .toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
     });
-    var assignedData  = keys.map(function (k) { return monthMap[k].assigned; });
-    var completedData = keys.map(function (k) { return monthMap[k].completed; });
 
-    var DPR = window.devicePixelRatio || 1;
-    var W   = canvas.parentElement.clientWidth || 600;
-    var H   = 240;
-    canvas.width  = W * DPR; canvas.height = H * DPR;
-    canvas.style.width  = W + 'px'; canvas.style.height = H + 'px';
-
-    var ctx = canvas.getContext('2d');
-    ctx.scale(DPR, DPR);
-
-    var textColor = '#374151', gridColor = '#e5e7eb';
-    var colAssigned  = '#93c5fd', colCompleted = '#16a34a';
-    var padL = 50, padR = 20, padT = 20, padB = 45;
-    var chartW = W - padL - padR, chartH = H - padT - padB;
-
-    ctx.clearRect(0, 0, W, H);
     if (keys.length === 0) {
-      ctx.fillStyle = textColor; ctx.font = '13px system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('No data', W / 2, H / 2);
+      var ctx2 = canvas.getContext('2d');
+      ctx2.clearRect(0, 0, canvas.width, canvas.height);
       return;
     }
 
-    var maxVal = Math.max.apply(null, assignedData.concat([1]));
-    var gridLines = 4;
-    for (var g = 0; g <= gridLines; g++) {
-      var y = padT + chartH - (g / gridLines) * chartH;
-      ctx.strokeStyle = gridColor; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + chartW, y); ctx.stroke();
-      ctx.fillStyle = textColor; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'right';
-      ctx.fillText(Math.round((g / gridLines) * maxVal), padL - 6, y + 4);
-    }
-
-    function drawLine(dataArr, color) {
-      ctx.strokeStyle = color; ctx.lineWidth = 2;
-      ctx.beginPath();
-      dataArr.forEach(function (val, i) {
-        var x = padL + (keys.length > 1 ? i / (keys.length - 1) : 0.5) * chartW;
-        var yp = padT + chartH - (val / maxVal) * chartH;
-        i === 0 ? ctx.moveTo(x, yp) : ctx.lineTo(x, yp);
-      });
-      ctx.stroke();
-      // Dots
-      ctx.fillStyle = color;
-      dataArr.forEach(function (val, i) {
-        var x = padL + (keys.length > 1 ? i / (keys.length - 1) : 0.5) * chartW;
-        var yp = padT + chartH - (val / maxVal) * chartH;
-        ctx.beginPath(); ctx.arc(x, yp, 3, 0, Math.PI * 2); ctx.fill();
-      });
-    }
-
-    drawLine(assignedData,  colAssigned);
-    drawLine(completedData, colCompleted);
-
-    // X-axis labels (show every N-th if too many)
-    var step = Math.max(1, Math.ceil(keys.length / 10));
-    ctx.fillStyle = textColor; ctx.font = '10px system-ui, sans-serif'; ctx.textAlign = 'center';
-    keys.forEach(function (k, i) {
-      if (i % step !== 0) return;
-      var x = padL + (keys.length > 1 ? i / (keys.length - 1) : 0.5) * chartW;
-      ctx.fillText(labels[i], x, padT + chartH + 16);
-    });
-
-    // Legend
-    var lx = padL, ly = H - 8;
-    [[colAssigned, 'Assigned'], [colCompleted, 'Completed']].forEach(function (item) {
-      ctx.fillStyle = item[0]; ctx.fillRect(lx, ly - 9, 12, 10);
-      ctx.fillStyle = textColor; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(item[1], lx + 15, ly);
-      lx += 100;
+    _chartTrend = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: labelsFmt,
+        datasets: [
+          { label: 'Assigned',  data: keys.map(function (k) { return monthMap[k].assigned; }),  borderColor: '#93c5fd', backgroundColor: 'rgba(147,197,253,0.08)', tension: 0.3, pointRadius: 4, fill: false },
+          { label: 'Completed', data: keys.map(function (k) { return monthMap[k].completed; }), borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.08)',   tension: 0.3, pointRadius: 4, fill: false },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: { beginAtZero: true, ticks: { color: '#7a9bb0', precision: 0 }, grid: { color: 'rgba(0,0,0,0.06)' } },
+          x: { ticks: { color: '#7a9bb0', maxTicksLimit: 12 }, grid: { display: false } },
+        },
+        plugins: {
+          legend: { position: 'bottom', labels: { color: '#7a9bb0', boxWidth: 12, padding: 16 } },
+          tooltip: { mode: 'index', intersect: false },
+        },
+      },
     });
   }
 
@@ -708,6 +579,27 @@
             if (detailRow && !show) detailRow.hidden = true;
           }
         });
+      };
+    }
+
+    // CSV export button
+    var exportBtn = document.getElementById('awarenessExportCsvBtn');
+    if (exportBtn) {
+      exportBtn.hidden = false;
+      exportBtn.onclick = function () {
+        var csvRows = [['Name', 'Email', 'Manager', 'Assigned', 'Completed', '%']];
+        rows.forEach(function (r) {
+          var pct = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
+          csvRows.push([r.name, r.email, r.manager, r.assigned, r.completed, pct + '%']);
+        });
+        var csv = csvRows.map(function (row) {
+          return row.map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(',');
+        }).join('\n');
+        var blob = new Blob([csv], { type: 'text/csv' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'awareness-completion.csv';
+        a.click();
       };
     }
   }

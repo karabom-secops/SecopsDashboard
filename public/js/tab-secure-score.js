@@ -2,6 +2,7 @@
 
 const SecureScoreTab = (() => {
   let currentScore = null;
+  let _trendChart = null;
 
   async function fetchSecureScore() {
     try {
@@ -39,19 +40,29 @@ const SecureScoreTab = (() => {
     return 'Poor';
   }
 
-  function renderScoreGauge(container, score) {
+  function renderScoreGauge(container, score, delta) {
     const w = 220, h = 130;
     const cx = w / 2, cy = h - 10;
     const r = 90;
-    // Semi-circle arc: from left (180°) to right (0°), top half
-    const startX = cx - r, startY = cy;
-    const endX   = cx + r, endY   = cy;
+    const startX = cx - r, endX = cx + r, endY = cy;
     const color  = getScoreColor(score);
-
-    // Arc length for the semi-circle
     const arcLen = Math.PI * r;
-    // Offset = portion to leave un-filled (from the end)
     const targetOffset = arcLen * (1 - score / 100);
+
+    let deltaEl = '';
+    if (typeof delta === 'number' && delta !== 0) {
+      const sign = delta > 0 ? '+' : '';
+      const dColor = delta > 0 ? '#27ae60' : '#e74c3c';
+      deltaEl = `<text x="${cx}" y="${cy - 2}" text-anchor="middle"
+        font-size="11" font-weight="600" fill="${dColor}" font-family="Manrope,sans-serif">
+        ${sign}${delta} vs last month
+      </text>`;
+    } else {
+      deltaEl = `<text x="${cx}" y="${cy - 2}" text-anchor="middle"
+        font-size="12" font-weight="600" fill="#7a9bb0" font-family="Manrope,sans-serif">
+        ${getScoreRating(score)}
+      </text>`;
+    }
 
     const svg = `
       <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" class="score-gauge" style="overflow:visible">
@@ -60,31 +71,22 @@ const SecureScoreTab = (() => {
             <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
           </filter>
         </defs>
-        <!-- Track arc -->
         <path d="M ${startX} ${cy} A ${r} ${r} 0 0 1 ${endX} ${endY}"
               fill="none" stroke="#dde8f0" stroke-width="12" stroke-linecap="round"/>
-        <!-- Score arc — animated via JS -->
         <path id="gauge-arc" d="M ${startX} ${cy} A ${r} ${r} 0 0 1 ${endX} ${endY}"
               fill="none" stroke="${color}" stroke-width="12" stroke-linecap="round"
               stroke-dasharray="${arcLen}" stroke-dashoffset="${arcLen}"
               filter="url(#gauge-shadow)"/>
-        <!-- Score number -->
         <text x="${cx}" y="${cy - 20}" text-anchor="middle"
               font-size="42" font-weight="700" fill="${color}" font-family="Manrope,sans-serif">
           ${Math.round(score)}
         </text>
-        <!-- Rating label -->
-        <text x="${cx}" y="${cy - 2}" text-anchor="middle"
-              font-size="12" font-weight="600" fill="#7a9bb0" font-family="Manrope,sans-serif"
-              text-transform="uppercase" letter-spacing="1">
-          ${getScoreRating(score)}
-        </text>
+        ${deltaEl}
       </svg>
     `;
 
     container.innerHTML = svg;
 
-    // Animate arc filling in
     const arc = container.querySelector('#gauge-arc');
     if (arc) {
       requestAnimationFrame(() => {
@@ -182,51 +184,68 @@ const SecureScoreTab = (() => {
     container.innerHTML = html;
   }
 
+  function formatMonthLabel(monthKey) {
+    const [year, month] = monthKey.split('-');
+    const d = new Date(parseInt(year), parseInt(month) - 1, 1);
+    return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+  }
+
   function renderTrendChart(container, history) {
     if (!history || history.length === 0) {
-      container.innerHTML = '<p>Insufficient data for trend chart.</p>';
+      container.innerHTML = '<p style="color:var(--muted);padding:1rem 0">Insufficient data for trend chart.</p>';
       return;
     }
 
-    // Simple ASCII-style chart (can be enhanced with Chart.js or D3)
-    const maxScore = 100;
-    const chartHeight = 150;
-    const chartWidth = 300;
-    const barWidth = chartWidth / history.length;
+    container.innerHTML = '<canvas id="secure-score-chart" style="max-height:220px"></canvas>';
+    const canvas = container.querySelector('canvas');
 
-    const svg = `
-      <svg width="${chartWidth + 50}" height="${chartHeight + 40}" class="trend-chart">
-        <text x="10" y="15" font-size="12" font-weight="bold">Score Trend (Last 6 Months)</text>
-        
-        <!-- Y-axis labels -->
-        <text x="25" y="35" font-size="10" text-anchor="end">100</text>
-        <text x="25" y="105" font-size="10" text-anchor="end">50</text>
-        <text x="25" y="175" font-size="10" text-anchor="end">0</text>
-        
-        <!-- Grid lines -->
-        <line x1="30" y1="30" x2="${chartWidth + 30}" y2="30" stroke="#ecf0f1" stroke-width="1"/>
-        <line x1="30" y1="100" x2="${chartWidth + 30}" y2="100" stroke="#ecf0f1" stroke-width="1"/>
-        <line x1="30" y1="170" x2="${chartWidth + 30}" y2="170" stroke="#ecf0f1" stroke-width="1"/>
-        
-        <!-- Bars -->
-        ${history
-          .map((item, idx) => {
-            const barHeight = (item.score / maxScore) * chartHeight;
-            const x = 30 + idx * barWidth + barWidth * 0.1;
-            const y = 170 - barHeight;
-            return `
-              <rect x="${x}" y="${y}" width="${barWidth * 0.8}" height="${barHeight}"
-                    fill="${getScoreColor(item.score)}" opacity="0.8">
-                <title>${item.monthKey}: ${item.score}</title>
-              </rect>
-              <text x="${x + barWidth * 0.4}" y="185" font-size="9" text-anchor="middle">${item.monthKey.slice(-2)}</text>
-            `;
-          })
-          .join('')}
-      </svg>
-    `;
+    if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
 
-    container.innerHTML = svg;
+    // Reverse so oldest is on the left
+    const sorted = [...history].reverse();
+
+    _trendChart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: sorted.map(h => formatMonthLabel(h.monthKey)),
+        datasets: [{
+          label: 'Security Score',
+          data: sorted.map(h => h.score),
+          borderColor: '#00b4d8',
+          backgroundColor: 'rgba(0,180,216,0.08)',
+          tension: 0.35,
+          pointRadius: 5,
+          pointBackgroundColor: sorted.map(h => getScoreColor(h.score)),
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        scales: {
+          y: {
+            min: 0,
+            max: 100,
+            ticks: { stepSize: 25, color: '#7a9bb0' },
+            grid: { color: 'rgba(0,0,0,0.06)' },
+          },
+          x: {
+            ticks: { color: '#7a9bb0' },
+            grid: { display: false },
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` Score: ${ctx.parsed.y}/100 (${getScoreRating(ctx.parsed.y)})`,
+            },
+          },
+        },
+      },
+    });
   }
 
   async function loadAndRender() {
@@ -242,9 +261,20 @@ const SecureScoreTab = (() => {
       return;
     }
 
+    // Compute month-over-month delta
+    const history = historyData ? historyData.history : [];
+    let delta = null;
+    if (history.length >= 2) {
+      delta = Math.round(scoreData.score) - Math.round(history[1].score);
+    }
+
     // Restore the original inner structure (wipe spinner)
     if (container) {
       container.innerHTML = `
+        <div class="score-header-bar">
+          <button id="secure-score-refresh" class="score-action-btn" title="Refresh score">&#x21BB; Refresh</button>
+          <button id="secure-score-print" class="score-action-btn" title="Print or save as PDF">&#x2399; Export</button>
+        </div>
         <div class="secure-score-main">
           <div id="secure-score-gauge" class="score-gauge-container"></div>
           <div id="secure-score-data-age" class="data-age-info"></div>
@@ -259,13 +289,16 @@ const SecureScoreTab = (() => {
           <div id="secure-score-recommendations" class="recommendations-container"></div>
         </div>
       `;
+
+      document.getElementById('secure-score-refresh').addEventListener('click', loadAndRender);
+      document.getElementById('secure-score-print').addEventListener('click', () => window.print());
     }
 
     currentScore = scoreData;
 
-    // Render main gauge
+    // Render main gauge with delta
     const gaugeContainer = document.getElementById('secure-score-gauge');
-    renderScoreGauge(gaugeContainer, scoreData.score);
+    renderScoreGauge(gaugeContainer, scoreData.score, delta);
 
     // Render component scores
     const componentContainer = document.getElementById('secure-score-components');
@@ -273,7 +306,7 @@ const SecureScoreTab = (() => {
 
     // Render trend chart
     const trendContainer = document.getElementById('secure-score-trend');
-    renderTrendChart(trendContainer, historyData ? historyData.history : []);
+    renderTrendChart(trendContainer, history);
 
     // Render recommendations
     const recommendationContainer = document.getElementById('secure-score-recommendations');

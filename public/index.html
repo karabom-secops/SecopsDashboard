@@ -298,6 +298,9 @@
           <button id="vulnBulkClearBtn" class="btn btn-secondary btn-sm">Clear</button>
         </div>
         <div id="vuln-status-summary" class="vuln-status-summary" hidden></div>
+        <div class="vuln-search-bar">
+          <input type="search" id="vuln-search" placeholder="Search host, vulnerability, CVE…" autocomplete="off">
+        </div>
         <div id="vuln-finding-filters" class="filter-chips"></div>
         <div id="vuln-status-filters" class="filter-chips filter-chips-status"></div>
         <div class="table-wrapper vuln-findings-wrap">
@@ -445,7 +448,10 @@
         <div class="awareness-table-card">
           <div class="awareness-card-header">
             <h3 class="awareness-card-title">Employee Training Completion</h3>
-            <input type="search" id="awarenessCompletionSearch" class="table-search-input" placeholder="Search by name or email…" aria-label="Search employees">
+            <div style="display:flex;gap:0.5rem;align-items:center">
+              <input type="search" id="awarenessCompletionSearch" class="table-search-input" placeholder="Search by name or email…" aria-label="Search employees">
+              <button id="awarenessExportCsvBtn" class="score-action-btn" hidden>&#x2B07; Export CSV</button>
+            </div>
           </div>
           <div class="table-scroll">
             <table class="data-table" id="awarenessUserCompletionTable">
@@ -748,6 +754,7 @@
   <script src="js/tab-vulns.js"></script>
   <script src="js/tab-incidents.js"></script>
   <script src="js/tab-awareness.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <script src="js/tab-secure-score.js"></script>
   <script src="js/tab-admin.js"></script>
 </body>

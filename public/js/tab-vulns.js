@@ -10,8 +10,8 @@
   let _sortAsc       = false;
   let _activeFilter  = 'All';  // severity filter
   let _statusFilter  = 'All';  // status filter
-  let _trendCanvas   = null;
-  let _trendTooltip  = null;
+  let _vulnChart     = null;
+  let _searchText    = '';
   let _pendingVulnNotice = '';
 
   const STATUS_LABELS = {
@@ -85,6 +85,11 @@
       _currentScan = null;
       _trendsData  = [];
     }
+
+    // Reset search on new scan load
+    _searchText = '';
+    const searchInput = document.getElementById('vuln-search');
+    if (searchInput) searchInput.value = '';
 
     if (loadingEl) loadingEl.hidden = true;
     _renderAll();
@@ -225,7 +230,7 @@
     emptyEl.hidden   = true;
     contentEl.hidden = false;
 
-    _renderTrendChart(_currentScan.monthKey);
+    _renderTrendChart();
     _renderTopVulns();
     _renderHostTable();
     _renderStatusSummary();
@@ -233,150 +238,43 @@
     _renderFindingsTable();
   }
 
-  // ── Trend chart ────────────────────────────────────────────────────────────
-  function _renderTrendChart(selectedMonthKey) {
-    const canvas  = document.getElementById('chartVulnTrend');
-    const tooltip = document.getElementById('tooltipVulnTrend');
-    if (!canvas || !tooltip) return;
-
-    _trendCanvas  = canvas;
-    _trendTooltip = tooltip;
-
+  // ── Trend chart (Chart.js) ────────────────────────────────────────────────
+  function _renderTrendChart() {
+    const canvas = document.getElementById('chartVulnTrend');
+    if (!canvas) return;
+    if (_vulnChart) { _vulnChart.destroy(); _vulnChart = null; }
     if (_trendsData.length === 0) return;
 
-    const DPR = window.devicePixelRatio || 1;
-    const wrap = canvas.parentElement;
-    const W    = wrap.clientWidth  || 700;
-    const H    = wrap.clientHeight || 260;
+    // Oldest → newest for left-to-right reading
+    const sorted = [..._trendsData].reverse();
 
-    canvas.width  = W * DPR;
-    canvas.height = H * DPR;
-    canvas.style.width  = W + 'px';
-    canvas.style.height = H + 'px';
-
-    const ctx = canvas.getContext('2d');
-    ctx.scale(DPR, DPR);
-
-    const PAD = { top: 20, right: 20, bottom: 50, left: 50 };
-    const cW  = W - PAD.left - PAD.right;
-    const cH  = H - PAD.top  - PAD.bottom;
-
-    const series = [
-      { key: 'critical', colour: '#e8394a', label: 'Critical' },
-      { key: 'high',     colour: '#f59e0b', label: 'High'     },
-      { key: 'medium',   colour: '#0066cc', label: 'Medium'   },
-      { key: 'low',      colour: '#22c55e', label: 'Low'      },
-    ];
-
-    const maxVal = Math.max(1, ...series.map(s => Math.max(..._trendsData.map(t => t[s.key] || 0))));
-    const n      = _trendsData.length;
-
-    function xPos(i) { return PAD.left + (i / Math.max(n - 1, 1)) * cW; }
-    function yPos(v) { return PAD.top  + cH - (v / maxVal) * cH; }
-
-    // Background
-    ctx.clearRect(0, 0, W, H);
-
-    // Grid lines
-    ctx.strokeStyle = '#e5e7eb';
-    ctx.lineWidth   = 1;
-    for (let i = 0; i <= 5; i++) {
-      const y = PAD.top + (cH / 5) * i;
-      ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
-    }
-
-    // Y axis labels
-    ctx.fillStyle  = '#6b7280';
-    ctx.font       = '11px sans-serif';
-    ctx.textAlign  = 'right';
-    for (let i = 0; i <= 5; i++) {
-      const v = Math.round(maxVal * (1 - i / 5));
-      const y = PAD.top + (cH / 5) * i;
-      ctx.fillText(String(v), PAD.left - 6, y + 4);
-    }
-
-    // X axis labels
-    ctx.textAlign = 'center';
-    _trendsData.forEach((t, i) => {
-      const x = xPos(i);
-      ctx.fillText(t.monthKey ? t.monthKey.slice(5) : '', x, H - 10);
+    _vulnChart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: sorted.map(d => {
+          const [y, m] = d.monthKey.split('-');
+          return new Date(parseInt(y), parseInt(m) - 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+        }),
+        datasets: [
+          { label: 'Critical', data: sorted.map(d => d.critical || 0), borderColor: '#e8394a', backgroundColor: 'rgba(232,57,74,0.06)',  tension: 0.3, pointRadius: 4, fill: false },
+          { label: 'High',     data: sorted.map(d => d.high     || 0), borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.06)', tension: 0.3, pointRadius: 4, fill: false },
+          { label: 'Medium',   data: sorted.map(d => d.medium   || 0), borderColor: '#0066cc', backgroundColor: 'rgba(0,102,204,0.06)',  tension: 0.3, pointRadius: 4, fill: false },
+          { label: 'Low',      data: sorted.map(d => d.low      || 0), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.06)',  tension: 0.3, pointRadius: 4, fill: false },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: { beginAtZero: true, ticks: { color: '#7a9bb0', precision: 0 }, grid: { color: 'rgba(0,0,0,0.06)' } },
+          x: { ticks: { color: '#7a9bb0' }, grid: { display: false } },
+        },
+        plugins: {
+          legend: { position: 'bottom', labels: { color: '#7a9bb0', boxWidth: 12, padding: 16 } },
+          tooltip: { mode: 'index', intersect: false },
+        },
+      },
     });
-
-    // Selected-month vertical marker
-    const selIdx = _trendsData.findIndex(t => t.monthKey === selectedMonthKey);
-    if (selIdx >= 0) {
-      ctx.save();
-      ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth   = 1.5;
-      const xm = xPos(selIdx);
-      ctx.beginPath(); ctx.moveTo(xm, PAD.top); ctx.lineTo(xm, H - PAD.bottom); ctx.stroke();
-      ctx.restore();
-    }
-
-    // Series lines
-    series.forEach(s => {
-      ctx.beginPath();
-      ctx.strokeStyle = s.colour;
-      ctx.lineWidth   = 2;
-      _trendsData.forEach((t, i) => {
-        const x = xPos(i);
-        const y = yPos(t[s.key] || 0);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-
-      // Dots
-      _trendsData.forEach((t, i) => {
-        ctx.beginPath();
-        ctx.fillStyle = s.colour;
-        ctx.arc(xPos(i), yPos(t[s.key] || 0), 3, 0, Math.PI * 2);
-        ctx.fill();
-      });
-    });
-
-    // Legend
-    const legendY = H - PAD.bottom + 22;
-    let legendX   = PAD.left;
-    series.forEach(s => {
-      ctx.fillStyle = s.colour;
-      ctx.fillRect(legendX, legendY, 12, 4);
-      ctx.fillStyle  = '#374151';
-      ctx.textAlign  = 'left';
-      ctx.fillText(s.label, legendX + 16, legendY + 6);
-      legendX += 80;
-    });
-
-    // Tooltip on hover
-    canvas.onmousemove = null;
-    canvas.onmouseleave = null;
-
-    canvas.onmousemove = (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const mx   = e.clientX - rect.left;
-      const my   = e.clientY - rect.top;
-
-      let closest = null, minDist = Infinity;
-      _trendsData.forEach((t, i) => {
-        series.forEach(s => {
-          const dx = mx - xPos(i);
-          const dy = my - yPos(t[s.key] || 0);
-          const d  = Math.sqrt(dx * dx + dy * dy);
-          if (d < minDist) { minDist = d; closest = { t, s, i }; }
-        });
-      });
-
-      if (closest && minDist < 30) {
-        tooltip.hidden = false;
-        tooltip.style.left = (xPos(closest.i) + 10) + 'px';
-        tooltip.style.top  = (yPos(closest.t[closest.s.key] || 0) - 10) + 'px';
-        tooltip.textContent = `${closest.t.monthKey} — ${closest.s.label}: ${closest.t[closest.s.key] || 0}`;
-      } else {
-        tooltip.hidden = true;
-      }
-    };
-
-    canvas.onmouseleave = () => { tooltip.hidden = true; };
   }
 
   function _renderVulnNotice() {
@@ -487,6 +385,16 @@
       });
     }
 
+    // ── Search input (wire once) ──
+    const searchInput = document.getElementById('vuln-search');
+    if (searchInput && !searchInput.dataset.handlerSet) {
+      searchInput.dataset.handlerSet = '1';
+      searchInput.addEventListener('input', e => {
+        _searchText = e.target.value.trim().toLowerCase();
+        _renderFindingsTable();
+      });
+    }
+
     // ── Status filter ──
     const statusEl = document.getElementById('vuln-status-filters');
     if (statusEl) {
@@ -522,6 +430,13 @@
     }
     if (_statusFilter !== 'All') {
       filtered = filtered.filter(f => (f.status || 'open') === _statusFilter);
+    }
+    if (_searchText) {
+      filtered = filtered.filter(f =>
+        (f.host || '').toLowerCase().includes(_searchText) ||
+        (f.name || '').toLowerCase().includes(_searchText) ||
+        (f.cve  || '').toLowerCase().includes(_searchText)
+      );
     }
 
     tbody.innerHTML = filtered.map(f => {
@@ -678,9 +593,15 @@
       </span>
       <span class="status-remediated-pct">
         ${remediatedPct}% addressed
-        <div class="remediation-bar"><div class="remediation-fill" style="width:${remediatedPct}%"></div></div>
+        <div class="remediation-bar"><div class="remediation-fill" style="width:0%"></div></div>
       </span>
     `;
+
+    // Animate bar width after paint
+    setTimeout(() => {
+      const fill = el.querySelector('.remediation-fill');
+      if (fill) fill.style.width = remediatedPct + '%';
+    }, 60);
 
     el.querySelectorAll('.status-count[data-status]').forEach(span => {
       span.addEventListener('click', () => {
