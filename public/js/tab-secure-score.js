@@ -268,9 +268,21 @@ const SecureScoreTab = (() => {
       delta = Math.round(scoreData.score) - Math.round(history[1].score);
     }
 
+    // Build report header info
+    const reportDate = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
+    const user = window.currentUser || {};
+    const tenantLabel = user.username ? `Prepared by: ${user.username}` : '';
+
     // Restore the original inner structure (wipe spinner)
     if (container) {
       container.innerHTML = `
+        <div class="print-report-header">
+          <div class="print-report-logo">Security Posture Report</div>
+          <div class="print-report-meta">
+            ${tenantLabel ? `<span>${tenantLabel}</span>` : ''}
+            <span>Generated: ${reportDate}</span>
+          </div>
+        </div>
         <div class="score-header-bar">
           <button id="secure-score-refresh" class="score-action-btn" title="Refresh score">&#x21BB; Refresh</button>
           <button id="secure-score-print" class="score-action-btn" title="Print or save as PDF">&#x2399; Export</button>
