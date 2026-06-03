@@ -303,7 +303,19 @@ const SecureScoreTab = (() => {
       `;
 
       document.getElementById('secure-score-refresh').addEventListener('click', loadAndRender);
-      document.getElementById('secure-score-print').addEventListener('click', () => window.print());
+      document.getElementById('secure-score-print').addEventListener('click', () => {
+        // Temporarily remove hidden attribute so CSS can show the panel even if another tab is active
+        const panel = document.getElementById('tab-secure-score');
+        const wasHidden = panel && panel.hasAttribute('hidden');
+        if (wasHidden) panel.removeAttribute('hidden');
+
+        const restore = () => {
+          if (wasHidden) panel.setAttribute('hidden', '');
+          window.removeEventListener('afterprint', restore);
+        };
+        window.addEventListener('afterprint', restore);
+        window.print();
+      });
     }
 
     currentScore = scoreData;

@@ -387,17 +387,19 @@
 
 /* ── Print / Export layout ───────────────────────────────────────────────── */
 @media print {
-  /* Hide UI chrome */
-  .side-nav,
-  .top-bar,
-  .score-header-bar,
-  #tab-operations,
-  #tab-metrics,
-  #tab-vulns,
-  #tab-awareness,
-  #tab-admin { display: none !important; }
+  /* Hide UI chrome — correct element classes/IDs */
+  .site-header,
+  .side-menu,
+  #mfaBanner,
+  .score-header-bar { display: none !important; }
 
+  /* Reset dashboard margin (sidebar is gone) */
+  #dashboard { margin-left: 0 !important; }
+
+  /* Hide all tab panels except secure-score */
+  .tab-panel { display: none !important; }
   #tab-secure-score { display: block !important; }
+
   .secure-score-wrapper { padding: 0; gap: 1rem; }
 
   /* Report header */
