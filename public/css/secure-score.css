@@ -94,6 +94,92 @@
   border-radius: var(--radius-sm);
 }
 
+/* ── Insurability Score & Premium Outlook panel ──────────────────────────── */
+.insurability-body {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.insurability-score-block {
+  text-align: center;
+  flex-shrink: 0;
+  min-width: 130px;
+  padding: 0.5rem;
+}
+.insurability-score-number {
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1;
+  font-family: Manrope, sans-serif;
+}
+.insurability-score-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-top: 0.3rem;
+  font-weight: 600;
+}
+.insurability-score-breakdown {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.5rem;
+  line-height: 1.5;
+}
+
+.insurability-direction-block { flex: 1; min-width: 220px; }
+
+.insurability-direction-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 1.1rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 0.65rem;
+}
+.direction-reduce  { background: rgba(39,174,96,0.12);  color: #27ae60; }
+.direction-stable  { background: rgba(39,174,96,0.08);  color: #27ae60; }
+.direction-neutral { background: rgba(245,158,11,0.12); color: #f39c12; }
+.direction-risk    { background: rgba(230,126,34,0.12); color: #e67e22; }
+.direction-likely  { background: rgba(231,76,60,0.12);  color: #e74c3c; }
+.direction-icon    { font-size: 1.1rem; }
+
+.insurability-trend-note {
+  font-size: 0.84rem;
+  color: var(--muted);
+  margin: 0 0 0.85rem;
+  line-height: 1.5;
+}
+
+.insurability-drivers { display: flex; flex-direction: column; gap: 0.4rem; }
+.drivers-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.3rem;
+}
+.driver-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.84rem;
+  color: var(--text);
+  line-height: 1.4;
+}
+.driver-dot        { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.driver-dot-red    { background: var(--red); }
+.driver-dot-amber  { background: var(--amber); }
+.driver-dot-green  { background: var(--green); }
+
+@media (max-width: 600px) {
+  .insurability-body { flex-direction: column; gap: 1rem; }
+  .insurability-score-number { font-size: 2.5rem; }
+}
+
 /* ── Score header bar (refresh / export) ─────────────────────────────────── */
 .score-header-bar {
   display: flex;

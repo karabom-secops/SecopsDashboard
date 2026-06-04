@@ -190,7 +190,7 @@ const SecureScoreTab = (() => {
     return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
   }
 
-  function renderTrendChart(container, history) {
+  function renderTrendChart(container, history, grcScore) {
     if (!history || history.length === 0) {
       container.innerHTML = '<p style="color:var(--muted);padding:1rem 0">Insufficient data for trend chart.</p>';
       return;
@@ -204,22 +204,41 @@ const SecureScoreTab = (() => {
     // Reverse so oldest is on the left
     const sorted = [...history].reverse();
 
+    const datasets = [{
+      label: 'Secure Score',
+      data: sorted.map(h => h.score),
+      borderColor: '#00b4d8',
+      backgroundColor: 'rgba(0,180,216,0.06)',
+      tension: 0.35,
+      pointRadius: 5,
+      pointBackgroundColor: sorted.map(h => getScoreColor(h.score)),
+      pointBorderColor: '#fff',
+      pointBorderWidth: 2,
+      fill: true,
+    }];
+
+    // Add Insurability Score line when GRC score is available
+    if (grcScore !== null) {
+      datasets.push({
+        label: 'Insurability Score',
+        data: sorted.map(h => Math.round(h.score * 0.6 + grcScore * 0.4)),
+        borderColor: '#6366f1',
+        backgroundColor: 'rgba(99,102,241,0.04)',
+        tension: 0.35,
+        pointRadius: 4,
+        pointBackgroundColor: '#6366f1',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        borderDash: [4, 3],
+        fill: false,
+      });
+    }
+
     _trendChart = new Chart(canvas, {
       type: 'line',
       data: {
         labels: sorted.map(h => formatMonthLabel(h.monthKey)),
-        datasets: [{
-          label: 'Security Score',
-          data: sorted.map(h => h.score),
-          borderColor: '#00b4d8',
-          backgroundColor: 'rgba(0,180,216,0.08)',
-          tension: 0.35,
-          pointRadius: 5,
-          pointBackgroundColor: sorted.map(h => getScoreColor(h.score)),
-          pointBorderColor: '#fff',
-          pointBorderWidth: 2,
-          fill: true,
-        }],
+        datasets,
       },
       options: {
         responsive: true,
@@ -237,15 +256,106 @@ const SecureScoreTab = (() => {
           },
         },
         plugins: {
-          legend: { display: false },
+          legend: { display: grcScore !== null, labels: { color: '#7a9bb0', boxWidth: 12, padding: 16 } },
           tooltip: {
             callbacks: {
-              label: ctx => ` Score: ${ctx.parsed.y}/100 (${getScoreRating(ctx.parsed.y)})`,
+              label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y}/100`,
             },
           },
         },
       },
     });
+  }
+
+  function renderInsurabilityPanel(container, scoreData, history, grcData) {
+    const ssScore  = Math.round(scoreData.score);
+    const grcAsmt  = grcData && grcData.assessment;
+    const grcScore = grcAsmt ? (grcAsmt.grc_score || 0) : null;
+    const hasGrc   = grcScore !== null;
+
+    const insScore = hasGrc
+      ? Math.round(ssScore * 0.6 + grcScore * 0.4)
+      : ssScore;
+
+    // 3-month trend (uses secure score history, index 0 = most recent)
+    let trend = 0;
+    if (history.length >= 2) {
+      const recent = history.slice(0, Math.min(3, history.length)).map(h => h.score);
+      const avgRecent = recent.reduce((s, v) => s + v, 0) / recent.length;
+      trend = Math.round(ssScore - avgRecent);
+    }
+
+    // Determine direction
+    let dirKey, dirArrow, dirLabel;
+    if (insScore >= 75 && trend >= 3) {
+      dirKey = 'reduce';  dirArrow = '↓'; dirLabel = 'Premium Reduction Likely';
+    } else if (insScore >= 75) {
+      dirKey = 'stable';  dirArrow = '→'; dirLabel = 'Premium Likely Maintained';
+    } else if (insScore >= 60 && trend >= -3) {
+      dirKey = 'neutral'; dirArrow = '→'; dirLabel = 'Neutral — Monitor Position';
+    } else if (insScore >= 50 || trend < -3) {
+      dirKey = 'risk';    dirArrow = '↑'; dirLabel = 'Premium Increase Risk';
+    } else {
+      dirKey = 'likely';  dirArrow = '↑↑'; dirLabel = 'Premium Increase Likely';
+    }
+
+    const insColor = getScoreColor(insScore);
+
+    // Trend note
+    const trendAbs = Math.abs(trend);
+    const trendDir = trend > 0 ? 'improved' : trend < 0 ? 'declined' : 'unchanged';
+    const trendNote = history.length >= 2
+      ? `Score has ${trendDir}${trendAbs > 0 ? ` by ${trendAbs} points` : ''} over the last ${Math.min(3, history.length)} months.`
+      : 'Insufficient history for trend analysis.';
+
+    // Risk drivers — pick top 3 weakest signals
+    const drivers = [];
+    const comp = scoreData.components || {};
+    const compItems = [
+      { label: 'Vulnerabilities',    score: (comp.vulnerabilities || {}).score || 0,    weight: '40%' },
+      { label: 'Security Awareness', score: (comp.awareness || {}).score || 0,          weight: '35%' },
+      { label: 'Incident Response',  score: (comp.incidentResponse || {}).score || 0,   weight: '25%' },
+    ];
+    compItems.sort((a, b) => a.score - b.score).forEach(c => {
+      const dotCls = c.score >= 70 ? 'driver-dot-green' : c.score >= 40 ? 'driver-dot-amber' : 'driver-dot-red';
+      drivers.push({ dot: dotCls, text: `${c.label}: ${c.score}/100 (${c.weight} of Secure Score)` });
+    });
+
+    // Add GRC note if missing
+    if (!hasGrc) {
+      drivers.unshift({ dot: 'driver-dot-amber', text: 'GRC assessment not completed — adds 40% weight to Insurability Score' });
+    }
+
+    const breakdownNote = hasGrc
+      ? `Secure Score (${ssScore}) × 60% + GRC Score (${grcScore}) × 40%`
+      : `Based on Secure Score only — complete GRC assessment for full insurability score`;
+
+    container.innerHTML = `
+      <div class="insurability-panel">
+        <h3 class="secure-score-section-title">Insurability Score &amp; Premium Outlook</h3>
+        <div class="insurability-body">
+          <div class="insurability-score-block">
+            <div class="insurability-score-number" style="color:${insColor}">${insScore}</div>
+            <div class="insurability-score-label">Insurability Score</div>
+            <div class="insurability-score-breakdown">${breakdownNote}</div>
+          </div>
+          <div class="insurability-direction-block">
+            <div class="insurability-direction-badge direction-${dirKey}">
+              <span class="direction-icon">${dirArrow}</span>
+              <span class="direction-label">${dirLabel}</span>
+            </div>
+            <p class="insurability-trend-note">${trendNote}</p>
+            <div class="insurability-drivers">
+              <div class="drivers-title">Key Risk Drivers</div>
+              ${drivers.slice(0, 3).map(d => `
+                <div class="driver-item">
+                  <span class="driver-dot ${d.dot}"></span>
+                  <span>${d.text}</span>
+                </div>`).join('')}
+            </div>
+          </div>
+        </div>
+      </div>`;
   }
 
   async function fetchGrcSummary() {
@@ -302,6 +412,7 @@ const SecureScoreTab = (() => {
           <div id="secure-score-data-age" class="data-age-info"></div>
           <div id="secure-score-grc-indicator"></div>
         </div>
+        <div id="secure-score-insurability" class="secure-score-section"></div>
         <div id="secure-score-components" class="secure-score-section"></div>
         <div class="secure-score-section">
           <h3 class="secure-score-section-title">6-Month Trend</h3>
@@ -335,13 +446,18 @@ const SecureScoreTab = (() => {
     const gaugeContainer = document.getElementById('secure-score-gauge');
     renderScoreGauge(gaugeContainer, scoreData.score, delta);
 
+    // Render insurability panel
+    const insurabilityContainer = document.getElementById('secure-score-insurability');
+    if (insurabilityContainer) renderInsurabilityPanel(insurabilityContainer, scoreData, history, grcData);
+
     // Render component scores
     const componentContainer = document.getElementById('secure-score-components');
     renderComponentScores(componentContainer, scoreData.components);
 
-    // Render trend chart
+    // Render trend chart (pass grc score for insurability overlay line)
     const trendContainer = document.getElementById('secure-score-trend');
-    renderTrendChart(trendContainer, history);
+    const grcScoreVal = (grcData && grcData.assessment) ? (grcData.assessment.grc_score || 0) : null;
+    renderTrendChart(trendContainer, history, grcScoreVal);
 
     // Render recommendations
     const recommendationContainer = document.getElementById('secure-score-recommendations');
