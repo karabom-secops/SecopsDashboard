@@ -183,26 +183,8 @@
       </form>
     </div>
 
-    <!-- ── Incidents (MDR Tickets) Upload ────────────────────────────────── -->
-    <div class="upload-card">
-      <div class="card-section-label">Incidents</div>
-      <h2>Upload MDR Ticket Overview</h2>
-      <p class="card-subtitle">Upload an Arctic Wolf MDR ticket export CSV to track incident status and resolution metrics.</p>
-
-      <form id="incidentsUploadForm" novalidate>
-        <div class="form-group">
-          <label for="incidentsFile">MDR Ticket CSV</label>
-          <input type="file" id="incidentsFile" accept=".csv,text/csv" required />
-        </div>
-
-        <div id="incidentsUploadError" class="upload-error" hidden></div>
-
-        <button type="submit" id="btnIncidentsUpload" class="btn btn-primary btn-block">
-          <span id="incidentsBtnLabel">Upload CSV</span>
-          <span id="incidentsSpinner" class="spinner" hidden></span>
-        </button>
-      </form>
-    </div>
+    <!-- Incidents data is now synced via the Arctic Wolf API integration.
+         Configure sync in Admin → Live Integrations. -->
 
   </main>
 

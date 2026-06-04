@@ -136,8 +136,9 @@
                 <div id="operations-incidents-upload-info" class="info-row"></div>
                 <div id="operations-incidents-empty-state" class="empty-state" hidden>
                   <div class="vuln-empty-card">
-                    <p>No ticket overview has been uploaded yet.</p>
-                    <p>Upload the Arctic Wolf MDR ticket export via the API or your scheduled ingestion process.</p>
+                    <p>No MDR ticket data synced yet.</p>
+                    <button class="btn btn-primary" onclick="window.switchTab('admin')">Configure Integration →</button>
+                    <p style="font-size:0.82rem;margin-top:0.5rem;color:var(--muted)">Admin → Live Integrations → Arctic Wolf → Sync Now</p>
                   </div>
                 </div>
                 <div id="operations-incidents-content" hidden>

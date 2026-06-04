@@ -1420,11 +1420,6 @@ const awarenessUpload = multer({
   limits:  { fileSize: 10 * 1024 * 1024 },
 });
 
-const mdrUpload = multer({
-  storage: multer.memoryStorage(),
-  limits:  { fileSize: 10 * 1024 * 1024 },
-});
-
 /**
  * Resolve which tenant's awareness data to act on.
  * Mirrors resolveVulnTenant.
@@ -1629,69 +1624,6 @@ function resolveMdrTenant(req, source) {
   }
   return { tenantId: req.session.tenantId };
 }
-
-app.post('/api/mdr/upload', requireAdmin, mdrUpload.single('mdrFile'), async (req, res) => {
-  const client = await pool.connect();
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded.' });
-    }
-
-    const fileText = req.file.buffer.toString('utf8');
-    let parsed;
-    try {
-      parsed = parseMdrTicketsCSV(fileText);
-    } catch (parseErr) {
-      return res.status(400).json({ error: parseErr.message });
-    }
-
-    const { tickets, stats } = parsed;
-
-    await client.query('BEGIN');
-    // Delete all existing uploads (system-wide, non-tenant-scoped)
-    await client.query('DELETE FROM mdr_uploads WHERE tenant_id IS NULL');
-
-    const uploadRes = await client.query(
-      `INSERT INTO mdr_uploads
-         (tenant_id, uploaded_by, total_tickets, resolved_count, pending_count, avg_resolution_hours)
-       VALUES (NULL, $1, $2, $3, $4, $5)
-       RETURNING id, uploaded_at`,
-      [req.session.userId, stats.total, stats.resolved, stats.pending, stats.avgResolutionHours]
-    );
-    const uploadId = uploadRes.rows[0].id;
-    const uploadedAt = uploadRes.rows[0].uploaded_at;
-
-    for (const ticket of tickets) {
-      await client.query(
-        `INSERT INTO mdr_tickets
-           (upload_id, ticket_number, subject, status, ticket_type, severity,
-            created_at, resolved_at, updated_at, assigned_to)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          uploadId,
-          ticket.ticketNumber,
-          ticket.subject,
-          ticket.status,
-          ticket.ticketType || null,
-          ticket.severity || 'MEDIUM',
-          ticket.createdAt || null,
-          ticket.resolvedAt || null,
-          ticket.updatedAt || null,
-          ticket.assignedTo || null,
-        ]
-      );
-    }
-
-    await client.query('COMMIT');
-    console.log(`[mdr] Upload: ${stats.total} tickets, ${stats.resolved} resolved`);
-    return res.json({ uploadedAt, stats });
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    return serverError(res, err);
-  } finally {
-    client.release();
-  }
-});
 
 app.get('/api/mdr', requireAuth, async (req, res) => {
   try {

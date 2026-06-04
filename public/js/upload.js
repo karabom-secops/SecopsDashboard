@@ -288,60 +288,14 @@
     });
   }
 
-  // ── MDR Incidents Upload ────────────────────────────────────────────────
-
-  async function initIncidentsUpload() {
-    var incidentsForm  = document.getElementById('incidentsUploadForm');
-    var incidentsFile  = document.getElementById('incidentsFile');
-    var incidentsErr   = document.getElementById('incidentsUploadError');
-    var btnIncidents   = document.getElementById('btnIncidentsUpload');
-    var incidentsLabel = document.getElementById('incidentsBtnLabel');
-    var incidentsSpinner = document.getElementById('incidentsSpinner');
-
-    if (!incidentsForm) return;
-
-    function showIncidentsError(msg) { incidentsErr.textContent = msg; incidentsErr.hidden = false; }
-    function clearIncidentsError() { incidentsErr.hidden = true; incidentsErr.textContent = ''; }
-    function setIncidentsLoading(loading) {
-      btnIncidents.disabled = loading;
-      incidentsLabel.textContent = loading ? 'Uploading…' : 'Upload CSV';
-      incidentsSpinner.hidden = !loading;
-    }
-
-    incidentsForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      clearIncidentsError();
-
-      const file = incidentsFile.files[0];
-      if (!file) { showIncidentsError('Please select a CSV file.'); return; }
-
-      const fd = new FormData();
-      fd.append('mdrFile', file);
-
-      setIncidentsLoading(true);
-      try {
-        const res  = await fetch('api/mdr/upload', { method: 'POST', body: fd });
-        const data = await res.json();
-        if (!res.ok || data.error) { showIncidentsError(data.error || `Server error (${res.status})`); return; }
-        window.location.href = '/secops/?tab=incidents';
-      } catch (err) {
-        showIncidentsError('Network error: ' + err.message);
-      } finally {
-        setIncidentsLoading(false);
-      }
-    });
-  }
-
   // Wait for auth.js to resolve window.currentUser before initialising
   if (window.currentUser) {
     initVulnUpload();
     initAwarenessUpload();
-    initIncidentsUpload();
   } else {
     document.addEventListener('authReady', () => {
       initVulnUpload();
       initAwarenessUpload();
-      initIncidentsUpload();
     }, { once: true });
   }
 
