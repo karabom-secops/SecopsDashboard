@@ -40,7 +40,7 @@
     }
     el.innerHTML = `
       <div class="info-row-item">
-        <strong>Uploaded:</strong> ${formatDate(upload.uploaded_at)}
+        <strong>Last synced:</strong> ${formatDate(upload.uploaded_at)}
       </div>
       <div class="info-row-item">
         <strong>Tickets:</strong> ${escHtml(String(upload.total_tickets || 0))}

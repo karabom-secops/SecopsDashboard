@@ -19,7 +19,6 @@ const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
 const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
-const { parseMdrTicketsCSV } = require('./lib/mdr-parser');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
 const { calculateSecureScore, generateRecommendations } = require('./lib/secure-score');
 const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils');
@@ -1627,10 +1626,14 @@ function resolveMdrTenant(req, source) {
 
 app.get('/api/mdr', requireAuth, async (req, res) => {
   try {
+    const { tenantId, error } = resolveMdrTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
     const uploadRes = await pool.query(
       `SELECT id, uploaded_at, total_tickets, resolved_count, pending_count, avg_resolution_hours
-       FROM mdr_uploads WHERE tenant_id IS NULL
-       ORDER BY uploaded_at DESC LIMIT 1`
+       FROM mdr_uploads WHERE tenant_id = $1
+       ORDER BY uploaded_at DESC LIMIT 1`,
+      [tenantId]
     );
 
     if (uploadRes.rows.length === 0) {
@@ -1656,7 +1659,9 @@ app.get('/api/mdr', requireAuth, async (req, res) => {
 
 app.get('/api/mdr/trends', requireAuth, async (req, res) => {
   try {
-    // Get ticket status distribution from latest system-wide upload
+    const { tenantId, error } = resolveMdrTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
     const statsRes = await pool.query(
       `SELECT
          (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND status = 'solved')::int AS solved,
@@ -1666,9 +1671,10 @@ app.get('/api/mdr/trends', requireAuth, async (req, res) => {
          (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND severity = 'MEDIUM')::int AS medium_severity,
          (SELECT COUNT(*) FROM mdr_tickets WHERE upload_id = mu.id AND severity = 'LOW')::int AS low_severity
        FROM mdr_uploads mu
-       WHERE mu.tenant_id IS NULL
+       WHERE mu.tenant_id = $1
        ORDER BY mu.uploaded_at DESC
-       LIMIT 1`
+       LIMIT 1`,
+      [tenantId]
     );
 
     const stats = statsRes.rows.length > 0 ? statsRes.rows[0] : null;
@@ -1680,7 +1686,9 @@ app.get('/api/mdr/trends', requireAuth, async (req, res) => {
 
 app.delete('/api/mdr', requireAdmin, async (req, res) => {
   try {
-    await pool.query('DELETE FROM mdr_uploads WHERE tenant_id IS NULL');
+    const { tenantId, error } = resolveMdrTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+    await pool.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
     return res.json({ ok: true });
   } catch (err) {
     return serverError(res, err);
@@ -2069,13 +2077,13 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       }
     } catch (_) { /* table may not exist yet */ }
 
-    // Fetch latest MDR upload — try tenant-specific first, then system-wide
+    // Fetch latest MDR upload for this tenant
     let mdrData = null;
     try {
       const mdrResult = await pool.query(
         `SELECT total_tickets, resolved_count, avg_resolution_hours, uploaded_at
          FROM mdr_uploads
-         WHERE tenant_id = $1 OR tenant_id IS NULL
+         WHERE tenant_id = $1
          ORDER BY uploaded_at DESC LIMIT 1`,
         [tenantId]
       );
@@ -2152,7 +2160,7 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
     try {
       const mr = await pool.query(
         `SELECT total_tickets, resolved_count, avg_resolution_hours FROM mdr_uploads
-         WHERE tenant_id = $1 OR tenant_id IS NULL
+         WHERE tenant_id = $1
          ORDER BY uploaded_at DESC LIMIT 1`,
         [tenantId]
       );
