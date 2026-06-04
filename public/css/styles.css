@@ -2224,7 +2224,95 @@ body.login-page {
   font-size: 0.95rem;
   font-weight: 700;
   color: var(--text);
-  margin: 0 0 1rem 0;
+  margin: 0 0 0.35rem 0;
+}
+
+.admin-card-subtitle {
+  font-size: 0.83rem;
+  color: var(--muted);
+  margin: 0 0 1.25rem;
+}
+
+/* ── Integration cards ─────────────────────────────────────────────────────── */
+.integration-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.integration-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1.1rem;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+}
+
+.integration-icon { font-size: 1.4rem; flex-shrink: 0; }
+
+.integration-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.integration-info strong { font-size: 0.9rem; color: var(--text); }
+.integration-desc         { font-size: 0.78rem; color: var(--muted); }
+
+/* Toggle switch */
+.integration-toggle { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+.integration-toggle input { opacity: 0; width: 0; height: 0; }
+.int-toggle-slider {
+  position: absolute; inset: 0;
+  background: var(--border);
+  border-radius: 22px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.int-toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 16px; height: 16px;
+  left: 3px; bottom: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.integration-toggle input:checked + .int-toggle-slider { background: var(--logo-cyan); }
+.integration-toggle input:checked + .int-toggle-slider::before { transform: translateX(18px); }
+
+.integration-form {
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.int-key-row { display: flex; gap: 0.4rem; align-items: center; }
+.int-key-row .form-input { flex: 1; }
+.int-clear-key { flex-shrink: 0; padding: 0.25rem 0.55rem; font-size: 0.78rem; }
+
+.integration-sync-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.int-sync-status { font-weight: 600; }
+.int-sync-ok    { color: var(--green); }
+.int-sync-error { color: var(--red); }
+.int-sync-date  { color: var(--muted); }
+
+.integration-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+
+.int-feedback {
+  margin: 0;
+  font-size: 0.82rem;
+  min-height: 1.1em;
 }
 
 .admin-add-form .admin-form-row {

@@ -22,6 +22,9 @@ const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = req
 const { parseMdrTicketsCSV } = require('./lib/mdr-parser');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
 const { calculateSecureScore, generateRecommendations } = require('./lib/secure-score');
+const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils');
+const arcticWolfAdapter = require('./lib/integrations/arctic-wolf');
+const irisDfirAdapter   = require('./lib/integrations/iris-dfir');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -1750,6 +1753,206 @@ app.delete('/api/mdr', requireAdmin, async (req, res) => {
   } catch (err) {
     return serverError(res, err);
   }
+});
+
+// ── Integrations routes ────────────────────────────────────────────────────
+
+const INTEGRATION_ADAPTERS = {
+  arctic_wolf: arcticWolfAdapter,
+  iris_dfir:   irisDfirAdapter,
+};
+
+function resolveIntegrationTenant(req, source) {
+  if (req.session.role === 'superadmin') {
+    const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+function calcMdrStats(tickets) {
+  const resolved = tickets.filter(t => t.status === 'solved' || t.status === 'closed');
+  const pending  = tickets.filter(t => t.status === 'pending' || t.status === 'open');
+  let totalHours = 0, countedRes = 0;
+  resolved.forEach(t => {
+    if (t.createdAt && t.resolvedAt) {
+      const hrs = (new Date(t.resolvedAt) - new Date(t.createdAt)) / 3600000;
+      if (hrs >= 0) { totalHours += hrs; countedRes++; }
+    }
+  });
+  return {
+    total:               tickets.length,
+    resolved_count:      resolved.length,
+    pending_count:       pending.length,
+    avg_resolution_hours: countedRes > 0 ? parseFloat((totalHours / countedRes).toFixed(2)) : null,
+  };
+}
+
+/** GET /api/integrations — list configured integrations (no keys) */
+app.get('/api/integrations', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIntegrationTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      `SELECT provider, base_url, is_enabled, last_synced_at, last_sync_status, last_sync_message, config_json
+       FROM integrations WHERE tenant_id = $1 ORDER BY provider`,
+      [tenantId]
+    );
+    res.json(result.rows);
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/integrations/:provider — save/update config */
+app.post('/api/integrations/:provider', requireAdmin, async (req, res) => {
+  try {
+    const provider = req.params.provider;
+    if (!INTEGRATION_ADAPTERS[provider]) {
+      return res.status(400).json({ error: `Unknown provider: ${provider}` });
+    }
+    const { tenantId, error } = resolveIntegrationTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { base_url, api_key, is_enabled, configJson } = req.body;
+    if (!base_url) return res.status(400).json({ error: 'base_url is required.' });
+    const configJsonVal = JSON.stringify(configJson || {});
+
+    // If api_key provided, encrypt it; otherwise keep existing
+    if (api_key) {
+      const { enc, iv } = encryptKey(api_key);
+      await pool.query(
+        `INSERT INTO integrations (tenant_id, provider, base_url, api_key_enc, api_key_iv, is_enabled, config_json)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (tenant_id, provider) DO UPDATE
+           SET base_url = $3, api_key_enc = $4, api_key_iv = $5, is_enabled = $6, config_json = $7`,
+        [tenantId, provider, base_url, enc, iv, is_enabled !== false, configJsonVal]
+      );
+    } else {
+      await pool.query(
+        `UPDATE integrations SET base_url = $1, is_enabled = $2, config_json = $3
+         WHERE tenant_id = $4 AND provider = $5`,
+        [base_url, is_enabled !== false, configJsonVal, tenantId, provider]
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/integrations/:provider — remove integration */
+app.delete('/api/integrations/:provider', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIntegrationTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    await pool.query(
+      'DELETE FROM integrations WHERE tenant_id = $1 AND provider = $2',
+      [tenantId, req.params.provider]
+    );
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/integrations/:provider/test — fetch 1 record to verify credentials */
+app.post('/api/integrations/:provider/test', requireAdmin, async (req, res) => {
+  try {
+    const provider = req.params.provider;
+    const adapter  = INTEGRATION_ADAPTERS[provider];
+    if (!adapter) return res.status(400).json({ error: `Unknown provider: ${provider}` });
+
+    const { tenantId, error } = resolveIntegrationTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const row = await pool.query(
+      'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2',
+      [tenantId, provider]
+    );
+    if (!row.rows.length) return res.status(404).json({ error: 'Integration not configured.' });
+
+    const { base_url, api_key_enc, api_key_iv, config_json } = row.rows[0];
+    const api_key = decryptKey(api_key_enc, api_key_iv);
+
+    await adapter.fetchTickets({ base_url, api_key, ...(config_json || {}) }, true);
+    res.json({ ok: true, message: 'Connection successful.' });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+/** POST /api/integrations/:provider/sync — fetch all tickets, upsert into mdr tables */
+app.post('/api/integrations/:provider/sync', requireAdmin, async (req, res) => {
+  try {
+    const provider = req.params.provider;
+    const adapter  = INTEGRATION_ADAPTERS[provider];
+    if (!adapter) return res.status(400).json({ error: `Unknown provider: ${provider}` });
+
+    const { tenantId, error } = resolveIntegrationTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const intRow = await pool.query(
+      'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE',
+      [tenantId, provider]
+    );
+    if (!intRow.rows.length) return res.status(404).json({ error: 'Integration not configured or disabled.' });
+
+    const { base_url, api_key_enc, api_key_iv, config_json } = intRow.rows[0];
+    const api_key = decryptKey(api_key_enc, api_key_iv);
+
+    let tickets;
+    try {
+      tickets = await adapter.fetchTickets({ base_url, api_key, ...(config_json || {}) });
+    } catch (fetchErr) {
+      await pool.query(
+        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
+         WHERE tenant_id = $2 AND provider = $3`,
+        [fetchErr.message, tenantId, provider]
+      );
+      return res.status(502).json({ ok: false, error: fetchErr.message });
+    }
+
+    const stats = calcMdrStats(tickets);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Upsert mdr_uploads — one row per tenant (delete + reinsert for clean state)
+      await client.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
+      const uploadRes = await client.query(
+        `INSERT INTO mdr_uploads (tenant_id, uploaded_at, uploaded_by, total_tickets, resolved_count, pending_count, avg_resolution_hours)
+         VALUES ($1, NOW(), $2, $3, $4, $5, $6) RETURNING id`,
+        [tenantId, req.session.userId, stats.total, stats.resolved_count, stats.pending_count, stats.avg_resolution_hours]
+      );
+      const uploadId = uploadRes.rows[0].id;
+
+      for (const t of tickets) {
+        await client.query(
+          `INSERT INTO mdr_tickets (upload_id, ticket_number, subject, status, ticket_type, severity, created_at, resolved_at, updated_at, assigned_to)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [uploadId, t.ticketNumber, t.subject, t.status, t.ticketType, t.severity,
+           t.createdAt || null, t.resolvedAt || null, t.updatedAt || null, t.assignedTo || null]
+        );
+      }
+
+      await client.query(
+        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'ok', last_sync_message = $1
+         WHERE tenant_id = $2 AND provider = $3`,
+        [`Synced ${tickets.length} ticket${tickets.length !== 1 ? 's' : ''}`, tenantId, provider]
+      );
+
+      await client.query('COMMIT');
+      console.log(`[integrations] ${provider} sync: ${tickets.length} tickets for tenant ${tenantId}`);
+      res.json({ ok: true, synced: tickets.length, stats });
+    } catch (dbErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      return serverError(res, dbErr);
+    } finally {
+      client.release();
+    }
+  } catch (err) { return serverError(res, err); }
 });
 
 // ── GRC & Insurability routes ──────────────────────────────────────────────

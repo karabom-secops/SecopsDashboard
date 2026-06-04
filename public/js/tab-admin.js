@@ -683,12 +683,278 @@
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
-  window.renderAdmin = renderUsers;
+  window.renderAdmin = function () {
+    renderUsers();
+    renderIntegrations();
+  };
 
   // Wait for auth.js to set window.currentUser before initialising
   if (window.currentUser) {
     initAdmin();
   } else {
     document.addEventListener('authReady', initAdmin, { once: true });
+  }
+
+  // ── Integrations ───────────────────────────────────────────────────────────
+
+  const AW_REGIONS = [
+    { value: 'https://ticket-api.managedgw.us001-prod.arcticwolf.net', label: 'US001 — United States' },
+    { value: 'https://ticket-api.managedgw.us002-prod.arcticwolf.net', label: 'US002 — United States' },
+    { value: 'https://ticket-api.managedgw.us003-prod.arcticwolf.net', label: 'US003 — United States' },
+    { value: 'https://ticket-api.managedgw.eu001-prod.arcticwolf.net', label: 'EU001 — Europe' },
+    { value: 'https://ticket-api.managedgw.au001-prod.arcticwolf.net', label: 'AU001 — Australia' },
+    { value: 'https://ticket-api.managedgw.ca001-prod.arcticwolf.net', label: 'CA001 — Canada' },
+  ];
+
+  const PROVIDERS = [
+    {
+      id:   'arctic_wolf',
+      name: 'Arctic Wolf',
+      icon: '🐺',
+      desc: 'MDR ticketing — automatically syncs incidents and alert tickets.',
+      awRegions: true, // renders region dropdown + org UUID instead of a free URL field
+    },
+    {
+      id:       'iris_dfir',
+      name:     'IrisDFIR',
+      icon:     '🔍',
+      desc:     'DFIR case management — syncs investigation cases as incident tickets.',
+      urlLabel: 'IRIS Base URL',
+      urlHint:  'e.g. https://iris.yourdomain.com',
+    },
+  ];
+
+  function tenantQS() {
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+    if (!isSA || !window.globalTenantId) return '';
+    return '?tenantId=' + encodeURIComponent(window.globalTenantId);
+  }
+
+  function tenantBody() {
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+    if (!isSA || !window.globalTenantId) return {};
+    return { tenantId: window.globalTenantId };
+  }
+
+  function escHtmlInt(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  async function renderIntegrations() {
+    const container = document.getElementById('integrations-list');
+    if (!container) return;
+
+    // Only show for admin/superadmin
+    const role = window.currentUser && window.currentUser.role;
+    if (role === 'readonly') {
+      document.getElementById('integrationsSection').hidden = true;
+      return;
+    }
+
+    let configured = [];
+    try {
+      const res = await fetch('api/integrations' + tenantQS(), { credentials: 'same-origin' });
+      if (res.ok) configured = await res.json();
+    } catch (_) {}
+
+    const configMap = {};
+    configured.forEach(c => { configMap[c.provider] = c; });
+
+    container.innerHTML = PROVIDERS.map(p => {
+      const cfg        = configMap[p.id];
+      const enabled    = cfg ? cfg.is_enabled : false;
+      const lastSync   = cfg && cfg.last_synced_at
+        ? new Date(cfg.last_synced_at).toLocaleString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+        : null;
+      const syncStatus = cfg ? cfg.last_sync_status : null;
+      const syncMsg    = cfg ? (cfg.last_sync_message || '') : '';
+
+      return `
+        <div class="integration-card" id="int-card-${p.id}">
+          <div class="integration-card-header">
+            <span class="integration-icon">${p.icon}</span>
+            <div class="integration-info">
+              <strong>${escHtmlInt(p.name)}</strong>
+              <span class="integration-desc">${escHtmlInt(p.desc)}</span>
+            </div>
+            <label class="integration-toggle" title="${enabled ? 'Disable' : 'Enable'}">
+              <input type="checkbox" class="int-enabled-cb" data-provider="${p.id}" ${enabled ? 'checked' : ''} ${!cfg ? 'disabled' : ''}>
+              <span class="int-toggle-slider"></span>
+            </label>
+          </div>
+          <div class="integration-form">
+            ${p.awRegions ? `
+            <div class="form-group">
+              <label class="modal-label">Region</label>
+              <select class="int-region-select form-input" data-provider="${p.id}">
+                ${AW_REGIONS.map(r => `<option value="${escHtmlInt(r.value)}" ${cfg && cfg.base_url === r.value ? 'selected' : ''}>${escHtmlInt(r.label)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="modal-label">Organization UUID</label>
+              <input type="text" class="int-org-uuid form-input" data-provider="${p.id}"
+                     placeholder="550e8400-e29b-41d4-a716-446655440000"
+                     value="${escHtmlInt(cfg && cfg.config_json && cfg.config_json.organizationUuid ? cfg.config_json.organizationUuid : '')}">
+            </div>` : `
+            <div class="form-group">
+              <label class="modal-label">${escHtmlInt(p.urlLabel || 'Base URL')}</label>
+              <input type="url" class="int-url-input form-input" data-provider="${p.id}"
+                     placeholder="${escHtmlInt(p.urlHint || '')}" value="${cfg ? escHtmlInt(cfg.base_url) : ''}">
+            </div>`}
+            <div class="form-group">
+              <label class="modal-label">API Key / Token</label>
+              <div class="int-key-row">
+                <input type="password" class="int-key-input form-input" data-provider="${p.id}"
+                       placeholder="${cfg ? '••••••••  (saved — enter new key to change)' : 'Paste API key…'}">
+                ${cfg ? `<button class="btn btn-sm int-clear-key" data-provider="${p.id}" title="Clear key to enter a new one">✕</button>` : ''}
+              </div>
+            </div>
+            ${lastSync ? `
+            <div class="integration-sync-meta">
+              <span class="int-sync-status int-sync-${syncStatus || 'ok'}">
+                ${syncStatus === 'ok' ? '✓' : '✗'} ${syncMsg}
+              </span>
+              <span class="int-sync-date">Last synced: ${lastSync}</span>
+            </div>` : ''}
+            <div class="integration-actions">
+              <button class="btn btn-sm int-test-btn" data-provider="${p.id}" ${!cfg ? 'disabled' : ''}>Test Connection</button>
+              <button class="btn btn-sm int-sync-btn" data-provider="${p.id}" ${!cfg ? 'disabled' : ''}>Sync Now</button>
+              <button class="btn btn-sm btn-primary int-save-btn" data-provider="${p.id}">Save</button>
+              ${cfg ? `<button class="btn btn-sm btn-danger int-remove-btn" data-provider="${p.id}">Remove</button>` : ''}
+            </div>
+            <p class="int-feedback" id="int-feedback-${p.id}"></p>
+          </div>
+        </div>`;
+    }).join('');
+
+    // ── Wire events ──
+    container.querySelectorAll('.int-clear-key').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const input = container.querySelector(`.int-key-input[data-provider="${btn.dataset.provider}"]`);
+        if (input) { input.value = ''; input.placeholder = 'Paste API key…'; input.focus(); }
+      });
+    });
+
+    container.querySelectorAll('.int-save-btn').forEach(btn => {
+      btn.addEventListener('click', () => saveIntegration(btn.dataset.provider, container));
+    });
+
+    container.querySelectorAll('.int-test-btn').forEach(btn => {
+      btn.addEventListener('click', () => testIntegration(btn.dataset.provider, container));
+    });
+
+    container.querySelectorAll('.int-sync-btn').forEach(btn => {
+      btn.addEventListener('click', () => syncIntegration(btn.dataset.provider, container));
+    });
+
+    container.querySelectorAll('.int-remove-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!confirm(`Remove ${btn.dataset.provider.replace('_', ' ')} integration?`)) return;
+        removeIntegration(btn.dataset.provider);
+      });
+    });
+  }
+
+  function setIntFeedback(providerId, msg, isError) {
+    const el = document.getElementById(`int-feedback-${providerId}`);
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = isError ? 'var(--red)' : 'var(--green)';
+  }
+
+  async function saveIntegration(providerId, container) {
+    const keyInput  = container.querySelector(`.int-key-input[data-provider="${providerId}"]`);
+    const enabled   = container.querySelector(`.int-enabled-cb[data-provider="${providerId}"]`);
+
+    // Arctic Wolf: derive base_url from region dropdown + collect org UUID
+    const regionSel = container.querySelector(`.int-region-select[data-provider="${providerId}"]`);
+    const urlInput  = container.querySelector(`.int-url-input[data-provider="${providerId}"]`);
+    const base_url  = regionSel ? regionSel.value.trim() : (urlInput ? urlInput.value.trim() : '');
+
+    const api_key    = (keyInput ? keyInput.value.trim() : '');
+    const is_enabled = enabled ? enabled.checked : true;
+
+    if (!base_url) { setIntFeedback(providerId, 'Server region / Base URL is required.', true); return; }
+
+    const body = { ...tenantBody(), base_url, is_enabled };
+    if (api_key) body.api_key = api_key;
+
+    // Provider-specific extra config
+    if (providerId === 'arctic_wolf') {
+      const orgUuidInput = container.querySelector(`.int-org-uuid[data-provider="${providerId}"]`);
+      const orgUuid = orgUuidInput ? orgUuidInput.value.trim() : '';
+      if (!orgUuid) { setIntFeedback(providerId, 'Organization UUID is required for Arctic Wolf.', true); return; }
+      body.configJson = { organizationUuid: orgUuid };
+    }
+
+    try {
+      const res = await fetch(`api/integrations/${providerId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) { setIntFeedback(providerId, data.error || 'Save failed.', true); return; }
+      setIntFeedback(providerId, 'Saved successfully.', false);
+      setTimeout(() => renderIntegrations(), 800);
+    } catch (err) { setIntFeedback(providerId, 'Network error: ' + err.message, true); }
+  }
+
+  async function testIntegration(providerId, container) {
+    setIntFeedback(providerId, 'Testing connection…', false);
+    try {
+      const res = await fetch(`api/integrations/${providerId}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(tenantBody()),
+      });
+      const data = await res.json();
+      if (data.ok) { setIntFeedback(providerId, '✓ ' + data.message, false); }
+      else         { setIntFeedback(providerId, '✗ ' + (data.error || 'Connection failed.'), true); }
+    } catch (err) { setIntFeedback(providerId, 'Network error: ' + err.message, true); }
+  }
+
+  async function syncIntegration(providerId, container) {
+    setIntFeedback(providerId, 'Syncing…', false);
+    const syncBtn = container.querySelector(`.int-sync-btn[data-provider="${providerId}"]`);
+    if (syncBtn) syncBtn.disabled = true;
+
+    try {
+      const res = await fetch(`api/integrations/${providerId}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(tenantBody()),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setIntFeedback(providerId, `✓ Synced ${data.synced} tickets. Refreshing incidents…`, false);
+        // Refresh incidents tab if it's currently visible
+        if (typeof window.renderIncidents === 'function') {
+          window.renderIncidents('operations').catch(() => {});
+        }
+        setTimeout(() => renderIntegrations(), 1500);
+      } else {
+        setIntFeedback(providerId, '✗ Sync failed: ' + (data.error || 'Unknown error'), true);
+      }
+    } catch (err) {
+      setIntFeedback(providerId, 'Network error: ' + err.message, true);
+    } finally {
+      if (syncBtn) syncBtn.disabled = false;
+    }
+  }
+
+  async function removeIntegration(providerId) {
+    try {
+      const res = await fetch(`api/integrations/${providerId}` + tenantQS(), {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (res.ok) renderIntegrations();
+    } catch (_) {}
   }
 })();
