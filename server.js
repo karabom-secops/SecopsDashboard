@@ -1752,6 +1752,120 @@ app.delete('/api/mdr', requireAdmin, async (req, res) => {
   }
 });
 
+// ── GRC & Insurability routes ──────────────────────────────────────────────
+
+function resolveGrcTenant(req, source) {
+  if (req.session.role === 'superadmin') {
+    const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+function calculateGrcScore(answers, questions) {
+  const weightPoints = { critical: 5, high: 3, medium: 2, low: 1 };
+  let totalPossible = 0, totalEarned = 0;
+  const answerMap = {};
+  answers.forEach(a => { answerMap[String(a.questionId)] = a.answer; });
+  questions.forEach(q => {
+    const pts = weightPoints[q.weight] || 2;
+    const ans = answerMap[String(q.id)];
+    if (!ans || ans === 'na') return;
+    totalPossible += pts;
+    if (ans === 'yes')     totalEarned += pts;
+    if (ans === 'partial') totalEarned += pts * 0.5;
+  });
+  return totalPossible > 0 ? Math.round((totalEarned / totalPossible) * 100) : 0;
+}
+
+/** GET /api/grc/questions — returns all questions grouped by section */
+app.get('/api/grc/questions', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM grc_questions ORDER BY section, order_num');
+    const grouped = {};
+    result.rows.forEach(q => {
+      if (!grouped[q.section]) grouped[q.section] = [];
+      grouped[q.section].push(q);
+    });
+    res.json({ sections: grouped });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+/** GET /api/grc/assessment — returns current tenant's assessment + answers */
+app.get('/api/grc/assessment', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveGrcTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const asmtRes = await pool.query(
+      'SELECT id, grc_score, assessed_at FROM grc_assessments WHERE tenant_id = $1',
+      [tenantId]
+    );
+    if (asmtRes.rows.length === 0) return res.json({ assessment: null, answers: [] });
+
+    const answersRes = await pool.query(
+      'SELECT question_id, answer, notes FROM grc_answers WHERE assessment_id = $1',
+      [asmtRes.rows[0].id]
+    );
+    res.json({ assessment: asmtRes.rows[0], answers: answersRes.rows });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+/** POST /api/grc/assessment — upsert assessment + all answers, recalculate score */
+app.post('/api/grc/assessment', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveGrcTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { answers } = req.body;
+    if (!Array.isArray(answers)) return res.status(400).json({ error: 'answers must be an array.' });
+
+    // Fetch all questions to calculate score
+    const qResult = await pool.query('SELECT id, weight FROM grc_questions');
+    const score = calculateGrcScore(answers, qResult.rows);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const asmtRes = await client.query(
+        `INSERT INTO grc_assessments (tenant_id, assessed_at, assessed_by, grc_score)
+         VALUES ($1, NOW(), $2, $3)
+         ON CONFLICT (tenant_id) DO UPDATE
+           SET assessed_at = NOW(), assessed_by = $2, grc_score = $3
+         RETURNING id`,
+        [tenantId, req.session.userId, score]
+      );
+      const asmtId = asmtRes.rows[0].id;
+      await client.query('DELETE FROM grc_answers WHERE assessment_id = $1', [asmtId]);
+      for (const a of answers) {
+        if (!a.questionId || !a.answer) continue;
+        await client.query(
+          'INSERT INTO grc_answers (assessment_id, question_id, answer, notes) VALUES ($1,$2,$3,$4)',
+          [asmtId, a.questionId, a.answer, a.notes || null]
+        );
+      }
+      await client.query('COMMIT');
+      console.log(`[grc] Assessment saved for tenant ${tenantId}, score=${score}`);
+      res.json({ ok: true, score, assessedAt: new Date().toISOString() });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      return serverError(res, err);
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
 // ── Secure Score routes ────────────────────────────────────────────────────
 
 /**

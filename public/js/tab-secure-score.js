@@ -248,13 +248,23 @@ const SecureScoreTab = (() => {
     });
   }
 
+  async function fetchGrcSummary() {
+    try {
+      const res = await fetch('api/grc/assessment');
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_) { return null; }
+  }
+
   async function loadAndRender() {
     const container = document.getElementById('secure-score-container');
     if (container) {
       container.innerHTML = '<div class="loading-overlay"><div class="loading-spinner"></div><span>Loading score…</span></div>';
     }
 
-    const [scoreData, historyData] = await Promise.all([fetchSecureScore(), fetchScoreHistory()]);
+    const [scoreData, historyData, grcData] = await Promise.all([
+      fetchSecureScore(), fetchScoreHistory(), fetchGrcSummary(),
+    ]);
 
     if (!scoreData) {
       if (container) container.innerHTML = '<div class="error-message" style="padding:2rem;color:var(--red)">Failed to load Secure Score data.</div>';
@@ -290,6 +300,7 @@ const SecureScoreTab = (() => {
         <div class="secure-score-main">
           <div id="secure-score-gauge" class="score-gauge-container"></div>
           <div id="secure-score-data-age" class="data-age-info"></div>
+          <div id="secure-score-grc-indicator"></div>
         </div>
         <div id="secure-score-components" class="secure-score-section"></div>
         <div class="secure-score-section">
@@ -349,6 +360,31 @@ const SecureScoreTab = (() => {
       </div>
     `;
     dataAgeContainer.innerHTML = dataAgeHtml;
+
+    // Render GRC indicator
+    const grcEl = document.getElementById('secure-score-grc-indicator');
+    if (grcEl) {
+      const grcAsmt = grcData && grcData.assessment;
+      if (grcAsmt) {
+        const grcScore = grcAsmt.grc_score || 0;
+        const grcColor = grcScore >= 80 ? '#27ae60' : grcScore >= 60 ? '#f39c12' : grcScore >= 40 ? '#e67e22' : '#e74c3c';
+        const grcDate  = new Date(grcAsmt.assessed_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+        grcEl.innerHTML = `
+          <div class="grc-indicator-card">
+            <div class="grc-indicator-score" style="color:${grcColor}">${grcScore}<span>/100</span></div>
+            <div class="grc-indicator-label">GRC Score</div>
+            <div class="grc-indicator-sub">Assessed: ${grcDate}</div>
+            <a class="grc-indicator-link" href="#" onclick="event.preventDefault();window.switchTab('grc')">View assessment →</a>
+          </div>`;
+      } else {
+        grcEl.innerHTML = `
+          <div class="grc-indicator-card grc-indicator-empty">
+            <div class="grc-indicator-label">GRC Score</div>
+            <div class="grc-indicator-sub">Not yet assessed</div>
+            <a class="grc-indicator-link" href="#" onclick="event.preventDefault();window.switchTab('grc')">Start assessment →</a>
+          </div>`;
+      }
+    }
   }
 
   return {

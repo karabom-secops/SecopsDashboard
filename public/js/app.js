@@ -15,6 +15,7 @@
     vulns:        document.getElementById('tab-vulns'),
     awareness:    document.getElementById('tab-awareness'),
     'secure-score': document.getElementById('tab-secure-score'),
+    grc:          document.getElementById('tab-grc'),
     admin:        document.getElementById('tab-admin'),
   };
 
@@ -72,6 +73,9 @@
     }
     if (target === 'secure-score' && typeof window.SecureScoreTab !== 'undefined') {
       window.SecureScoreTab.loadAndRender();
+    }
+    if (target === 'grc' && typeof window.GrcTab !== 'undefined') {
+      window.GrcTab.loadAndRender();
     }
     if (target === 'admin' && typeof window.renderAdmin === 'function') {
       window.renderAdmin();
