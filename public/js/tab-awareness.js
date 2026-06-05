@@ -602,6 +602,32 @@
         a.click();
       };
     }
+
+    // Export <70% users button
+    var exportLowBtn = document.getElementById('awarenessExportLowBtn');
+    if (exportLowBtn) {
+      exportLowBtn.hidden = false;
+      exportLowBtn.onclick = function () {
+        var lowRows = rows.filter(function (r) {
+          return r.assigned > 0 && Math.round(r.completed / r.assigned * 100) < 70;
+        });
+        var csvRows = [['Name', 'Email', 'Manager', 'Assigned', 'Completed', '%', 'Missing Sessions']];
+        lowRows.forEach(function (r) {
+          var pct = Math.round(r.completed / r.assigned * 100);
+          var missing = r.missing.map(function (m) { return m.title || m.type; }).join('; ');
+          csvRows.push([r.name, r.email, r.manager, r.assigned, r.completed, pct + '%', missing]);
+        });
+        var csv = csvRows.map(function (row) {
+          return row.map(function (v) { return '"' + String(v ?? '').replace(/"/g, '""') + '"'; }).join(',');
+        }).join('\r\n');
+        var blob = new Blob([csv], { type: 'text/csv' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'awareness-below-70pct.csv';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      };
+    }
   }
 
 })();
