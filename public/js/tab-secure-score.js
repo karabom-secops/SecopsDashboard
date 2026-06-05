@@ -49,11 +49,15 @@ const SecureScoreTab = (() => {
     const arcLen = Math.PI * r;
     const targetOffset = arcLen * (1 - score / 100);
 
+    const ratingEl = `<text x="${cx}" y="${cy - 16}" text-anchor="middle"
+      font-size="12" font-weight="600" fill="#7a9bb0" font-family="Manrope,sans-serif">
+      ${getScoreRating(score)}
+    </text>`;
     let deltaEl = '';
     if (typeof delta === 'number' && delta !== 0) {
       const sign = delta > 0 ? '+' : '';
       const dColor = delta > 0 ? '#27ae60' : '#e74c3c';
-      deltaEl = `<text x="${cx}" y="${cy - 2}" text-anchor="middle"
+      deltaEl = `${ratingEl}<text x="${cx}" y="${cy - 2}" text-anchor="middle"
         font-size="11" font-weight="600" fill="${dColor}" font-family="Manrope,sans-serif">
         ${sign}${delta} vs last month
       </text>`;

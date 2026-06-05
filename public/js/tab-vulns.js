@@ -141,9 +141,11 @@
     _renderStatCards();
     _renderVulnNotice();
     _renderEmptyOrContent();
-    // Show/hide export button
+    // Show/hide export buttons
     const exportBtn = document.getElementById('vulnExportCsvBtn');
-    if (exportBtn) exportBtn.hidden = !_currentScan;    // Dynamic page title
+    if (exportBtn) exportBtn.hidden = !_currentScan;
+    const itReportBtn = document.getElementById('vulnItReportBtn');
+    if (itReportBtn) itReportBtn.hidden = !_currentScan;    // Dynamic page title
     document.title = _currentScan
       ? `SecOps — Vulns ${_currentScan.monthKey}`
       : 'SecOps Dashboard';  }
@@ -423,7 +425,10 @@
     const tbody = document.getElementById('vuln-findings-tbody');
     if (!tbody || !_currentScan) return;
 
-    const findings = _currentScan.findings || [];
+    const SEVERITY_ORDER = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+    const findings = (_currentScan.findings || []).slice().sort((a, b) =>
+      (SEVERITY_ORDER[a.risk] ?? 4) - (SEVERITY_ORDER[b.risk] ?? 4)
+    );
     let filtered = findings;
     if (_activeFilter !== 'All') {
       filtered = filtered.filter(f => f.risk === _activeFilter);
@@ -743,6 +748,85 @@
     URL.revokeObjectURL(url);
   }
 
+  // ── IT Escalation Report ──────────────────────────────────────────────────
+  function _generateItReport() {
+    if (!_currentScan) return;
+    const SEVERITY_ORDER = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+    let rows = (_currentScan.findings || []).slice().sort((a, b) =>
+      (SEVERITY_ORDER[a.risk] ?? 4) - (SEVERITY_ORDER[b.risk] ?? 4)
+    );
+    if (_activeFilter !== 'All') rows = rows.filter(f => f.risk === _activeFilter);
+    if (_statusFilter !== 'All') rows = rows.filter(f => (f.status || 'open') === _statusFilter);
+
+    const counts = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+    rows.forEach(f => { if (counts[f.risk] !== undefined) counts[f.risk]++; });
+
+    const severityColor = { Critical: '#b91c1c', High: '#c2410c', Medium: '#1d4ed8', Low: '#15803d' };
+    const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const now = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
+
+    const filterLabel = [
+      _activeFilter !== 'All' ? `Severity: ${_activeFilter}` : '',
+      _statusFilter !== 'All' ? `Status: ${_statusFilter}` : '',
+    ].filter(Boolean).join(' | ') || 'All findings';
+
+    const tableRows = rows.map(f => {
+      const days = f.firstSeenAt
+        ? Math.floor((Date.now() - new Date(f.firstSeenAt)) / 86400000) + 'd'
+        : '—';
+      const color = severityColor[f.risk] || '#374151';
+      const solution = (f.solution || '—').replace(/\n/g, ' ');
+      return `<tr>
+        <td style="color:${color};font-weight:700;white-space:nowrap">${esc(f.risk)}</td>
+        <td>${esc(f.host)}</td>
+        <td>${esc(f.port || '—')}</td>
+        <td>${esc(f.cve || '—')}</td>
+        <td>${esc(f.name)}</td>
+        <td style="text-align:center">${esc(days)}</td>
+        <td style="font-size:12px">${esc(solution)}</td>
+      </tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<title>IT Remediation Report — ${esc(_currentScan.monthKey)}</title>
+<style>
+  body{font-family:Arial,sans-serif;font-size:13px;color:#1e293b;margin:32px;line-height:1.5}
+  h1{font-size:20px;margin-bottom:4px}
+  .meta{color:#64748b;font-size:12px;margin-bottom:24px}
+  .summary{display:flex;gap:16px;margin-bottom:24px}
+  .scard{border:1px solid #e2e8f0;border-radius:6px;padding:10px 20px;min-width:90px;text-align:center}
+  .scard .num{font-size:24px;font-weight:700}
+  .scard .lbl{font-size:11px;color:#64748b;text-transform:uppercase}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{background:#1e3a5f;color:#fff;padding:8px;text-align:left;font-size:11px;text-transform:uppercase}
+  td{padding:7px 8px;border-bottom:1px solid #e2e8f0;vertical-align:top}
+  tr:nth-child(even) td{background:#f8fafc}
+  .footer{margin-top:24px;font-size:11px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:12px}
+  @media print{body{margin:16px}}
+</style></head><body>
+<h1>Vulnerability Remediation Report</h1>
+<div class="meta">Scan period: <strong>${esc(_currentScan.monthKey)}</strong> &nbsp;|&nbsp; Filter: <strong>${esc(filterLabel)}</strong> &nbsp;|&nbsp; Generated: <strong>${now}</strong></div>
+<div class="summary">
+  <div class="scard"><div class="num" style="color:#b91c1c">${counts.Critical}</div><div class="lbl">Critical</div></div>
+  <div class="scard"><div class="num" style="color:#c2410c">${counts.High}</div><div class="lbl">High</div></div>
+  <div class="scard"><div class="num" style="color:#1d4ed8">${counts.Medium}</div><div class="lbl">Medium</div></div>
+  <div class="scard"><div class="num" style="color:#15803d">${counts.Low}</div><div class="lbl">Low</div></div>
+  <div class="scard"><div class="num">${rows.length}</div><div class="lbl">Total</div></div>
+</div>
+<table>
+  <thead><tr><th>Priority</th><th>Host</th><th>Port</th><th>CVE</th><th>Vulnerability</th><th>Age</th><th>Recommended Action</th></tr></thead>
+  <tbody>${tableRows || '<tr><td colspan="7">No findings match the selected filter.</td></tr>'}</tbody>
+</table>
+<div class="footer">Generated by SecOps Dashboard &mdash; For IT remediation use only. Please action Critical and High items within SLA.</div>
+</body></html>`;
+
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+    }
+  }
+
   // ── Modal wiring (once at load) ────────────────────────────────────────────
   (function _initModal() {
     const modal   = document.getElementById('vuln-finding-modal');
@@ -768,6 +852,10 @@
     // ── Export CSV button ──
     const exportBtn = document.getElementById('vulnExportCsvBtn');
     if (exportBtn) exportBtn.addEventListener('click', _exportCsv);
+
+    // ── IT Report button ──
+    const itReportBtn = document.getElementById('vulnItReportBtn');
+    if (itReportBtn) itReportBtn.addEventListener('click', _generateItReport);
 
     // ── Delete scan button (two-step inline confirm) ──
     const delBtn = document.getElementById('vulnDeleteScanBtn');
