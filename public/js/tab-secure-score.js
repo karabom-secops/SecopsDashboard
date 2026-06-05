@@ -49,26 +49,18 @@ const SecureScoreTab = (() => {
     const arcLen = Math.PI * r;
     const targetOffset = arcLen * (1 - score / 100);
 
-    const ratingEl = `<text x="${cx}" y="${cy - 16}" text-anchor="middle"
-      font-size="12" font-weight="600" fill="#7a9bb0" font-family="Manrope,sans-serif">
-      ${getScoreRating(score)}
-    </text>`;
     let deltaEl = '';
     if (typeof delta === 'number' && delta !== 0) {
       const sign = delta > 0 ? '+' : '';
       const dColor = delta > 0 ? '#27ae60' : '#e74c3c';
-      deltaEl = `${ratingEl}<text x="${cx}" y="${cy - 2}" text-anchor="middle"
+      deltaEl = `<text x="${cx}" y="${cy - 2}" text-anchor="middle"
         font-size="11" font-weight="600" fill="${dColor}" font-family="Manrope,sans-serif">
         ${sign}${delta} vs last month
-      </text>`;
-    } else {
-      deltaEl = `<text x="${cx}" y="${cy - 2}" text-anchor="middle"
-        font-size="12" font-weight="600" fill="#7a9bb0" font-family="Manrope,sans-serif">
-        ${getScoreRating(score)}
       </text>`;
     }
 
     const svg = `
+      <div style="text-align:center;font-size:13px;font-weight:600;color:#7a9bb0;font-family:Manrope,sans-serif;margin-bottom:4px;letter-spacing:0.04em">Secure Score</div>
       <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" class="score-gauge" style="overflow:visible">
         <defs>
           <filter id="gauge-shadow">
