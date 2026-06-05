@@ -60,7 +60,7 @@ const SecureScoreTab = (() => {
     }
 
     const svg = `
-      <div style="text-align:center;font-size:13px;font-weight:600;color:#7a9bb0;font-family:Manrope,sans-serif;margin-bottom:4px;letter-spacing:0.04em">Secure Score</div>
+      <div class="grc-indicator-label" style="text-align:center;margin-bottom:4px">Secure Score</div>
       <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" class="score-gauge" style="overflow:visible">
         <defs>
           <filter id="gauge-shadow">
