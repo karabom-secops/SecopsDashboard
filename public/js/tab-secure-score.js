@@ -816,102 +816,103 @@ const SecureScoreTab = (() => {
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 14px; color: #1a2a3a; background: #fff; line-height: 1.6; }
-  @page { size: A4; margin: 18mm 16mm; }
+  @page { size: A4 portrait; margin: 0; }
+  @page :first { margin: 0; }
 
-  /* ── Cover page ── */
+  /* ── Cover page — fixed A4 portrait ── */
   .cover {
     position: relative; overflow: hidden;
-    min-height: 100vh; background: #ffffff;
+    width: 210mm; height: 297mm;
+    background: #ffffff;
     display: flex; flex-direction: column;
     page-break-after: always; break-after: page;
+    margin: 0 auto;
   }
   /* Top-right grey diagonal shape */
   .cover::before {
-    content: ''; position: absolute; top: -60px; right: -80px;
-    width: 340px; height: 420px;
+    content: ''; position: absolute; top: -80px; right: -100px;
+    width: 320px; height: 460px;
     background: #CFD8DC;
     transform: rotate(-18deg);
-    border-radius: 12px;
+    border-radius: 14px;
     z-index: 0;
   }
   /* Bottom-right dark charcoal shape */
   .cover::after {
-    content: ''; position: absolute; bottom: -60px; right: -40px;
-    width: 280px; height: 380px;
+    content: ''; position: absolute; bottom: -80px; right: -50px;
+    width: 260px; height: 420px;
     background: #2B3445;
     transform: rotate(-18deg);
-    border-radius: 12px;
+    border-radius: 14px;
     z-index: 1;
   }
-  .cover-top { padding: 40px 48px 0; position: relative; z-index: 2; }
+  .cover-top { padding: 36px 44px 0; position: relative; z-index: 2; }
   .cover-logo { display: flex; align-items: center; margin-bottom: 12px; }
 
   /* Blue arrow/chevron title band */
   .cover-title-band {
     position: relative; z-index: 2;
-    margin: 60px 0 0;
+    margin: 70px 0 0;
     background: #1565C0;
-    padding: 44px 48px 44px 64px;
-    clip-path: polygon(0 0, calc(100% - 60px) 0, 100% 50%, calc(100% - 60px) 100%, 0 100%);
-    max-width: 78%;
+    padding: 40px 44px 40px 56px;
+    clip-path: polygon(0 0, calc(100% - 56px) 0, 100% 50%, calc(100% - 56px) 100%, 0 100%);
+    width: 80%;
   }
-  .cover-eyebrow { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 3px; color: rgba(255,255,255,0.65); margin-bottom: 10px; }
-  .cover-title    { font-size: 1.9rem; font-weight: 800; color: #fff; line-height: 1.2; }
+  .cover-eyebrow { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 3px; color: rgba(255,255,255,0.65); margin-bottom: 10px; }
+  .cover-title    { font-size: 1.75rem; font-weight: 800; color: #fff; line-height: 1.2; }
 
   .cover-meta {
     position: relative; z-index: 2;
-    padding: 32px 48px 0 64px;
-    display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 500px;
+    padding: 28px 44px 0 56px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 460px;
   }
-  .cover-meta-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 1.5px; color: #90A4AE; margin-bottom: 3px; }
-  .cover-meta-value { font-size: 0.9rem; font-weight: 700; color: #2B3445; }
+  .cover-meta-label { font-size: 0.63rem; text-transform: uppercase; letter-spacing: 1.5px; color: #90A4AE; margin-bottom: 3px; }
+  .cover-meta-value { font-size: 0.88rem; font-weight: 700; color: #2B3445; }
 
   .cover-footer {
     position: relative; z-index: 2;
-    margin-top: auto; padding: 28px 48px 36px;
+    margin-top: auto; padding: 24px 44px 32px;
     display: flex; justify-content: space-between; align-items: flex-end;
   }
   .cover-classification {
     display: inline-block; border: 1.5px solid #B0BEC5; border-radius: 4px;
-    padding: 4px 14px; font-size: 0.7rem; font-weight: 700;
+    padding: 4px 14px; font-size: 0.68rem; font-weight: 700;
     text-transform: uppercase; letter-spacing: 2px; color: #90A4AE;
   }
-  .cover-footer-right { text-align: right; font-size: 0.8rem; color: #90A4AE; line-height: 1.8; }
+  .cover-footer-right { text-align: right; font-size: 0.78rem; color: #90A4AE; line-height: 1.8; }
   .cover-footer-right strong { color: #2B3445; }
 
   /* ── Content pages ── */
-  .page { padding: 40px 48px; max-width: 900px; margin: 0 auto; }
+  .page { padding: 18mm 16mm; width: 210mm; margin: 0 auto; }
 
   .section-heading {
-    font-size: 1.25rem; font-weight: 800; color: #2B3445;
-    border-bottom: 3px solid #1565C0; padding-bottom: 9px;
-    margin-bottom: 24px; margin-top: 40px;
+    font-size: 1.15rem; font-weight: 800; color: #2B3445;
+    border-bottom: 3px solid #1565C0; padding-bottom: 8px;
+    margin-bottom: 20px; margin-top: 36px;
     page-break-after: avoid; break-after: avoid;
   }
   .section-heading:first-child { margin-top: 0; }
 
-  /* Page header stripe on content pages */
-  .page-header-stripe {
-    background: #1565C0; height: 6px; width: 100%; margin-bottom: 0;
-  }
+  /* Blue stripe at top of content section */
+  .page-header-stripe { background: #1565C0; height: 6px; width: 100%; }
 
-  .exec-grid { display: grid; grid-template-columns: 280px 1fr; gap: 36px; align-items: center; margin-bottom: 28px; }
-  .exec-gauge-block { text-align: center; background: #EEF2F7; border-radius: 12px; padding: 22px 18px; border-top: 4px solid #1565C0; }
-  .exec-gauge-rating { font-size: 1.2rem; font-weight: 700; margin-top: 6px; }
-  .exec-headline { font-size: 1.35rem; font-weight: 800; color: #2B3445; margin-bottom: 12px; line-height: 1.3; }
-  .exec-body { font-size: 0.93rem; color: #455A64; line-height: 1.7; margin-bottom: 14px; }
+  .exec-grid { display: grid; grid-template-columns: 220px 1fr; gap: 28px; align-items: center; margin-bottom: 24px; }
+  .exec-gauge-block { text-align: center; background: #EEF2F7; border-radius: 12px; padding: 18px 14px; border-top: 4px solid #1565C0; }
+  .exec-gauge-rating { font-size: 1.1rem; font-weight: 700; margin-top: 5px; }
+  .exec-headline { font-size: 1.2rem; font-weight: 800; color: #2B3445; margin-bottom: 10px; line-height: 1.3; }
+  .exec-body { font-size: 0.88rem; color: #455A64; line-height: 1.65; margin-bottom: 12px; }
   .trend-badge {
     display: inline-flex; align-items: center; gap: 8px;
-    padding: 8px 18px; border-radius: 999px; font-weight: 700; font-size: 0.95rem;
+    padding: 7px 16px; border-radius: 999px; font-weight: 700; font-size: 0.9rem;
   }
 
-  .comp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 28px; }
+  .comp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
 
-  .trend-box { background: #EEF2F7; border-radius: 10px; padding: 22px; margin-bottom: 28px; page-break-inside: avoid; break-inside: avoid; border-left: 4px solid #1565C0; }
+  .trend-box { background: #EEF2F7; border-radius: 10px; padding: 18px; margin-bottom: 24px; page-break-inside: avoid; break-inside: avoid; border-left: 4px solid #1565C0; }
 
   .page-footer {
-    margin-top: 44px; padding-top: 12px; border-top: 2px solid #1565C0;
-    display: flex; justify-content: space-between; font-size: 0.7rem; color: #90A4AE;
+    margin-top: 36px; padding-top: 10px; border-top: 2px solid #1565C0;
+    display: flex; justify-content: space-between; font-size: 0.68rem; color: #90A4AE;
   }
 
   .print-btn-bar { position: fixed; top: 20px; right: 20px; z-index: 999; display: flex; gap: 10px; }
@@ -924,9 +925,15 @@ const SecureScoreTab = (() => {
   .print-btn.close-btn { background: #2B3445; }
   .print-btn.close-btn:hover { background: #1a2535; }
 
+  @media screen {
+    body { background: #e8ecf0; }
+    .cover, .page-header-stripe, .page { box-shadow: 0 2px 20px rgba(0,0,0,0.15); }
+    .page { background: #fff; }
+  }
+
   @media print {
+    body { background: #fff; }
     .print-btn-bar { display: none !important; }
-    .cover { min-height: unset; height: 297mm; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
