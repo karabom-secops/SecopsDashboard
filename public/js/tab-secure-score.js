@@ -436,7 +436,7 @@ const SecureScoreTab = (() => {
           btn.disabled = false;
           if (!data) { alert('Unable to load score data. Please refresh and try again.'); return; }
         }
-        generateExcoReport(data, hist || [], grc);
+        await generateExcoReport(data, hist || [], grc);
       });
       document.getElementById('secure-score-print').addEventListener('click', () => {
         // Temporarily remove hidden attribute so CSS can show the panel even if another tab is active
@@ -760,7 +760,21 @@ const SecureScoreTab = (() => {
       </table>`;
   }
 
-  function generateExcoReport(scoreData, history, grcData) {
+  async function logoToDataUri() {
+    try {
+      const res = await fetch('img/reflex-logo.png');
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch (_) { return null; }
+  }
+
+  async function generateExcoReport(scoreData, history, grcData) {
     const score     = Math.round(scoreData.score);
     const rating    = scoreData.rating;
     const comp      = scoreData.components || {};
@@ -785,6 +799,8 @@ const SecureScoreTab = (() => {
     const reportDate = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
     const reportYear = new Date().getFullYear();
     const scoreColor = getScoreColor(score);
+
+    const logoDataUri = await logoToDataUri();
 
     /* Reflex brand palette */
     const RX_BLUE    = '#1565C0';
@@ -828,14 +844,7 @@ const SecureScoreTab = (() => {
     z-index: 1;
   }
   .cover-top { padding: 40px 48px 0; position: relative; z-index: 2; }
-  .cover-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-  .cover-logo-icon {
-    width: 52px; height: 52px; background: #1565C0; border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 26px; color: #fff;
-  }
-  .cover-logo-name { font-size: 1.4rem; font-weight: 800; color: #1565C0; letter-spacing: 0.5px; }
-  .cover-logo-sub  { font-size: 0.72rem; color: #90A4AE; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; }
+  .cover-logo { display: flex; align-items: center; margin-bottom: 12px; }
 
   /* Blue arrow/chevron title band */
   .cover-title-band {
@@ -933,11 +942,9 @@ const SecureScoreTab = (() => {
 <div class="cover">
   <div class="cover-top">
     <div class="cover-logo">
-      <div class="cover-logo-icon">🛡</div>
-      <div>
-        <div class="cover-logo-name">Reflex SecOps</div>
-        <div class="cover-logo-sub">Managed Security Services</div>
-      </div>
+      ${logoDataUri
+        ? `<img src="${logoDataUri}" alt="Reflex" style="height:60px;width:auto">`
+        : `<div style="font-size:1.4rem;font-weight:800;color:#1565C0">reflex</div>`}
     </div>
   </div>
 
