@@ -531,21 +531,21 @@ const SecureScoreTab = (() => {
 
   function buildGaugeSvg(score) {
     const color = getScoreColor(score);
-    const w = 260, h = 155, cx = 130, cy = 145, r = 110;
+    const w = 220, h = 130, cx = 110, cy = 122, r = 92;
     const arcLen = Math.PI * r;
     const fillOffset = arcLen * (1 - score / 100);
     return `
-      <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+      <svg width="100%" viewBox="0 0 ${w} ${h}" style="display:block;max-width:${w}px;margin:0 auto">
         <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}"
-              fill="none" stroke="#dde8f0" stroke-width="14" stroke-linecap="round"/>
+              fill="none" stroke="#dde8f0" stroke-width="13" stroke-linecap="round"/>
         <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}"
-              fill="none" stroke="${color}" stroke-width="14" stroke-linecap="round"
+              fill="none" stroke="${color}" stroke-width="13" stroke-linecap="round"
               stroke-dasharray="${arcLen}" stroke-dashoffset="${fillOffset}"/>
-        <text x="${cx}" y="${cy - 28}" text-anchor="middle"
-              font-size="52" font-weight="700" fill="${color}"
+        <text x="${cx}" y="${cy - 24}" text-anchor="middle"
+              font-size="46" font-weight="700" fill="${color}"
               font-family="Segoe UI,Arial,sans-serif">${score}</text>
-        <text x="${cx}" y="${cy - 8}" text-anchor="middle"
-              font-size="13" fill="#6b7c93"
+        <text x="${cx}" y="${cy - 6}" text-anchor="middle"
+              font-size="12" fill="#6b7c93"
               font-family="Segoe UI,Arial,sans-serif">out of 100</text>
       </svg>`;
   }
@@ -897,7 +897,7 @@ const SecureScoreTab = (() => {
   .page-header-stripe { background: #1565C0; height: 6px; width: 100%; }
 
   .exec-grid { display: grid; grid-template-columns: 220px 1fr; gap: 28px; align-items: center; margin-bottom: 24px; }
-  .exec-gauge-block { text-align: center; background: #EEF2F7; border-radius: 12px; padding: 18px 14px; border-top: 4px solid #1565C0; }
+  .exec-gauge-block { text-align: center; background: #EEF2F7; border-radius: 12px; padding: 18px 14px; border-top: 4px solid #1565C0; overflow: hidden; }
   .exec-gauge-rating { font-size: 1.1rem; font-weight: 700; margin-top: 5px; }
   .exec-headline { font-size: 1.2rem; font-weight: 800; color: #2B3445; margin-bottom: 10px; line-height: 1.3; }
   .exec-body { font-size: 0.88rem; color: #455A64; line-height: 1.65; margin-bottom: 12px; }
