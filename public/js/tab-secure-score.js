@@ -592,13 +592,13 @@ const SecureScoreTab = (() => {
   function buildCompCard(label, weight, score, desc) {
     const color = getScoreColor(score);
     return `
-      <div style="border:1px solid #e2eaf2;border-radius:10px;padding:20px;page-break-inside:avoid;break-inside:avoid">
-        <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7c93;margin-bottom:6px">
-          ${label} <span style="font-size:0.68rem;background:#eef2f6;border-radius:3px;padding:2px 6px;margin-left:4px">${weight}</span>
+      <div style="border:1px solid #CFD8DC;border-radius:10px;padding:20px;page-break-inside:avoid;break-inside:avoid;border-top:3px solid #1565C0">
+        <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#78909C;margin-bottom:6px">
+          ${label} <span style="font-size:0.68rem;background:#EEF2F7;border-radius:3px;padding:2px 6px;margin-left:4px">${weight}</span>
         </div>
         <div style="font-size:2rem;font-weight:800;color:${color};line-height:1">${score}</div>
         ${buildComponentBar(score)}
-        <div style="font-size:0.78rem;color:#7a8fa6;margin-top:4px">${desc}</div>
+        <div style="font-size:0.78rem;color:#90A4AE;margin-top:4px">${desc}</div>
       </div>`;
   }
 
@@ -655,7 +655,7 @@ const SecureScoreTab = (() => {
 
     return `
       <div style="display:grid;grid-template-columns:180px 1fr;gap:28px;align-items:flex-start">
-        <div style="background:#f6f9fc;border-radius:10px;padding:20px;text-align:center">
+        <div style="background:#EEF2F7;border-radius:10px;padding:20px;text-align:center;border-top:3px solid #1565C0">
           <div style="font-size:3rem;font-weight:800;color:${insColor};line-height:1">${insScore}</div>
           <div style="font-size:0.8rem;color:#6b7c93;font-weight:600;margin-top:4px">Insurability Score</div>
           <div style="font-size:0.7rem;color:#9aacba;margin-top:8px;line-height:1.5">${breakdownNote}</div>
@@ -688,7 +688,7 @@ const SecureScoreTab = (() => {
     const grcColor = getScoreColor(grcScore);
     const grcDate = new Date(grcAsmt.assessed_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
     return `
-      <div style="display:flex;align-items:center;gap:28px;background:#f6f9fc;border-radius:10px;padding:24px">
+      <div style="display:flex;align-items:center;gap:28px;background:#EEF2F7;border-radius:10px;padding:24px;border-left:4px solid #1565C0">
         <div style="text-align:center;flex-shrink:0">
           <div style="font-size:3rem;font-weight:800;color:${grcColor};line-height:1">${grcScore}</div>
           <div style="font-size:0.8rem;color:#6b7c93;font-weight:600;margin-top:4px">GRC Score</div>
@@ -743,10 +743,10 @@ const SecureScoreTab = (() => {
       </p>
       <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
         <thead>
-          <tr style="background:#f6f9fc">
-            <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #e2eaf2;color:#3d5166">Data Source</th>
-            <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #e2eaf2;color:#3d5166">Last Updated</th>
-            <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #e2eaf2;color:#3d5166">Origin</th>
+          <tr style="background:#EEF2F7">
+            <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #1565C0;color:#2B3445">Data Source</th>
+            <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #1565C0;color:#2B3445">Last Updated</th>
+            <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #1565C0;color:#2B3445">Origin</th>
           </tr>
         </thead>
         <tbody>
@@ -786,6 +786,12 @@ const SecureScoreTab = (() => {
     const reportYear = new Date().getFullYear();
     const scoreColor = getScoreColor(score);
 
+    /* Reflex brand palette */
+    const RX_BLUE    = '#1565C0';
+    const RX_DARK    = '#2B3445';
+    const RX_GREY    = '#B0BEC5';
+    const RX_LIGHT   = '#EEF2F7';
+
     const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -796,44 +802,95 @@ const SecureScoreTab = (() => {
   body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 14px; color: #1a2a3a; background: #fff; line-height: 1.6; }
   @page { size: A4; margin: 18mm 16mm; }
 
+  /* ── Cover page ── */
   .cover {
-    min-height: 100vh; background: linear-gradient(160deg, #0a1628 60%, #0d2245 100%);
-    display: flex; flex-direction: column; justify-content: center;
-    padding: 60px; page-break-after: always; break-after: page;
+    position: relative; overflow: hidden;
+    min-height: 100vh; background: #ffffff;
+    display: flex; flex-direction: column;
+    page-break-after: always; break-after: page;
   }
-  .cover-logo-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 60px; }
-  .cover-logo-shield {
-    width: 44px; height: 44px; background: #00b4d8; border-radius: 8px;
-    display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff;
+  /* Top-right grey diagonal shape */
+  .cover::before {
+    content: ''; position: absolute; top: -60px; right: -80px;
+    width: 340px; height: 420px;
+    background: #CFD8DC;
+    transform: rotate(-18deg);
+    border-radius: 12px;
+    z-index: 0;
   }
-  .cover-logo-text { font-size: 1.1rem; font-weight: 700; color: #00b4d8; letter-spacing: 0.5px; }
-  .cover-eyebrow { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 3px; color: #00b4d8; margin-bottom: 20px; }
-  .cover-title { font-size: 2.6rem; font-weight: 800; color: #fff; line-height: 1.15; margin-bottom: 14px; }
-  .cover-subtitle { font-size: 1rem; color: rgba(255,255,255,0.55); margin-bottom: 56px; }
-  .cover-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 520px; }
-  .cover-meta-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.38); margin-bottom: 4px; }
-  .cover-meta-value { font-size: 0.93rem; font-weight: 600; color: rgba(255,255,255,0.88); }
-  .cover-classification {
-    margin-top: 56px; display: inline-block; border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 4px; padding: 5px 16px; font-size: 0.72rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 2px; color: rgba(255,255,255,0.45);
+  /* Bottom-right dark charcoal shape */
+  .cover::after {
+    content: ''; position: absolute; bottom: -60px; right: -40px;
+    width: 280px; height: 380px;
+    background: #2B3445;
+    transform: rotate(-18deg);
+    border-radius: 12px;
+    z-index: 1;
   }
+  .cover-top { padding: 40px 48px 0; position: relative; z-index: 2; }
+  .cover-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .cover-logo-icon {
+    width: 52px; height: 52px; background: #1565C0; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; color: #fff;
+  }
+  .cover-logo-name { font-size: 1.4rem; font-weight: 800; color: #1565C0; letter-spacing: 0.5px; }
+  .cover-logo-sub  { font-size: 0.72rem; color: #90A4AE; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; }
 
+  /* Blue arrow/chevron title band */
+  .cover-title-band {
+    position: relative; z-index: 2;
+    margin: 60px 0 0;
+    background: #1565C0;
+    padding: 44px 48px 44px 64px;
+    clip-path: polygon(0 0, calc(100% - 60px) 0, 100% 50%, calc(100% - 60px) 100%, 0 100%);
+    max-width: 78%;
+  }
+  .cover-eyebrow { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 3px; color: rgba(255,255,255,0.65); margin-bottom: 10px; }
+  .cover-title    { font-size: 1.9rem; font-weight: 800; color: #fff; line-height: 1.2; }
+
+  .cover-meta {
+    position: relative; z-index: 2;
+    padding: 32px 48px 0 64px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 500px;
+  }
+  .cover-meta-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 1.5px; color: #90A4AE; margin-bottom: 3px; }
+  .cover-meta-value { font-size: 0.9rem; font-weight: 700; color: #2B3445; }
+
+  .cover-footer {
+    position: relative; z-index: 2;
+    margin-top: auto; padding: 28px 48px 36px;
+    display: flex; justify-content: space-between; align-items: flex-end;
+  }
+  .cover-classification {
+    display: inline-block; border: 1.5px solid #B0BEC5; border-radius: 4px;
+    padding: 4px 14px; font-size: 0.7rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 2px; color: #90A4AE;
+  }
+  .cover-footer-right { text-align: right; font-size: 0.8rem; color: #90A4AE; line-height: 1.8; }
+  .cover-footer-right strong { color: #2B3445; }
+
+  /* ── Content pages ── */
   .page { padding: 40px 48px; max-width: 900px; margin: 0 auto; }
 
   .section-heading {
-    font-size: 1.3rem; font-weight: 800; color: #0a1628;
-    border-bottom: 3px solid #00b4d8; padding-bottom: 9px;
+    font-size: 1.25rem; font-weight: 800; color: #2B3445;
+    border-bottom: 3px solid #1565C0; padding-bottom: 9px;
     margin-bottom: 24px; margin-top: 40px;
     page-break-after: avoid; break-after: avoid;
   }
   .section-heading:first-child { margin-top: 0; }
 
+  /* Page header stripe on content pages */
+  .page-header-stripe {
+    background: #1565C0; height: 6px; width: 100%; margin-bottom: 0;
+  }
+
   .exec-grid { display: grid; grid-template-columns: 280px 1fr; gap: 36px; align-items: center; margin-bottom: 28px; }
-  .exec-gauge-block { text-align: center; background: #f6f9fc; border-radius: 12px; padding: 22px 18px; }
+  .exec-gauge-block { text-align: center; background: #EEF2F7; border-radius: 12px; padding: 22px 18px; border-top: 4px solid #1565C0; }
   .exec-gauge-rating { font-size: 1.2rem; font-weight: 700; margin-top: 6px; }
-  .exec-headline { font-size: 1.4rem; font-weight: 800; color: #0a1628; margin-bottom: 12px; line-height: 1.3; }
-  .exec-body { font-size: 0.93rem; color: #3d5166; line-height: 1.7; margin-bottom: 14px; }
+  .exec-headline { font-size: 1.35rem; font-weight: 800; color: #2B3445; margin-bottom: 12px; line-height: 1.3; }
+  .exec-body { font-size: 0.93rem; color: #455A64; line-height: 1.7; margin-bottom: 14px; }
   .trend-badge {
     display: inline-flex; align-items: center; gap: 8px;
     padding: 8px 18px; border-radius: 999px; font-weight: 700; font-size: 0.95rem;
@@ -841,20 +898,22 @@ const SecureScoreTab = (() => {
 
   .comp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 28px; }
 
-  .trend-box { background: #f6f9fc; border-radius: 10px; padding: 22px; margin-bottom: 28px; page-break-inside: avoid; break-inside: avoid; }
+  .trend-box { background: #EEF2F7; border-radius: 10px; padding: 22px; margin-bottom: 28px; page-break-inside: avoid; break-inside: avoid; border-left: 4px solid #1565C0; }
 
   .page-footer {
-    margin-top: 44px; padding-top: 12px; border-top: 1px solid #e2eaf2;
-    display: flex; justify-content: space-between; font-size: 0.7rem; color: #9aacba;
+    margin-top: 44px; padding-top: 12px; border-top: 2px solid #1565C0;
+    display: flex; justify-content: space-between; font-size: 0.7rem; color: #90A4AE;
   }
 
   .print-btn-bar { position: fixed; top: 20px; right: 20px; z-index: 999; display: flex; gap: 10px; }
   .print-btn {
-    background: #0a1628; color: #fff; border: none; border-radius: 6px;
+    background: #1565C0; color: #fff; border: none; border-radius: 6px;
     padding: 10px 22px; font-size: 0.88rem; font-weight: 600; cursor: pointer;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 10px rgba(21,101,192,0.35);
   }
-  .print-btn:hover { background: #00b4d8; }
+  .print-btn:hover { background: #0D47A1; }
+  .print-btn.close-btn { background: #2B3445; }
+  .print-btn.close-btn:hover { background: #1a2535; }
 
   @media print {
     .print-btn-bar { display: none !important; }
@@ -867,26 +926,45 @@ const SecureScoreTab = (() => {
 
 <div class="print-btn-bar">
   <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
-  <button class="print-btn" style="background:#334155" onclick="window.close()">✕ Close</button>
+  <button class="print-btn close-btn" onclick="window.close()">✕ Close</button>
 </div>
 
 <!-- COVER PAGE -->
 <div class="cover">
-  <div class="cover-logo-bar">
-    <div class="cover-logo-shield">🛡</div>
-    <span class="cover-logo-text">SecOps Dashboard</span>
+  <div class="cover-top">
+    <div class="cover-logo">
+      <div class="cover-logo-icon">🛡</div>
+      <div>
+        <div class="cover-logo-name">Reflex SecOps</div>
+        <div class="cover-logo-sub">Managed Security Services</div>
+      </div>
+    </div>
   </div>
-  <div class="cover-eyebrow">Executive Security Report</div>
-  <div class="cover-title">Security Posture<br>Executive Report</div>
-  <div class="cover-subtitle">Comprehensive cybersecurity posture assessment and risk analysis</div>
-  <div class="cover-meta-grid">
+
+  <div class="cover-title-band">
+    <div class="cover-eyebrow">Executive Security Report</div>
+    <div class="cover-title">Security Posture<br>Executive Report</div>
+  </div>
+
+  <div class="cover-meta">
     <div><div class="cover-meta-label">Report Date</div><div class="cover-meta-value">${reportDate}</div></div>
     <div><div class="cover-meta-label">Prepared By</div><div class="cover-meta-value">${tenantName}</div></div>
-    <div><div class="cover-meta-label">Overall Score</div><div class="cover-meta-value" style="color:#00b4d8">${score}/100 — ${rating}</div></div>
+    <div><div class="cover-meta-label">Overall Score</div><div class="cover-meta-value" style="color:#1565C0">${score}/100 — ${rating}</div></div>
     <div><div class="cover-meta-label">30-Day Trend</div><div class="cover-meta-value" style="color:${trendColor}">${trendArrow} ${trendLabel}</div></div>
   </div>
-  <div class="cover-classification">Confidential</div>
+
+  <div class="cover-footer">
+    <div class="cover-classification">Confidential</div>
+    <div class="cover-footer-right">
+      ${reportDate}<br>
+      Version: 1.0<br>
+      <strong>Prepared by Reflex</strong>
+    </div>
+  </div>
 </div>
+
+<!-- Blue stripe at top of content section -->
+<div class="page-header-stripe"></div>
 
 <!-- CONTENT -->
 <div class="page">
@@ -896,7 +974,7 @@ const SecureScoreTab = (() => {
     <div class="exec-gauge-block">
       ${buildGaugeSvg(score)}
       <div class="exec-gauge-rating" style="color:${scoreColor}">${rating}</div>
-      <div style="font-size:0.75rem;color:#6b7c93;margin-top:3px">Security Posture Score</div>
+      <div style="font-size:0.75rem;color:#78909C;margin-top:3px">Security Posture Score</div>
     </div>
     <div>
       <div class="exec-headline">${buildHeadline(score, rating, delta)}</div>
@@ -935,7 +1013,7 @@ const SecureScoreTab = (() => {
   <div class="page-footer">
     <span>Security Posture Executive Report — ${reportDate}</span>
     <span>CONFIDENTIAL — Internal Use Only</span>
-    <span>Generated by SecOps Dashboard &copy; ${reportYear}</span>
+    <span>Prepared by Reflex &copy; ${reportYear}</span>
   </div>
 </div>
 </body>

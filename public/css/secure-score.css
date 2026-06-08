@@ -210,14 +210,15 @@
 }
 
 .score-report-btn {
-  background: rgba(0, 180, 216, 0.08);
-  border-color: rgba(0, 180, 216, 0.4);
-  color: var(--logo-cyan);
+  background: rgba(21, 101, 192, 0.08);
+  border-color: rgba(21, 101, 192, 0.4);
+  color: #1565C0;
 }
 
 .score-report-btn:hover {
-  background: rgba(0, 180, 216, 0.18);
-  border-color: var(--logo-cyan);
+  background: rgba(21, 101, 192, 0.15);
+  border-color: #1565C0;
+  color: #1565C0;
 }
 
 /* ── Score tooltip ─────────────────────────────────────────────────────────── */
