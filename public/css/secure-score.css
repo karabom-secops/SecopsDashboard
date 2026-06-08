@@ -209,6 +209,17 @@
   background: rgba(0, 180, 216, 0.06);
 }
 
+.score-report-btn {
+  background: rgba(0, 180, 216, 0.08);
+  border-color: rgba(0, 180, 216, 0.4);
+  color: var(--logo-cyan);
+}
+
+.score-report-btn:hover {
+  background: rgba(0, 180, 216, 0.18);
+  border-color: var(--logo-cyan);
+}
+
 /* ── Score tooltip ─────────────────────────────────────────────────────────── */
 .score-tooltip-wrap {
   position: relative;

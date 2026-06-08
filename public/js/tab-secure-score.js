@@ -2,7 +2,9 @@
 
 const SecureScoreTab = (() => {
   let currentScore = null;
-  let _trendChart = null;
+  let _trendChart   = null;
+  let _cachedHistory = null;
+  let _cachedGrcData = null;
 
   async function fetchSecureScore() {
     try {
@@ -401,6 +403,7 @@ const SecureScoreTab = (() => {
         </div>
         <div class="score-header-bar">
           <button id="secure-score-refresh" class="score-action-btn" title="Refresh score">&#x21BB; Refresh</button>
+          <button id="secure-score-report" class="score-action-btn score-report-btn" title="Generate Exco report">&#128196; Generate Report</button>
           <button id="secure-score-print" class="score-action-btn" title="Print or save as PDF">&#x2399; Export</button>
         </div>
         <div class="secure-score-main">
@@ -421,6 +424,20 @@ const SecureScoreTab = (() => {
       `;
 
       document.getElementById('secure-score-refresh').addEventListener('click', loadAndRender);
+      document.getElementById('secure-score-report').addEventListener('click', async () => {
+        let data = currentScore, hist = _cachedHistory, grc = _cachedGrcData;
+        if (!data) {
+          const btn = document.getElementById('secure-score-report');
+          const origText = btn.textContent;
+          btn.textContent = 'Generating…';
+          btn.disabled = true;
+          [data, hist, grc] = await Promise.all([fetchSecureScore(), fetchScoreHistory(), fetchGrcSummary()]);
+          btn.textContent = origText;
+          btn.disabled = false;
+          if (!data) { alert('Unable to load score data. Please refresh and try again.'); return; }
+        }
+        generateExcoReport(data, hist || [], grc);
+      });
       document.getElementById('secure-score-print').addEventListener('click', () => {
         // Temporarily remove hidden attribute so CSS can show the panel even if another tab is active
         const panel = document.getElementById('tab-secure-score');
@@ -473,6 +490,10 @@ const SecureScoreTab = (() => {
     `;
     dataAgeContainer.innerHTML = dataAgeHtml;
 
+    // Cache for report generation
+    _cachedHistory = history;
+    _cachedGrcData = grcData;
+
     // Render GRC indicator
     const grcEl = document.getElementById('secure-score-grc-indicator');
     if (grcEl) {
@@ -497,6 +518,437 @@ const SecureScoreTab = (() => {
           </div>`;
       }
     }
+  }
+
+  // ── Exco Report Generation ────────────────────────────────────────────────
+
+  function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  function buildGaugeSvg(score) {
+    const color = getScoreColor(score);
+    const w = 260, h = 155, cx = 130, cy = 145, r = 110;
+    const arcLen = Math.PI * r;
+    const fillOffset = arcLen * (1 - score / 100);
+    return `
+      <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+        <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}"
+              fill="none" stroke="#dde8f0" stroke-width="14" stroke-linecap="round"/>
+        <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}"
+              fill="none" stroke="${color}" stroke-width="14" stroke-linecap="round"
+              stroke-dasharray="${arcLen}" stroke-dashoffset="${fillOffset}"/>
+        <text x="${cx}" y="${cy - 28}" text-anchor="middle"
+              font-size="52" font-weight="700" fill="${color}"
+              font-family="Segoe UI,Arial,sans-serif">${score}</text>
+        <text x="${cx}" y="${cy - 8}" text-anchor="middle"
+              font-size="13" fill="#6b7c93"
+              font-family="Segoe UI,Arial,sans-serif">out of 100</text>
+      </svg>`;
+  }
+
+  function buildTrendSvg(hist) {
+    if (!hist || hist.length < 2) {
+      return '<p style="color:#999;font-style:italic;padding:12px 0">Insufficient history data.</p>';
+    }
+    const sorted = [...hist].reverse();
+    const W = 580, H = 120, pad = 40;
+    const xs = sorted.map((_, i) => pad + (i / (sorted.length - 1)) * (W - pad * 2));
+    const ys = sorted.map(h => H - pad / 2 - ((h.score / 100) * (H - pad)));
+    const pts = xs.map((x, i) => `${x},${ys[i]}`).join(' ');
+    const gridLines = [25, 50, 75, 100].map(v => {
+      const y = H - pad / 2 - ((v / 100) * (H - pad));
+      return `<line x1="${pad}" y1="${y}" x2="${W - pad}" y2="${y}" stroke="#e8edf2" stroke-width="1"/>
+              <text x="${pad - 6}" y="${y + 4}" text-anchor="end" font-size="10" fill="#9aacba">${v}</text>`;
+    }).join('');
+    const dots = sorted.map((h, i) => {
+      return `<circle cx="${xs[i]}" cy="${ys[i]}" r="5"
+                      fill="${getScoreColor(h.score)}" stroke="#fff" stroke-width="2"/>`;
+    }).join('');
+    const labels = sorted.map((h, i) =>
+      `<text x="${xs[i]}" y="${H + 15}" text-anchor="middle" font-size="10" fill="#6b7c93"
+             font-family="Segoe UI,Arial,sans-serif">${formatMonthLabel(h.monthKey)}</text>`
+    ).join('');
+    return `
+      <svg width="100%" viewBox="0 0 ${W} ${H + 24}" style="overflow:visible;display:block">
+        ${gridLines}
+        <polyline points="${pts}" fill="none" stroke="#00b4d8"
+                  stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${dots}
+        ${labels}
+      </svg>`;
+  }
+
+  function buildComponentBar(score) {
+    const color = getScoreColor(score);
+    return `<div style="background:#eef2f6;border-radius:4px;height:9px;margin:6px 0 2px;overflow:hidden">
+              <div style="width:${score}%;height:100%;background:${color};border-radius:4px"></div>
+            </div>`;
+  }
+
+  function buildCompCard(label, weight, score, desc) {
+    const color = getScoreColor(score);
+    return `
+      <div style="border:1px solid #e2eaf2;border-radius:10px;padding:20px;page-break-inside:avoid;break-inside:avoid">
+        <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7c93;margin-bottom:6px">
+          ${label} <span style="font-size:0.68rem;background:#eef2f6;border-radius:3px;padding:2px 6px;margin-left:4px">${weight}</span>
+        </div>
+        <div style="font-size:2rem;font-weight:800;color:${color};line-height:1">${score}</div>
+        ${buildComponentBar(score)}
+        <div style="font-size:0.78rem;color:#7a8fa6;margin-top:4px">${desc}</div>
+      </div>`;
+  }
+
+  function buildHeadline(score, rating, delta) {
+    if (score >= 80) return 'Strong security posture — your organisation is well-positioned against cyber threats.';
+    if (score >= 70) return 'Good security posture with targeted areas requiring improvement.';
+    if (score >= 50) return 'Moderate security posture — attention is required on key risk drivers.';
+    return 'Security posture is below acceptable threshold and requires immediate remediation.';
+  }
+
+  function buildExecSummaryText(score, rating, vulnScore, awarScore, mdrScore, delta) {
+    const scores = [
+      { name: 'Vulnerability Management', val: vulnScore },
+      { name: 'Security Awareness Training', val: awarScore },
+      { name: 'Incident Response', val: mdrScore },
+    ].sort((a, b) => a.val - b.val);
+    const weakest = scores[0];
+    const trendSentence = delta === null ? '' :
+      delta > 3 ? ` The score has improved by ${delta} points compared to last month, indicating positive momentum.` :
+      delta < -3 ? ` The score has declined by ${Math.abs(delta)} points compared to last month, warranting review.` :
+      ' The score has remained stable compared to last month.';
+    return `The organisation's current Secure Score stands at ${score}/100, rated <strong>${rating}</strong>.${trendSentence} ` +
+      `The primary area for improvement is <strong>${weakest.name}</strong> (currently ${weakest.val}/100), ` +
+      `which has the greatest potential to lift the overall security posture score when addressed.`;
+  }
+
+  function buildInsurabilitySection(ssScore, insScore, grcScore, hist) {
+    const insColor = getScoreColor(insScore);
+    let trend = 0;
+    if (hist.length >= 2) {
+      const recent = hist.slice(0, Math.min(3, hist.length)).map(h => h.score);
+      const avg = recent.reduce((s, v) => s + v, 0) / recent.length;
+      trend = Math.round(ssScore - avg);
+    }
+    let dirKey, dirArrow, dirLabel;
+    if (insScore >= 75 && trend >= 3)        { dirKey = 'reduce';  dirArrow = '↓';  dirLabel = 'Premium Reduction Likely'; }
+    else if (insScore >= 75)                  { dirKey = 'stable';  dirArrow = '→';  dirLabel = 'Premium Likely Maintained'; }
+    else if (insScore >= 60 && trend >= -3)   { dirKey = 'neutral'; dirArrow = '→';  dirLabel = 'Neutral — Monitor Position'; }
+    else if (insScore >= 50 || trend < -3)    { dirKey = 'risk';    dirArrow = '↑';  dirLabel = 'Premium Increase Risk'; }
+    else                                      { dirKey = 'likely';  dirArrow = '↑↑'; dirLabel = 'Premium Increase Likely'; }
+
+    const dirColors = { reduce: '#27ae60', stable: '#27ae60', neutral: '#d68910', risk: '#e67e22', likely: '#e74c3c' };
+    const dirColor = dirColors[dirKey];
+
+    const trendAbs = Math.abs(trend);
+    const trendDir = trend > 0 ? 'improved' : trend < 0 ? 'declined' : 'unchanged';
+    const trendNote = hist.length >= 2
+      ? `Score has ${trendDir}${trendAbs > 0 ? ` by ${trendAbs} points` : ''} over the last ${Math.min(3, hist.length)} months.`
+      : 'Insufficient history for trend analysis.';
+
+    const breakdownNote = grcScore !== null
+      ? `Secure Score (${ssScore}) × 60% + GRC Score (${grcScore}) × 40%`
+      : `Based on Secure Score only — complete GRC assessment for full calculation`;
+
+    return `
+      <div style="display:grid;grid-template-columns:180px 1fr;gap:28px;align-items:flex-start">
+        <div style="background:#f6f9fc;border-radius:10px;padding:20px;text-align:center">
+          <div style="font-size:3rem;font-weight:800;color:${insColor};line-height:1">${insScore}</div>
+          <div style="font-size:0.8rem;color:#6b7c93;font-weight:600;margin-top:4px">Insurability Score</div>
+          <div style="font-size:0.7rem;color:#9aacba;margin-top:8px;line-height:1.5">${breakdownNote}</div>
+        </div>
+        <div>
+          <div style="display:inline-flex;align-items:center;gap:8px;padding:8px 18px;border-radius:999px;
+                      font-weight:700;font-size:0.9rem;margin-bottom:12px;
+                      background:${hexToRgba(dirColor, 0.12)};color:${dirColor}">
+            <span style="font-size:1.1em">${dirArrow}</span> ${dirLabel}
+          </div>
+          <p style="font-size:0.88rem;color:#3d5166;margin:0 0 14px">${trendNote}</p>
+          <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#9aacba;margin-bottom:8px">Key Risk Drivers</div>
+          ${grcScore === null ? `<div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:#3d5166;margin-bottom:6px">
+            <span style="width:9px;height:9px;border-radius:50%;background:#f39c12;flex-shrink:0;display:inline-block"></span>
+            GRC assessment not completed — adds 40% weight to Insurability Score
+          </div>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function buildGrcSection(grcData) {
+    const grcAsmt = grcData && grcData.assessment;
+    if (!grcAsmt) {
+      return `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:18px 20px;color:#92400e;font-size:0.92rem">
+        <strong>GRC Assessment Not Completed</strong><br>
+        Complete the GRC self-assessment in the GRC Compliance tab to include governance risk and compliance scoring in this report and improve the accuracy of the Insurability Score.
+      </div>`;
+    }
+    const grcScore = grcAsmt.grc_score || 0;
+    const grcColor = getScoreColor(grcScore);
+    const grcDate = new Date(grcAsmt.assessed_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
+    return `
+      <div style="display:flex;align-items:center;gap:28px;background:#f6f9fc;border-radius:10px;padding:24px">
+        <div style="text-align:center;flex-shrink:0">
+          <div style="font-size:3rem;font-weight:800;color:${grcColor};line-height:1">${grcScore}</div>
+          <div style="font-size:0.8rem;color:#6b7c93;font-weight:600;margin-top:4px">GRC Score</div>
+          <div style="font-size:0.72rem;color:#9aacba;margin-top:6px">Assessed: ${grcDate}</div>
+        </div>
+        <div style="font-size:0.88rem;color:#3d5166;line-height:1.7">
+          The GRC score reflects the organisation's governance, risk and compliance posture based on a structured self-assessment.<br>
+          <em style="color:#9aacba">Detailed domain breakdown is available in the GRC Compliance tab.</em>
+        </div>
+      </div>`;
+  }
+
+  function buildRecommendationsSection(recommendations) {
+    if (!recommendations || recommendations.length === 0) {
+      return '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px 20px;color:#166534;font-size:0.92rem">✅ No recommendations at this time — all components are performing well.</div>';
+    }
+    const order = ['high', 'medium', 'info'];
+    const sorted = [...recommendations].sort((a, b) => order.indexOf(a.priority) - order.indexOf(b.priority));
+    const borderColors = { high: '#e74c3c', medium: '#f39c12', info: '#27ae60' };
+    const bgColors     = { high: 'rgba(231,76,60,0.04)', medium: 'rgba(245,158,11,0.04)', info: 'rgba(39,174,96,0.04)' };
+    const badgeBg      = { high: 'rgba(231,76,60,0.12)', medium: 'rgba(245,158,11,0.12)', info: 'rgba(39,174,96,0.12)' };
+    const badgeFg      = { high: '#c0392b', medium: '#d68910', info: '#1e8449' };
+    return sorted.map(rec => `
+      <div style="border-left:4px solid ${borderColors[rec.priority] || '#e2eaf2'};
+                  border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:12px;
+                  background:${bgColors[rec.priority] || '#fafbfc'};
+                  page-break-inside:avoid;break-inside:avoid">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;
+                       padding:2px 8px;border-radius:3px;
+                       background:${badgeBg[rec.priority]};color:${badgeFg[rec.priority]}">${rec.priority}</span>
+          <span style="font-size:0.95rem;font-weight:700;color:#1a2a3a">${rec.area}</span>
+          <span style="font-size:0.78rem;color:#6b7c93;margin-left:auto">Impact: ${rec.impact}</span>
+        </div>
+        <p style="font-size:0.88rem;color:#3d5166;line-height:1.6;margin:0">${rec.suggestion}</p>
+      </div>`).join('');
+  }
+
+  function buildAppendix(scoreData, reportDate) {
+    const da = scoreData.dataAge || {};
+    const rows = [
+      ['Vulnerability Findings', da.vulns || 'N/A', 'Nessus / Arctic Wolf scan data'],
+      ['Security Awareness', da.awareness || 'N/A', 'Training platform export'],
+      ['Incident Response (MDR)', da.mdr || 'N/A', 'Arctic Wolf MDR ticket data'],
+    ];
+    return `
+      <p style="font-size:0.88rem;color:#3d5166;margin-bottom:16px">
+        The Secure Score is a composite 0–100 index calculated from three weighted components:
+        <strong>Vulnerability Management (40%)</strong>, <strong>Security Awareness (35%)</strong>,
+        and <strong>Incident Response (25%)</strong>. The Insurability Score combines the Secure Score
+        (60%) with the GRC Assessment Score (40%) to reflect overall cyber insurance risk positioning.
+      </p>
+      <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
+        <thead>
+          <tr style="background:#f6f9fc">
+            <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #e2eaf2;color:#3d5166">Data Source</th>
+            <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #e2eaf2;color:#3d5166">Last Updated</th>
+            <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #e2eaf2;color:#3d5166">Origin</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(([src, date, origin]) => `
+            <tr>
+              <td style="padding:8px 12px;border-bottom:1px solid #eef2f6;color:#1a2a3a;font-weight:600">${src}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #eef2f6;color:#3d5166">${date}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #eef2f6;color:#6b7c93">${origin}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  function generateExcoReport(scoreData, history, grcData) {
+    const score     = Math.round(scoreData.score);
+    const rating    = scoreData.rating;
+    const comp      = scoreData.components || {};
+    const vulnScore = Math.round((comp.vulnerabilities    || {}).score || 0);
+    const awarScore = Math.round((comp.awareness          || {}).score || 0);
+    const mdrScore  = Math.round((comp.incidentResponse   || {}).score || 0);
+
+    const hist = Array.isArray(history) ? history : (history && history.history ? history.history : []);
+    let delta = null;
+    if (hist.length >= 2) delta = score - Math.round(hist[1].score);
+
+    const trendLabel = delta === null ? 'No prior data' : delta > 3 ? 'Improving' : delta < -3 ? 'Declining' : 'Stable';
+    const trendArrow = delta === null ? '' : delta > 3 ? '▲' : delta < -3 ? '▼' : '→';
+    const trendColor = delta === null ? '#6b7c93' : delta > 3 ? '#27ae60' : delta < -3 ? '#e74c3c' : '#f39c12';
+
+    const grcAsmt  = grcData && grcData.assessment;
+    const grcScore = grcAsmt ? (grcAsmt.grc_score || 0) : null;
+    const insScore = grcScore !== null ? Math.round(score * 0.6 + grcScore * 0.4) : score;
+
+    const user       = window.currentUser || {};
+    const tenantName = user.username || 'SecOps Dashboard';
+    const reportDate = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
+    const reportYear = new Date().getFullYear();
+    const scoreColor = getScoreColor(score);
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Security Posture Executive Report — ${reportDate}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 14px; color: #1a2a3a; background: #fff; line-height: 1.6; }
+  @page { size: A4; margin: 18mm 16mm; }
+
+  .cover {
+    min-height: 100vh; background: linear-gradient(160deg, #0a1628 60%, #0d2245 100%);
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 60px; page-break-after: always; break-after: page;
+  }
+  .cover-logo-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 60px; }
+  .cover-logo-shield {
+    width: 44px; height: 44px; background: #00b4d8; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff;
+  }
+  .cover-logo-text { font-size: 1.1rem; font-weight: 700; color: #00b4d8; letter-spacing: 0.5px; }
+  .cover-eyebrow { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 3px; color: #00b4d8; margin-bottom: 20px; }
+  .cover-title { font-size: 2.6rem; font-weight: 800; color: #fff; line-height: 1.15; margin-bottom: 14px; }
+  .cover-subtitle { font-size: 1rem; color: rgba(255,255,255,0.55); margin-bottom: 56px; }
+  .cover-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 520px; }
+  .cover-meta-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.38); margin-bottom: 4px; }
+  .cover-meta-value { font-size: 0.93rem; font-weight: 600; color: rgba(255,255,255,0.88); }
+  .cover-classification {
+    margin-top: 56px; display: inline-block; border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 4px; padding: 5px 16px; font-size: 0.72rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 2px; color: rgba(255,255,255,0.45);
+  }
+
+  .page { padding: 40px 48px; max-width: 900px; margin: 0 auto; }
+
+  .section-heading {
+    font-size: 1.3rem; font-weight: 800; color: #0a1628;
+    border-bottom: 3px solid #00b4d8; padding-bottom: 9px;
+    margin-bottom: 24px; margin-top: 40px;
+    page-break-after: avoid; break-after: avoid;
+  }
+  .section-heading:first-child { margin-top: 0; }
+
+  .exec-grid { display: grid; grid-template-columns: 280px 1fr; gap: 36px; align-items: center; margin-bottom: 28px; }
+  .exec-gauge-block { text-align: center; background: #f6f9fc; border-radius: 12px; padding: 22px 18px; }
+  .exec-gauge-rating { font-size: 1.2rem; font-weight: 700; margin-top: 6px; }
+  .exec-headline { font-size: 1.4rem; font-weight: 800; color: #0a1628; margin-bottom: 12px; line-height: 1.3; }
+  .exec-body { font-size: 0.93rem; color: #3d5166; line-height: 1.7; margin-bottom: 14px; }
+  .trend-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 18px; border-radius: 999px; font-weight: 700; font-size: 0.95rem;
+  }
+
+  .comp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 28px; }
+
+  .trend-box { background: #f6f9fc; border-radius: 10px; padding: 22px; margin-bottom: 28px; page-break-inside: avoid; break-inside: avoid; }
+
+  .page-footer {
+    margin-top: 44px; padding-top: 12px; border-top: 1px solid #e2eaf2;
+    display: flex; justify-content: space-between; font-size: 0.7rem; color: #9aacba;
+  }
+
+  .print-btn-bar { position: fixed; top: 20px; right: 20px; z-index: 999; display: flex; gap: 10px; }
+  .print-btn {
+    background: #0a1628; color: #fff; border: none; border-radius: 6px;
+    padding: 10px 22px; font-size: 0.88rem; font-weight: 600; cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+  }
+  .print-btn:hover { background: #00b4d8; }
+
+  @media print {
+    .print-btn-bar { display: none !important; }
+    .cover { min-height: unset; height: 297mm; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+
+<div class="print-btn-bar">
+  <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+  <button class="print-btn" style="background:#334155" onclick="window.close()">✕ Close</button>
+</div>
+
+<!-- COVER PAGE -->
+<div class="cover">
+  <div class="cover-logo-bar">
+    <div class="cover-logo-shield">🛡</div>
+    <span class="cover-logo-text">SecOps Dashboard</span>
+  </div>
+  <div class="cover-eyebrow">Executive Security Report</div>
+  <div class="cover-title">Security Posture<br>Executive Report</div>
+  <div class="cover-subtitle">Comprehensive cybersecurity posture assessment and risk analysis</div>
+  <div class="cover-meta-grid">
+    <div><div class="cover-meta-label">Report Date</div><div class="cover-meta-value">${reportDate}</div></div>
+    <div><div class="cover-meta-label">Prepared By</div><div class="cover-meta-value">${tenantName}</div></div>
+    <div><div class="cover-meta-label">Overall Score</div><div class="cover-meta-value" style="color:#00b4d8">${score}/100 — ${rating}</div></div>
+    <div><div class="cover-meta-label">30-Day Trend</div><div class="cover-meta-value" style="color:${trendColor}">${trendArrow} ${trendLabel}</div></div>
+  </div>
+  <div class="cover-classification">Confidential</div>
+</div>
+
+<!-- CONTENT -->
+<div class="page">
+
+  <h2 class="section-heading">1. Executive Summary</h2>
+  <div class="exec-grid">
+    <div class="exec-gauge-block">
+      ${buildGaugeSvg(score)}
+      <div class="exec-gauge-rating" style="color:${scoreColor}">${rating}</div>
+      <div style="font-size:0.75rem;color:#6b7c93;margin-top:3px">Security Posture Score</div>
+    </div>
+    <div>
+      <div class="exec-headline">${buildHeadline(score, rating, delta)}</div>
+      <p class="exec-body">${buildExecSummaryText(score, rating, vulnScore, awarScore, mdrScore, delta)}</p>
+      <div class="trend-badge" style="background:${hexToRgba(trendColor, 0.1)};color:${trendColor}">
+        <span style="font-size:1.1em">${trendArrow || '→'}</span>
+        <span>${trendLabel}${delta !== null ? ` (${delta > 0 ? '+' : ''}${delta} pts vs. prior month)` : ''}</span>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="section-heading">2. Security Posture Breakdown</h2>
+  <div class="comp-grid">
+    ${buildCompCard('Vulnerabilities', '40%', vulnScore, 'Based on critical, high, medium and low findings')}
+    ${buildCompCard('Security Awareness', '35%', awarScore, 'Training completion rate across all sessions')}
+    ${buildCompCard('Incident Response', '25%', mdrScore, 'Ticket resolution rate and response speed')}
+  </div>
+
+  <h2 class="section-heading">3. 6-Month Score Trend</h2>
+  <div class="trend-box">
+    ${buildTrendSvg(hist)}
+  </div>
+
+  <h2 class="section-heading">4. Cyber Insurability Assessment</h2>
+  ${buildInsurabilitySection(score, insScore, grcScore, hist)}
+
+  <h2 class="section-heading">5. GRC Compliance Summary</h2>
+  ${buildGrcSection(grcData)}
+
+  <h2 class="section-heading">6. Prioritised Recommendations</h2>
+  ${buildRecommendationsSection(scoreData.recommendations)}
+
+  <h2 class="section-heading">7. Appendix — Data Sources &amp; Methodology</h2>
+  ${buildAppendix(scoreData, reportDate)}
+
+  <div class="page-footer">
+    <span>Security Posture Executive Report — ${reportDate}</span>
+    <span>CONFIDENTIAL — Internal Use Only</span>
+    <span>Generated by SecOps Dashboard &copy; ${reportYear}</span>
+  </div>
+</div>
+</body>
+</html>`;
+
+    const w = window.open('', '_blank', 'width=1060,height=860,scrollbars=yes');
+    if (!w) {
+      alert('Pop-up blocked. Please allow pop-ups for this site and try again.');
+      return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
   }
 
   return {
