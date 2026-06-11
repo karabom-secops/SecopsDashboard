@@ -426,26 +426,26 @@
     if (!tbody || !_currentScan) return;
 
     const SEVERITY_ORDER = { Critical: 0, High: 1, Medium: 2, Low: 3 };
-    const findings = (_currentScan.findings || []).slice().sort((a, b) =>
-      (SEVERITY_ORDER[a.risk] ?? 4) - (SEVERITY_ORDER[b.risk] ?? 4)
+    const allFindings = _currentScan.findings || [];
+    const findings = allFindings.map((f, i) => ({ f, i })).sort((a, b) =>
+      (SEVERITY_ORDER[a.f.risk] ?? 4) - (SEVERITY_ORDER[b.f.risk] ?? 4)
     );
     let filtered = findings;
     if (_activeFilter !== 'All') {
-      filtered = filtered.filter(f => f.risk === _activeFilter);
+      filtered = filtered.filter(({ f }) => f.risk === _activeFilter);
     }
     if (_statusFilter !== 'All') {
-      filtered = filtered.filter(f => (f.status || 'open') === _statusFilter);
+      filtered = filtered.filter(({ f }) => (f.status || 'open') === _statusFilter);
     }
     if (_searchText) {
-      filtered = filtered.filter(f =>
+      filtered = filtered.filter(({ f }) =>
         (f.host || '').toLowerCase().includes(_searchText) ||
         (f.name || '').toLowerCase().includes(_searchText) ||
         (f.cve  || '').toLowerCase().includes(_searchText)
       );
     }
 
-    tbody.innerHTML = filtered.map(f => {
-      const origIdx     = findings.indexOf(f);
+    tbody.innerHTML = filtered.map(({ f, i: origIdx }) => {
       const s           = f.status || 'open';
       const statusLabel = STATUS_LABELS[s] || s;
       const notesHtml   = f.notes
