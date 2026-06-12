@@ -638,7 +638,22 @@
   }
 
   // ── Manager compliance report (printable popup) ─────────────────────────────
-  function _generateManagerReport(rows) {
+  async function _logoToDataUri() {
+    try {
+      var res = await fetch('img/reflex-logo.png');
+      if (!res.ok) return null;
+      var blob = await res.blob();
+      return new Promise(function (resolve) {
+        var reader = new FileReader();
+        reader.onload  = function () { resolve(reader.result); };
+        reader.onerror = function () { resolve(null); };
+        reader.readAsDataURL(blob);
+      });
+    } catch (_) { return null; }
+  }
+
+  async function _generateManagerReport(rows) {
+    var logoDataUri = await _logoToDataUri();
     // Group users below 70% by manager
     var byManager = {};
     var managerOrder = [];
@@ -743,6 +758,10 @@
       '</div>';
     }).join('');
 
+    var logoHtml = logoDataUri
+      ? '<img src="' + logoDataUri + '" alt="Reflex" style="height:52px;width:auto">'
+      : '<div style="font-size:1.3rem;font-weight:800;color:#1565C0">reflex</div>';
+
     var html = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
       '<title>Manager Training Compliance Report</title>' +
       '<style>' +
@@ -752,10 +771,13 @@
       '</head><body>' +
       '<div style="border-bottom:3px solid #1565C0;padding-bottom:1.5rem;margin-bottom:2rem">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
-          '<div>' +
-            '<div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#1565C0;margin-bottom:4px">Security Awareness Training</div>' +
-            '<h1 style="margin:0 0 6px;font-size:1.6rem;font-weight:800;color:#0d2d6b">Manager Compliance Report</h1>' +
-            '<div style="font-size:0.85rem;color:#64748b">Training completion — employees below 70% threshold</div>' +
+          '<div style="display:flex;align-items:center;gap:1.2rem">' +
+            logoHtml +
+            '<div>' +
+              '<div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#1565C0;margin-bottom:4px">Security Awareness Training</div>' +
+              '<h1 style="margin:0 0 6px;font-size:1.6rem;font-weight:800;color:#0d2d6b">Manager Compliance Report</h1>' +
+              '<div style="font-size:0.85rem;color:#64748b">Training completion — employees below 70% threshold</div>' +
+            '</div>' +
           '</div>' +
           '<div style="text-align:right;font-size:0.8rem;color:#64748b">' +
             '<div>' + esc(reportDate) + '</div>' +
