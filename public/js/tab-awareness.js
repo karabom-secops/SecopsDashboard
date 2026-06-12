@@ -628,6 +628,157 @@
         URL.revokeObjectURL(a.href);
       };
     }
+
+    // Manager Report button
+    var mgrReportBtn = document.getElementById('awarenessManagerReportBtn');
+    if (mgrReportBtn) {
+      mgrReportBtn.hidden = false;
+      mgrReportBtn.onclick = function () { _generateManagerReport(rows); };
+    }
+  }
+
+  // ── Manager compliance report (printable popup) ─────────────────────────────
+  function _generateManagerReport(rows) {
+    // Group users below 70% by manager
+    var byManager = {};
+    var managerOrder = [];
+    rows.forEach(function (r) {
+      var pct = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
+      if (pct >= 70) return;
+      // Derive manager key from the raw session data for email, fall back to display name
+      var sessions = (_data && _data.sessions) || [];
+      var managerEmail = '';
+      var managerName  = r.manager && r.manager !== '—' ? r.manager : '';
+      // Find manager email from sessions for this user
+      var userKey = r.email.toLowerCase();
+      for (var i = 0; i < sessions.length; i++) {
+        if ((sessions[i].user_email || '').toLowerCase() === userKey && sessions[i].manager_email) {
+          managerEmail = sessions[i].manager_email;
+          if (!managerName) {
+            managerName = (
+              ((sessions[i].manager_first_name || '') + ' ' + (sessions[i].manager_last_name || '')).trim()
+            ) || managerEmail;
+          }
+          break;
+        }
+      }
+      var key = managerEmail || managerName || 'Unknown Manager';
+      if (!byManager[key]) {
+        byManager[key] = { name: managerName || key, email: managerEmail, users: [], totalTeam: 0 };
+        managerOrder.push(key);
+      }
+      byManager[key].users.push({ name: r.name, email: r.email, assigned: r.assigned, completed: r.completed, pct: pct, missing: r.missing });
+    });
+
+    // Count each manager's total team size from all rows (not just below-70%)
+    rows.forEach(function (r) {
+      var sessions = (_data && _data.sessions) || [];
+      var userKey = r.email.toLowerCase();
+      var managerEmail = '';
+      var managerName  = r.manager && r.manager !== '—' ? r.manager : '';
+      for (var i = 0; i < sessions.length; i++) {
+        if ((sessions[i].user_email || '').toLowerCase() === userKey && sessions[i].manager_email) {
+          managerEmail = sessions[i].manager_email;
+          if (!managerName) {
+            managerName = (
+              ((sessions[i].manager_first_name || '') + ' ' + (sessions[i].manager_last_name || '')).trim()
+            ) || managerEmail;
+          }
+          break;
+        }
+      }
+      var key = managerEmail || managerName || 'Unknown Manager';
+      if (byManager[key]) byManager[key].totalTeam++;
+    });
+
+    if (managerOrder.length === 0) {
+      alert('All employees have met or exceeded the 70% training threshold.');
+      return;
+    }
+
+    var reportDate = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
+    var totalNonCompliant = managerOrder.reduce(function (s, k) { return s + byManager[k].users.length; }, 0);
+
+    var sectionsHtml = managerOrder.map(function (key) {
+      var g = byManager[key];
+      var teamLabel = g.totalTeam > 0 ? g.users.length + ' of ' + g.totalTeam + ' team members' : g.users.length + ' team member(s)';
+      var rowsHtml = g.users.map(function (u) {
+        var pctColor = u.pct < 50 ? '#dc2626' : '#d97706';
+        var missingList = u.missing.length > 0
+          ? u.missing.map(function (m) { return esc(m.title || m.type); }).join(', ')
+          : '—';
+        return '<tr>' +
+          '<td style="padding:8px 10px;border-bottom:1px solid #e8ecf0">' + esc(u.name) + '</td>' +
+          '<td style="padding:8px 10px;border-bottom:1px solid #e8ecf0;color:#64748b;font-size:0.82rem">' + esc(u.email) + '</td>' +
+          '<td style="padding:8px 10px;border-bottom:1px solid #e8ecf0;text-align:center">' + esc(String(u.assigned)) + '</td>' +
+          '<td style="padding:8px 10px;border-bottom:1px solid #e8ecf0;text-align:center">' + esc(String(u.completed)) + '</td>' +
+          '<td style="padding:8px 10px;border-bottom:1px solid #e8ecf0;text-align:center;font-weight:700;color:' + pctColor + '">' + esc(String(u.pct)) + '%</td>' +
+          '<td style="padding:8px 10px;border-bottom:1px solid #e8ecf0;font-size:0.8rem;color:#64748b">' + missingList + '</td>' +
+          '</tr>';
+      }).join('');
+
+      return '<div style="page-break-inside:avoid;break-inside:avoid;margin-bottom:2rem;border:1px solid #dde4ed;border-radius:8px;overflow:hidden">' +
+        '<div style="background:#1565C0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center">' +
+          '<div>' +
+            '<div style="font-size:1rem;font-weight:700">' + esc(g.name) + '</div>' +
+            (g.email ? '<div style="font-size:0.78rem;opacity:0.85;margin-top:2px">' + esc(g.email) + '</div>' : '') +
+          '</div>' +
+          '<div style="background:rgba(255,255,255,0.2);border-radius:20px;padding:4px 14px;font-size:0.85rem;font-weight:600">' +
+            esc(teamLabel) + ' below 70%' +
+          '</div>' +
+        '</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:0.88rem;font-family:Segoe UI,Arial,sans-serif">' +
+          '<thead>' +
+            '<tr style="background:#f1f5f9">' +
+              '<th style="padding:9px 10px;text-align:left;font-weight:600;color:#374151;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em">Name</th>' +
+              '<th style="padding:9px 10px;text-align:left;font-weight:600;color:#374151;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em">Email</th>' +
+              '<th style="padding:9px 10px;text-align:center;font-weight:600;color:#374151;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em">Assigned</th>' +
+              '<th style="padding:9px 10px;text-align:center;font-weight:600;color:#374151;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em">Completed</th>' +
+              '<th style="padding:9px 10px;text-align:center;font-weight:600;color:#374151;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em">%</th>' +
+              '<th style="padding:9px 10px;text-align:left;font-weight:600;color:#374151;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em">Missing Sessions</th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody>' + rowsHtml + '</tbody>' +
+        '</table>' +
+      '</div>';
+    }).join('');
+
+    var html = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+      '<title>Manager Training Compliance Report</title>' +
+      '<style>' +
+        'body{margin:0;padding:2rem;font-family:Segoe UI,Arial,sans-serif;color:#1e293b;background:#fff}' +
+        '@media print{body{padding:1rem}.no-print{display:none!important}@page{margin:1.5cm}}' +
+      '</style>' +
+      '</head><body>' +
+      '<div style="border-bottom:3px solid #1565C0;padding-bottom:1.5rem;margin-bottom:2rem">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
+          '<div>' +
+            '<div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#1565C0;margin-bottom:4px">Security Awareness Training</div>' +
+            '<h1 style="margin:0 0 6px;font-size:1.6rem;font-weight:800;color:#0d2d6b">Manager Compliance Report</h1>' +
+            '<div style="font-size:0.85rem;color:#64748b">Training completion — employees below 70% threshold</div>' +
+          '</div>' +
+          '<div style="text-align:right;font-size:0.8rem;color:#64748b">' +
+            '<div>' + esc(reportDate) + '</div>' +
+            '<div style="margin-top:4px"><span style="background:#fee2e2;color:#dc2626;padding:3px 10px;border-radius:20px;font-weight:700">' +
+              esc(String(totalNonCompliant)) + ' employee' + (totalNonCompliant !== 1 ? 's' : '') + ' below 70%' +
+            '</span></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      sectionsHtml +
+      '<div style="margin-top:2.5rem;padding-top:1rem;border-top:1px solid #e2e8f0;font-size:0.75rem;color:#94a3b8;text-align:center">' +
+        'Generated by SecopsDashboard &nbsp;·&nbsp; Confidential &nbsp;·&nbsp; ' + esc(reportDate) +
+      '</div>' +
+      '<div class="no-print" style="position:fixed;bottom:20px;right:20px;display:flex;gap:8px">' +
+        '<button onclick="window.print()" style="padding:10px 20px;background:#1565C0;color:#fff;border:none;border-radius:6px;font-size:0.9rem;cursor:pointer;font-weight:600">Print / Save as PDF</button>' +
+        '<button onclick="window.close()" style="padding:10px 20px;background:#e2e8f0;color:#374151;border:none;border-radius:6px;font-size:0.9rem;cursor:pointer">Close</button>' +
+      '</div>' +
+      '</body></html>';
+
+    var win = window.open('', '_blank', 'width=960,height=700');
+    if (!win) { alert('Pop-up blocked. Please allow pop-ups for this page.'); return; }
+    win.document.write(html);
+    win.document.close();
   }
 
 })();
