@@ -326,7 +326,8 @@ app.get('/api/auth/saml/login', async (req, res) => {
     const url = await getSamlLoginUrl();
     res.redirect(url);
   } catch (err) {
-    console.error('[saml] login redirect error:', err.message);
+    console.error('[saml] login redirect error:', err.message, err.stack);
+    console.error('[saml] env — ENTRY_POINT set:', !!process.env.SAML_ENTRY_POINT, '| CERT set:', !!(process.env.SAML_CERT || process.env.SAML_CERT_FILE), '| CALLBACK set:', !!process.env.SAML_CALLBACK_URL);
     res.status(500).send('SSO login failed. Please try again or use your local account.');
   }
 });
