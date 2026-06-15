@@ -1449,7 +1449,7 @@ app.post('/api/awareness/upload', requireAdmin, awarenessUpload.single('awarenes
     const origName = (req.file.originalname || '').toLowerCase();
     let fileText;
     if (origName.endsWith('.xlsx')) {
-      const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+      const wb = XLSX.read(req.file.buffer, { type: 'buffer', raw: false });
       const ws = wb.Sheets[wb.SheetNames[0]];
       fileText = XLSX.utils.sheet_to_csv(ws);
     } else {
