@@ -19,6 +19,7 @@ const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
 const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
+const XLSX = require('xlsx');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
 const { calculateSecureScore, generateRecommendations } = require('./lib/secure-score');
 const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils');
@@ -1445,7 +1446,15 @@ app.post('/api/awareness/upload', requireAdmin, awarenessUpload.single('awarenes
     const { tenantId, error: tenantErr } = resolveAwarenessTenant(req, 'body');
     if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
 
-    const fileText   = req.file.buffer.toString('utf8');
+    const origName = (req.file.originalname || '').toLowerCase();
+    let fileText;
+    if (origName.endsWith('.xlsx')) {
+      const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      fileText = XLSX.utils.sheet_to_csv(ws);
+    } else {
+      fileText = req.file.buffer.toString('utf8');
+    }
     const formatType = detectAwarenessFormat(fileText);
 
     await client.query('BEGIN');
