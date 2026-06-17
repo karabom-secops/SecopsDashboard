@@ -66,7 +66,7 @@ const RedteamTab = (() => {
     const el = document.getElementById('redteam-stats');
     if (!el) return;
     try {
-      const res  = await fetch(`api/redteam/stats${tenantParam('?')}`);
+      const res  = await fetch(`api/redteam/stats${tenantParam('?')}`, { credentials: 'same-origin' });
       const data = await res.json();
       el.innerHTML = `
         <div class="stat-card accent-blue">
@@ -250,7 +250,7 @@ const RedteamTab = (() => {
   async function deleteProject(id) {
     if (!confirm('Delete this engagement and all its tasks?')) return;
     try {
-      const res = await fetch(`api/redteam/projects/${id}${tenantParam('?')}`, { method: 'DELETE' });
+      const res = await fetch(`api/redteam/projects/${id}${tenantParam('?')}`, { method: 'DELETE', credentials: 'same-origin' });
       if (!res.ok) throw new Error((await res.json()).error);
       if (_selectedId === id) _selectedId = null;
       await loadAndRender();
@@ -274,7 +274,7 @@ const RedteamTab = (() => {
     if (heading) heading.textContent = proj ? `Tasks — ${proj.title}` : 'Tasks';
 
     try {
-      const res  = await fetch(`api/redteam/projects/${projectId}/tasks${tenantParam('?')}`);
+      const res  = await fetch(`api/redteam/projects/${projectId}/tasks${tenantParam('?')}`, { credentials: 'same-origin' });
       const data = await res.json();
       renderTasks(data.tasks || []);
     } catch (_) {
@@ -317,7 +317,7 @@ const RedteamTab = (() => {
   async function deleteTask(id) {
     if (!confirm('Delete this task?')) return;
     try {
-      const res = await fetch(`api/redteam/tasks/${id}${tenantParam('?')}`, { method: 'DELETE' });
+      const res = await fetch(`api/redteam/tasks/${id}${tenantParam('?')}`, { method: 'DELETE', credentials: 'same-origin' });
       if (!res.ok) throw new Error((await res.json()).error);
       await loadTasks(_selectedId);
     } catch (err) { alert('Delete failed: ' + err.message); }
@@ -361,7 +361,7 @@ const RedteamTab = (() => {
     try {
       const url    = id ? `api/redteam/projects/${id}` : 'api/redteam/projects';
       const method = id ? 'PUT' : 'POST';
-      const res    = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const res    = await fetch(url, { method, credentials: 'same-origin', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
       if (!res.ok) throw new Error((await res.json()).error);
       document.getElementById('redteam-project-modal').hidden = true;
       await loadAndRender();
@@ -412,7 +412,7 @@ const RedteamTab = (() => {
     try {
       const url    = id ? `api/redteam/tasks/${id}` : 'api/redteam/tasks';
       const method = id ? 'PUT' : 'POST';
-      const res    = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const res    = await fetch(url, { method, credentials: 'same-origin', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
       if (!res.ok) throw new Error((await res.json()).error);
       document.getElementById('redteam-task-modal').hidden = true;
       await loadTasks(_selectedId);
@@ -458,7 +458,7 @@ const RedteamTab = (() => {
     initListeners();
 
     try {
-      const res  = await fetch(`api/redteam/projects${tenantParam('?')}`);
+      const res  = await fetch(`api/redteam/projects${tenantParam('?')}`, { credentials: 'same-origin' });
       const data = await res.json();
       _projects  = data.projects || [];
     } catch (_) {
