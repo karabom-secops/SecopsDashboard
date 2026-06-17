@@ -16,6 +16,7 @@
     awareness:    document.getElementById('tab-awareness'),
     'secure-score': document.getElementById('tab-secure-score'),
     grc:          document.getElementById('tab-grc'),
+    redteam:      document.getElementById('tab-redteam'),
     admin:        document.getElementById('tab-admin'),
   };
 
@@ -76,6 +77,9 @@
     }
     if (target === 'grc' && typeof window.GrcTab !== 'undefined') {
       window.GrcTab.loadAndRender();
+    }
+    if (target === 'redteam' && typeof window.RedteamTab !== 'undefined') {
+      window.RedteamTab.loadAndRender();
     }
     if (target === 'admin' && typeof window.renderAdmin === 'function') {
       window.renderAdmin();

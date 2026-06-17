@@ -72,6 +72,10 @@
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
         GRC
       </button>
+      <button class="side-nav-item" data-tab="redteam">
+        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="12" y1="9" x2="12" y2="15"/></svg>
+        Red Team
+      </button>
       <button class="side-nav-item" data-tab="admin" id="sideAdminBtn" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Admin
@@ -526,6 +530,147 @@
     <div id="grc-container"></div>
   </section>
 
+  <!-- ── Red Team Operations Tab Panel ───────────────────────────────────── -->
+  <section id="tab-redteam" class="tab-panel" role="tabpanel" hidden>
+    <div class="section-header">
+      <h2 class="section-title">Red Team Operations</h2>
+      <p class="section-subtitle">Schedule penetration tests, track engagements &amp; assign tasks</p>
+    </div>
+
+    <!-- Stat cards -->
+    <div id="redteam-stats" class="stat-grid" style="margin-bottom:1.5rem"></div>
+
+    <!-- Calendar -->
+    <div id="redteam-cal" style="margin-bottom:1.5rem"></div>
+
+    <!-- Engagements table -->
+    <div class="section-heading-row" style="margin-bottom:.75rem">
+      <h3 style="margin:0;font-size:1rem;font-weight:600">Engagements</h3>
+      <button class="btn btn-primary btn-sm" id="rt-btn-new-project">+ New Engagement</button>
+    </div>
+    <div style="overflow-x:auto;margin-bottom:2rem">
+      <table class="data-table" style="width:100%">
+        <thead>
+          <tr>
+            <th>Title</th><th>Client</th><th>Status</th>
+            <th>Start</th><th>End</th><th>Tasks</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="redteam-projects-tbody">
+          <tr><td colspan="7" class="empty-state">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Tasks table -->
+    <div class="section-heading-row" style="margin-bottom:.75rem">
+      <h3 id="redteam-tasks-heading" style="margin:0;font-size:1rem;font-weight:600">Tasks</h3>
+      <button class="btn btn-primary btn-sm" id="rt-btn-new-task">+ New Task</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="data-table" style="width:100%">
+        <thead>
+          <tr>
+            <th>Title</th><th>Assignee</th><th>Due Date</th>
+            <th>Status</th><th>Notes</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="redteam-tasks-tbody">
+          <tr><td colspan="6" class="empty-state">Select an engagement to view tasks.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Project Modal -->
+    <div id="redteam-project-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="rt-proj-modal-title" class="modal-title">New Engagement</h3>
+          <button class="modal-close" id="rt-proj-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <form id="rt-proj-form" onsubmit="return false">
+          <input type="hidden" id="rt-proj-id">
+          <div class="form-group">
+            <label class="form-label" for="rt-proj-title">Title *</label>
+            <input class="form-input" id="rt-proj-title" type="text" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-proj-client">Client *</label>
+            <input class="form-input" id="rt-proj-client" type="text" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-proj-scope">Scope</label>
+            <textarea class="form-textarea" id="rt-proj-scope" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-proj-status">Status</label>
+            <select class="form-select" id="rt-proj-status">
+              <option value="planned">Planned</option>
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-proj-start">Start Date *</label>
+            <input class="form-input" id="rt-proj-start" type="date" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-proj-end">End Date *</label>
+            <input class="form-input" id="rt-proj-end" type="date" required>
+          </div>
+        </form>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="rt-proj-modal-close-2" onclick="document.getElementById('redteam-project-modal').hidden=true">Cancel</button>
+          <button class="btn btn-primary" id="rt-proj-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Task Modal -->
+    <div id="redteam-task-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="rt-task-modal-title" class="modal-title">New Task</h3>
+          <button class="modal-close" id="rt-task-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <form id="rt-task-form" onsubmit="return false">
+          <input type="hidden" id="rt-task-id">
+          <div class="form-group">
+            <label class="form-label" for="rt-task-title">Title *</label>
+            <input class="form-input" id="rt-task-title" type="text" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-task-assignee">Assignee</label>
+            <input class="form-input" id="rt-task-assignee" type="text">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-task-due">Due Date</label>
+            <input class="form-input" id="rt-task-due" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-task-status">Status</label>
+            <select class="form-select" id="rt-task-status">
+              <option value="todo">To Do</option>
+              <option value="in-progress">In Progress</option>
+              <option value="done">Done</option>
+              <option value="blocked">Blocked</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-task-notes">Notes</label>
+            <textarea class="form-textarea" id="rt-task-notes" rows="3"></textarea>
+          </div>
+        </form>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="rt-task-modal-close-2" onclick="document.getElementById('redteam-task-modal').hidden=true">Cancel</button>
+          <button class="btn btn-primary" id="rt-task-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
   <section id="tab-admin" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
@@ -781,6 +926,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <script src="js/tab-secure-score.js"></script>
   <script src="js/tab-grc.js"></script>
+  <script src="js/tab-redteam.js"></script>
   <script src="js/tab-admin.js"></script>
 </body>
 </html>
