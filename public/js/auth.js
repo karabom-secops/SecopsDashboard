@@ -127,9 +127,6 @@
                   window.renderVulns();
                 } else if (activePanel.id === 'tab-awareness' && typeof window.renderAwareness === 'function') {
                   window.renderAwareness();
-                } else if (activePanel.id === 'tab-redteam' && window.RedteamTab) {
-                  window.RedteamTab.loadAndRender();
-                }
               }
             });
           }

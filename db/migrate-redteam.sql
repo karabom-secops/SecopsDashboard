@@ -1,7 +1,6 @@
--- Red Team Operations tables
+-- Red Team Operations tables (global — not tenant-scoped)
 CREATE TABLE IF NOT EXISTS redteam_projects (
   id         SERIAL PRIMARY KEY,
-  tenant_id  INT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   title      VARCHAR(200) NOT NULL,
   client     VARCHAR(200) NOT NULL,
   scope      TEXT NOT NULL DEFAULT '',
@@ -13,12 +12,10 @@ CREATE TABLE IF NOT EXISTS redteam_projects (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_rt_projects_tenant ON redteam_projects(tenant_id);
 
 CREATE TABLE IF NOT EXISTS redteam_tasks (
   id         SERIAL PRIMARY KEY,
   project_id INT NOT NULL REFERENCES redteam_projects(id) ON DELETE CASCADE,
-  tenant_id  INT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   title      VARCHAR(300) NOT NULL,
   assignee   VARCHAR(200) NOT NULL DEFAULT '',
   due_date   DATE,
@@ -30,4 +27,3 @@ CREATE TABLE IF NOT EXISTS redteam_tasks (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_rt_tasks_project ON redteam_tasks(project_id);
-CREATE INDEX IF NOT EXISTS idx_rt_tasks_tenant  ON redteam_tasks(tenant_id);

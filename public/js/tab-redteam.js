@@ -11,13 +11,6 @@ const RedteamTab = (() => {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  function tenantParam(sep) {
-    if (window.currentUser && window.currentUser.role === 'superadmin' && window.globalTenantId) {
-      return `${sep}tenantId=${window.globalTenantId}`;
-    }
-    return '';
-  }
-
   function isAdmin() {
     const r = window.currentUser && window.currentUser.role;
     return r === 'admin' || r === 'superadmin';
@@ -66,7 +59,7 @@ const RedteamTab = (() => {
     const el = document.getElementById('redteam-stats');
     if (!el) return;
     try {
-      const res  = await fetch(`api/redteam/stats${tenantParam('?')}`, { credentials: 'same-origin' });
+      const res  = await fetch('api/redteam/stats', { credentials: 'same-origin' });
       const data = await res.json();
       el.innerHTML = `
         <div class="stat-card accent-blue">
@@ -250,7 +243,7 @@ const RedteamTab = (() => {
   async function deleteProject(id) {
     if (!confirm('Delete this engagement and all its tasks?')) return;
     try {
-      const res = await fetch(`api/redteam/projects/${id}${tenantParam('?')}`, { method: 'DELETE', credentials: 'same-origin' });
+      const res = await fetch(`api/redteam/projects/${id}`, { method: 'DELETE', credentials: 'same-origin' });
       if (!res.ok) throw new Error((await res.json()).error);
       if (_selectedId === id) _selectedId = null;
       await loadAndRender();
@@ -274,7 +267,7 @@ const RedteamTab = (() => {
     if (heading) heading.textContent = proj ? `Tasks — ${proj.title}` : 'Tasks';
 
     try {
-      const res  = await fetch(`api/redteam/projects/${projectId}/tasks${tenantParam('?')}`, { credentials: 'same-origin' });
+      const res  = await fetch(`api/redteam/projects/${projectId}/tasks`, { credentials: 'same-origin' });
       const data = await res.json();
       renderTasks(data.tasks || []);
     } catch (_) {
@@ -317,7 +310,7 @@ const RedteamTab = (() => {
   async function deleteTask(id) {
     if (!confirm('Delete this task?')) return;
     try {
-      const res = await fetch(`api/redteam/tasks/${id}${tenantParam('?')}`, { method: 'DELETE', credentials: 'same-origin' });
+      const res = await fetch(`api/redteam/tasks/${id}`, { method: 'DELETE', credentials: 'same-origin' });
       if (!res.ok) throw new Error((await res.json()).error);
       await loadTasks(_selectedId);
     } catch (err) { alert('Delete failed: ' + err.message); }
@@ -355,9 +348,6 @@ const RedteamTab = (() => {
       start_date: form.querySelector('#rt-proj-start').value,
       end_date:   form.querySelector('#rt-proj-end').value,
     };
-    if (window.currentUser && window.currentUser.role === 'superadmin' && window.globalTenantId) {
-      body.tenantId = window.globalTenantId;
-    }
     try {
       const url    = id ? `api/redteam/projects/${id}` : 'api/redteam/projects';
       const method = id ? 'PUT' : 'POST';
@@ -378,7 +368,7 @@ const RedteamTab = (() => {
     let task = null;
     if (editId) {
       try {
-        const res  = await fetch(`api/redteam/projects/${_selectedId}/tasks${tenantParam('?')}`);
+        const res  = await fetch(`api/redteam/projects/${_selectedId}/tasks`, { credentials: 'same-origin' });
         const data = await res.json();
         task = (data.tasks || []).find(t => t.id === editId);
       } catch (_) {}
@@ -406,9 +396,6 @@ const RedteamTab = (() => {
       status:     form.querySelector('#rt-task-status').value,
       notes:      form.querySelector('#rt-task-notes').value.trim(),
     };
-    if (window.currentUser && window.currentUser.role === 'superadmin' && window.globalTenantId) {
-      body.tenantId = window.globalTenantId;
-    }
     try {
       const url    = id ? `api/redteam/tasks/${id}` : 'api/redteam/tasks';
       const method = id ? 'PUT' : 'POST';
@@ -458,7 +445,7 @@ const RedteamTab = (() => {
     initListeners();
 
     try {
-      const res  = await fetch(`api/redteam/projects${tenantParam('?')}`, { credentials: 'same-origin' });
+      const res  = await fetch('api/redteam/projects', { credentials: 'same-origin' });
       const data = await res.json();
       _projects  = data.projects || [];
     } catch (_) {
