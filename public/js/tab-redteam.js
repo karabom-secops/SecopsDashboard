@@ -12,8 +12,8 @@ const RedteamTab = (() => {
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function tenantParam(sep) {
-    if (window.currentUser && window.currentUser.role === 'superadmin' && window._selectedTenantId) {
-      return `${sep}tenantId=${window._selectedTenantId}`;
+    if (window.currentUser && window.currentUser.role === 'superadmin' && window.globalTenantId) {
+      return `${sep}tenantId=${window.globalTenantId}`;
     }
     return '';
   }
@@ -355,8 +355,8 @@ const RedteamTab = (() => {
       start_date: form.querySelector('#rt-proj-start').value,
       end_date:   form.querySelector('#rt-proj-end').value,
     };
-    if (window.currentUser && window.currentUser.role === 'superadmin' && window._selectedTenantId) {
-      body.tenantId = window._selectedTenantId;
+    if (window.currentUser && window.currentUser.role === 'superadmin' && window.globalTenantId) {
+      body.tenantId = window.globalTenantId;
     }
     try {
       const url    = id ? `api/redteam/projects/${id}` : 'api/redteam/projects';
@@ -406,8 +406,8 @@ const RedteamTab = (() => {
       status:     form.querySelector('#rt-task-status').value,
       notes:      form.querySelector('#rt-task-notes').value.trim(),
     };
-    if (window.currentUser && window.currentUser.role === 'superadmin' && window._selectedTenantId) {
-      body.tenantId = window._selectedTenantId;
+    if (window.currentUser && window.currentUser.role === 'superadmin' && window.globalTenantId) {
+      body.tenantId = window.globalTenantId;
     }
     try {
       const url    = id ? `api/redteam/tasks/${id}` : 'api/redteam/tasks';
