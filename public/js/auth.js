@@ -36,6 +36,12 @@
       return;
     }
 
+    // Managers have their own minimal page — send them there if they land here
+    if (user.role === 'manager') {
+      location.replace(BASE + 'manager.html');
+      return;
+    }
+
     // Expose globally so other scripts can read role etc.
     window.currentUser = user;
 
@@ -141,6 +147,9 @@
       } else if (user.role === 'admin') {
         roleEl.textContent = 'Admin';
         roleEl.className   = 'header-role-badge role-admin';
+      } else if (user.role === 'manager') {
+        roleEl.textContent = 'Manager';
+        roleEl.className   = 'header-role-badge role-manager';
       } else {
         roleEl.textContent = 'Read-only';
         roleEl.className   = 'header-role-badge role-readonly';

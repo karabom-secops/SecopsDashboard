@@ -14,7 +14,7 @@ const speakeasy = require('speakeasy');
 const QRCode    = require('qrcode');
 
 const pool = require('./lib/db');
-const { requireAuth, requireAdmin, requireSuperAdmin } = require('./lib/auth-middleware');
+const { requireAuth, requireAdmin, requireSuperAdmin, requireManager } = require('./lib/auth-middleware');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
 const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
@@ -183,6 +183,9 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     req.session.tenantIds = tenantIds;
     req.session.totpEnabled = false;
 
+    if (user.role === 'manager') {
+      return res.json({ id: user.id, username: user.username, role: user.role, tenantId: user.tenant_id, tenantIds, redirect: '/manager.html' });
+    }
     return res.json({ id: user.id, username: user.username, role: user.role, tenantId: user.tenant_id, tenantIds });
   } catch (err) {
     return serverError(res, err);
@@ -400,13 +403,14 @@ app.post('/api/auth/saml/callback', async (req, res) => {
     req.session.tenantIds  = tenantIds;
     req.session.totpEnabled = false;
 
-    // Redirect to dashboard (full public path with nginx prefix)
+    // Redirect to manager page for manager role, otherwise the dashboard
+    const destination = user.role === 'manager' ? '/secops/manager.html' : '/secops/';
     req.session.save(err => {
       if (err) {
         console.error('[saml] session save error:', err.message);
         return res.status(500).send('SSO session error. Please try again.');
       }
-      res.redirect('/secops/');
+      res.redirect(destination);
     });
   } catch (err) {
     console.error('[saml] callback error:', err.message, err.stack);
@@ -692,7 +696,7 @@ app.post('/api/users', requireAdmin, async (req, res) => {
     }
 
     // Superadmin can create any role; tenant admin can only create admin/readonly.
-    const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly'] : ['admin', 'readonly'];
+    const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly', 'manager'] : ['admin', 'readonly', 'manager'];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}.` });
     }
@@ -758,7 +762,7 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
     const values  = [];
 
     if (role !== undefined) {
-      const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly'] : ['admin', 'readonly'];
+      const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly', 'manager'] : ['admin', 'readonly', 'manager'];
       if (!allowedRoles.includes(role)) {
         return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}.` });
       }

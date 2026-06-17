@@ -216,7 +216,9 @@
           ? '<span class="role-badge role-superadmin">Super Admin</span>'
           : u.role === 'admin'
             ? '<span class="role-badge role-admin">Admin</span>'
-            : '<span class="role-badge role-readonly">Read-only</span>';
+            : u.role === 'manager'
+              ? '<span class="role-badge role-manager">Manager</span>'
+              : '<span class="role-badge role-readonly">Read-only</span>';
         const ssoTag   = isSso ? ' <span class="role-badge">SSO</span>' : '';
         const tenantCell = showTenantCol
           ? `<td>${escapeHtml(u.tenant_name || '—')}</td>`
@@ -317,8 +319,8 @@
 
     const roleSelect  = document.getElementById('editUserRole');
     const allowedRoles = isSuperAdmin()
-      ? [['superadmin', 'Super Admin'], ['admin', 'Admin'], ['readonly', 'Read-only']]
-      : [['admin', 'Admin'], ['readonly', 'Read-only']];
+      ? [['superadmin', 'Super Admin'], ['admin', 'Admin'], ['manager', 'Manager'], ['readonly', 'Read-only']]
+      : [['admin', 'Admin'], ['manager', 'Manager'], ['readonly', 'Read-only']];
     roleSelect.innerHTML = allowedRoles
       .map(([val, label]) => `<option value="${val}"${currentRole === val ? ' selected' : ''}>${label}</option>`)
       .join('');

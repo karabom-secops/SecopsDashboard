@@ -115,8 +115,8 @@
         return;
       }
 
-      // Normal login (non-SA or grace-period SA)
-      location.replace('');
+      // Normal login (non-SA or grace-period SA) — managers get their own page
+      location.replace(data.redirect || '');
     } catch (_) {
       errEl.textContent = 'Network error. Please check your connection.';
       errEl.hidden = false;

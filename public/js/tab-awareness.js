@@ -803,4 +803,63 @@
     win.document.close();
   }
 
+  // Shared: fetch awareness data and build per-user completion rows (history mode)
+  async function _fetchAndBuildRows() {
+    var res = await fetch('api/awareness', { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('Could not load awareness data.');
+    _data = await res.json();
+    if (!_data || !_data.upload) throw new Error('No awareness data has been uploaded yet.');
+
+    var sessions = (_data.sessions || []).filter(function (s) {
+      return s.session_type !== 'Phishing Simulation';
+    });
+    var byUser = {};
+    sessions.forEach(function (s) {
+      var key = (s.user_email || '').toLowerCase();
+      if (!byUser[key]) {
+        byUser[key] = {
+          name:      ((s.user_first_name || '') + ' ' + (s.user_last_name || '')).trim(),
+          email:     s.user_email || '',
+          manager:   s.manager_email
+            ? ((s.manager_first_name || '') + ' ' + (s.manager_last_name || '')).trim() || s.manager_email
+            : '—',
+          managerEmail: s.manager_email || '',
+          assigned:  0,
+          completed: 0,
+          missing:   [],
+        };
+      }
+      byUser[key].assigned++;
+      if (s.status === 'Complete') {
+        byUser[key].completed++;
+      } else if (s.status === 'Not Started') {
+        byUser[key].missing.push({ type: s.session_type || '', title: s.title || '', date: s.sent_date || null });
+      }
+    });
+    return Object.values(byUser).sort(function (a, b) {
+      var ratA = a.assigned > 0 ? a.completed / a.assigned : 1;
+      var ratB = b.assigned > 0 ? b.completed / b.assigned : 1;
+      return ratA - ratB;
+    });
+  }
+
+  // Exposed: fetch awareness data and return rows — for manager.html team table
+  window.getAwarenessRows = async function getAwarenessRows() {
+    return _fetchAndBuildRows();
+  };
+
+  // Exposed: generate the printable manager report popup
+  window.generateManagerReport = async function generateManagerReport(rows) {
+    try {
+      var r = rows || (await _fetchAndBuildRows());
+      if (r.length === 0) {
+        alert('No session data available. Please ensure a history-format CSV has been uploaded.');
+        return;
+      }
+      _generateManagerReport(r);
+    } catch (err) {
+      alert(err.message || 'Failed to generate report.');
+    }
+  };
+
 })();

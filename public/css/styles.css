@@ -2206,6 +2206,7 @@ body.login-page {
 
 .role-superadmin { background: #ede9fe; color: #6d28d9; }
 .role-admin      { background: #dbeafe; color: #1d4ed8; }
+.role-manager    { background: #dcfce7; color: #15803d; }
 .role-readonly   { background: #f3f4f6; color: #6b7280; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
