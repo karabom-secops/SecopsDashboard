@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Manager Report — SecOps Dashboard</title>
+  <title>Manager Dashboard — SecOps Dashboard</title>
   <base href="/secops/" />
   <link rel="stylesheet" href="css/styles.css" />
   <style>
@@ -16,9 +16,9 @@
       padding: 0.75rem 1.5rem;
       display: flex; align-items: center; gap: 1rem;
     }
-    .mgr-topbar-logo { height: 32px; }
-    .mgr-topbar-title { font-weight: 700; font-size: 1rem; color: var(--text, #1e293b); flex: 1; }
-    .mgr-topbar-user  { font-size: 0.85rem; color: var(--muted, #64748b); }
+    .mgr-topbar-logo   { height: 32px; }
+    .mgr-topbar-title  { font-weight: 700; font-size: 1rem; color: var(--text, #1e293b); flex: 1; }
+    .mgr-topbar-user   { font-size: 0.85rem; color: var(--muted, #64748b); }
     .mgr-topbar-logout {
       font-size: 0.82rem; color: var(--muted, #64748b); text-decoration: underline;
       background: none; border: none; cursor: pointer; padding: 0;
@@ -26,27 +26,57 @@
     .mgr-topbar-logout:hover { color: var(--text, #1e293b); }
 
     /* Content */
-    .mgr-content { padding: 1.75rem 2rem; max-width: 1200px; width: 100%; margin: 0 auto; flex: 1; }
+    .mgr-content { padding: 1.75rem 2rem; max-width: 1100px; width: 100%; margin: 0 auto; flex: 1; }
 
-    /* Table card */
-    .mgr-table-card {
+    /* Welcome */
+    .mgr-welcome { margin-bottom: 1.75rem; }
+    .mgr-welcome-title { font-size: 1.35rem; font-weight: 700; color: var(--text, #1e293b); margin: 0 0 0.2rem; }
+    .mgr-welcome-sub   { font-size: 0.9rem; color: var(--muted, #64748b); margin: 0; }
+
+    /* Section heading */
+    .mgr-section { margin-bottom: 1.75rem; }
+    .mgr-section-title {
+      font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--muted, #64748b);
+      margin: 0 0 0.75rem;
+    }
+
+    /* Stat cards row */
+    .mgr-stats { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .mgr-stat  {
       background: var(--surface, #fff);
-      border-radius: 10px;
       border: 1px solid var(--border, #e2e8f0);
+      border-radius: 10px;
+      padding: 1rem 1.35rem;
+      flex: 1; min-width: 130px;
+    }
+    .mgr-stat-value { font-size: 2rem; font-weight: 800; color: var(--text, #1e293b); line-height: 1; }
+    .mgr-stat-label { font-size: 0.76rem; color: var(--muted, #64748b); margin-top: 0.3rem; }
+    .mgr-stat.green .mgr-stat-value { color: #15803d; }
+    .mgr-stat.red   .mgr-stat-value { color: #dc2626; }
+    .mgr-stat.amber .mgr-stat-value { color: #d97706; }
+    .mgr-stat.blue  .mgr-stat-value { color: #1d4ed8; }
+
+    /* Direct reports table card */
+    .mgr-card {
+      background: var(--surface, #fff);
+      border: 1px solid var(--border, #e2e8f0);
+      border-radius: 10px;
       overflow: hidden;
     }
-
-    /* Controls bar — matches the awareness tab header */
-    .mgr-table-header {
-      display: flex; align-items: center; gap: 0.75rem;
-      padding: 1rem 1.25rem;
+    .mgr-card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.85rem 1.25rem;
       border-bottom: 1px solid var(--border, #e2e8f0);
-      flex-wrap: wrap;
+      flex-wrap: wrap; gap: 0.5rem;
     }
-    .mgr-table-title { font-weight: 700; font-size: 1rem; color: var(--text, #1e293b); flex: 1; min-width: 180px; }
+    .mgr-card-title { font-weight: 700; font-size: 0.95rem; color: var(--text, #1e293b); }
 
-    /* Loading / no-data */
+    /* Loading / empty */
     .mgr-state { padding: 3rem 1.5rem; text-align: center; color: var(--muted, #64748b); font-size: 0.9rem; }
+
+    /* No-match inside table */
+    .mgr-no-match { padding: 1.5rem; text-align: center; color: var(--muted, #64748b); font-size: 0.88rem; }
   </style>
 </head>
 <body class="mgr-page">
@@ -60,53 +90,95 @@
   </div>
 
   <!-- Main content -->
-  <div class="mgr-content">
-    <div class="mgr-table-card">
+  <div class="mgr-content" id="mgrContent" hidden>
 
-      <!-- Controls header -->
-      <div class="mgr-table-header">
-        <span class="mgr-table-title">Employee Training Completion</span>
-
-        <input
-          id="mgrSearch"
-          type="search"
-          class="search-input"
-          placeholder="Search by name or email…"
-          autocomplete="off"
-          hidden
-        />
-
-        <button id="mgrExportCsvBtn"  class="btn btn-secondary btn-sm" hidden>&#8595; Export CSV</button>
-        <button id="mgrExportLowBtn"  class="btn btn-secondary btn-sm" hidden>&#8595; Export &lt;70% Users</button>
-        <button id="mgrReportBtn"     class="btn btn-secondary btn-sm" hidden>&#128203; Manager Report</button>
-      </div>
-
-      <!-- Loading state -->
-      <div class="mgr-state" id="mgrLoading">Loading awareness data…</div>
-
-      <!-- No-data state -->
-      <div class="mgr-state" id="mgrNoData" hidden></div>
-
-      <!-- Table — identical structure to awarenessUserCompletionTable -->
-      <div id="mgrTableWrap" hidden>
-        <table class="data-table" id="mgrTable" style="width:100%">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Manager</th>
-              <th class="col-num">Assigned</th>
-              <th class="col-num">Completed</th>
-              <th class="col-num">%</th>
-              <th class="col-num">Missing</th>
-            </tr>
-          </thead>
-          <tbody id="mgrTableBody"></tbody>
-        </table>
-      </div>
-
+    <!-- Welcome -->
+    <div class="mgr-welcome">
+      <p class="mgr-welcome-title">Welcome, <span id="mgrDisplayName">…</span></p>
+      <p class="mgr-welcome-sub">Here is the current Security Awareness Training status for your organisation.</p>
     </div>
+
+    <!-- Whole-team stats -->
+    <div class="mgr-section">
+      <p class="mgr-section-title">Overall Team</p>
+      <div class="mgr-stats" id="statsTeam">
+        <div class="mgr-stat blue">
+          <div class="mgr-stat-value" id="teamTotal">—</div>
+          <div class="mgr-stat-label">Total Employees</div>
+        </div>
+        <div class="mgr-stat green">
+          <div class="mgr-stat-value" id="teamCompliant">—</div>
+          <div class="mgr-stat-label">At or Above 70%</div>
+        </div>
+        <div class="mgr-stat red">
+          <div class="mgr-stat-value" id="teamNonCompliant">—</div>
+          <div class="mgr-stat-label">Below 70%</div>
+        </div>
+        <div class="mgr-stat amber">
+          <div class="mgr-stat-value" id="teamAvg">—</div>
+          <div class="mgr-stat-label">Avg Completion</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manager's own direct reports stats -->
+    <div class="mgr-section">
+      <p class="mgr-section-title">Your Direct Reports</p>
+      <div class="mgr-stats" id="statsMine">
+        <div class="mgr-stat blue">
+          <div class="mgr-stat-value" id="myTotal">—</div>
+          <div class="mgr-stat-label">Direct Reports</div>
+        </div>
+        <div class="mgr-stat green">
+          <div class="mgr-stat-value" id="myCompliant">—</div>
+          <div class="mgr-stat-label">At or Above 70%</div>
+        </div>
+        <div class="mgr-stat red">
+          <div class="mgr-stat-value" id="myNonCompliant">—</div>
+          <div class="mgr-stat-label">Below 70%</div>
+        </div>
+        <div class="mgr-stat amber">
+          <div class="mgr-stat-value" id="myAvg">—</div>
+          <div class="mgr-stat-label">Avg Completion</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Direct reports table -->
+    <div class="mgr-section">
+      <div class="mgr-card">
+        <div class="mgr-card-header">
+          <span class="mgr-card-title">Your Direct Reports — Training Detail</span>
+          <button id="mgrReportBtn" class="btn btn-secondary btn-sm">&#128203; Manager Report</button>
+        </div>
+        <div id="mgrDirectWrap">
+          <table class="data-table" style="width:100%">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th class="col-num">Assigned</th>
+                <th class="col-num">Completed</th>
+                <th class="col-num">%</th>
+                <th class="col-num">Missing</th>
+              </tr>
+            </thead>
+            <tbody id="mgrDirectBody"></tbody>
+          </table>
+          <div class="mgr-no-match" id="mgrNoMatch" hidden>
+            No direct reports found for your account in the current data.
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
+
+  <!-- Loading state (shown while fetching) -->
+  <div class="mgr-state" id="mgrLoading">Loading awareness data…</div>
+
+  <!-- Error state -->
+  <div class="mgr-state" id="mgrError" hidden></div>
 
   <script src="js/tab-awareness.js"></script>
   <script>
@@ -124,22 +196,40 @@
           .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       }
 
-      var _rows = [];
+      function calcStats(rows) {
+        var total    = rows.length;
+        var compliant = rows.filter(function (r) {
+          return r.assigned > 0 && Math.round(r.completed / r.assigned * 100) >= 70;
+        }).length;
+        var avg = total > 0
+          ? Math.round(rows.reduce(function (s, r) {
+              return s + (r.assigned > 0 ? (r.completed / r.assigned) * 100 : 0);
+            }, 0) / total)
+          : 0;
+        return { total: total, compliant: compliant, nonCompliant: total - compliant, avg: avg };
+      }
 
-      function renderTable(term) {
-        var tbody  = document.getElementById('mgrTableBody');
+      function fillStats(prefix, stats) {
+        document.getElementById(prefix + 'Total').textContent       = stats.total;
+        document.getElementById(prefix + 'Compliant').textContent   = stats.compliant;
+        document.getElementById(prefix + 'NonCompliant').textContent = stats.nonCompliant;
+        document.getElementById(prefix + 'Avg').textContent         = stats.avg + '%';
+      }
+
+      function renderDirectTable(rows) {
+        var tbody   = document.getElementById('mgrDirectBody');
+        var noMatch = document.getElementById('mgrNoMatch');
         if (!tbody) return;
 
-        var lc = (term || '').trim().toLowerCase();
-        var filtered = lc
-          ? _rows.filter(function (r) {
-              return (r.name.toLowerCase().indexOf(lc) !== -1) ||
-                     (r.email.toLowerCase().indexOf(lc) !== -1);
-            })
-          : _rows;
+        if (rows.length === 0) {
+          tbody.innerHTML = '';
+          noMatch.hidden  = false;
+          return;
+        }
+        noMatch.hidden = true;
 
         var html = '';
-        filtered.forEach(function (r, i) {
+        rows.forEach(function (r, i) {
           var pct      = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
           var pctClass = pct >= 80 ? 'accent-green' : pct >= 50 ? 'accent-amber' : 'accent-red';
           var detailId  = 'mgr-detail-' + i;
@@ -148,7 +238,6 @@
           html += '<tr>' +
             '<td>' + esc(r.name) + '</td>' +
             '<td><small>' + esc(r.email) + '</small></td>' +
-            '<td>' + esc(r.manager) + '</td>' +
             '<td class="col-num">' + esc(String(r.assigned)) + '</td>' +
             '<td class="col-num">' + esc(String(r.completed)) + '</td>' +
             '<td class="col-num"><strong class="' + esc(pctClass) + '">' + esc(String(pct)) + '%</strong></td>' +
@@ -172,9 +261,8 @@
               return '<li>' + typeTag + ' ' + esc(m.title) +
                 (dateStr ? ' <span class="muted">(' + esc(dateStr) + ')</span>' : '') + '</li>';
             }).join('');
-
             html += '<tr id="' + esc(detailId) + '" class="awareness-missing-detail" hidden>' +
-              '<td colspan="7" style="padding:0.5rem 1rem 0.75rem 2rem;background:var(--surface-alt,#f5f6f8)">' +
+              '<td colspan="6" style="padding:0.5rem 1rem 0.75rem 2rem;background:var(--surface-alt,#f5f6f8)">' +
               '<ul class="awareness-missing-list">' + items + '</ul>' +
               '</td></tr>';
           }
@@ -182,7 +270,6 @@
 
         tbody.innerHTML = html;
 
-        // Expand/collapse missing rows
         tbody.addEventListener('click', function (e) {
           var btn = e.target.closest('.awareness-missing-toggle');
           if (!btn) return;
@@ -208,7 +295,8 @@
           return;
         }
 
-        document.getElementById('mgrUsername').textContent = user.username;
+        document.getElementById('mgrUsername').textContent    = user.username;
+        document.getElementById('mgrDisplayName').textContent = user.username;
 
         // Logout
         document.getElementById('mgrLogoutBtn').addEventListener('click', async function () {
@@ -216,83 +304,43 @@
           location.replace(BASE + 'login.html');
         });
 
-        // Load data
-        var rows;
+        // Load awareness rows
+        var allRows;
         try {
-          rows = await window.getAwarenessRows();
+          allRows = await window.getAwarenessRows();
         } catch (err) {
           document.getElementById('mgrLoading').hidden = true;
-          var nd = document.getElementById('mgrNoData');
-          nd.textContent = err.message || 'Could not load awareness data.';
-          nd.hidden = false;
+          var errEl = document.getElementById('mgrError');
+          errEl.textContent = err.message || 'Could not load awareness data.';
+          errEl.hidden = false;
           return;
         }
 
-        _rows = rows;
-        document.getElementById('mgrLoading').hidden  = true;
-        document.getElementById('mgrTableWrap').hidden = false;
-
-        // Show controls
-        document.getElementById('mgrSearch').hidden     = false;
-        document.getElementById('mgrExportCsvBtn').hidden = false;
-        document.getElementById('mgrExportLowBtn').hidden = false;
-        document.getElementById('mgrReportBtn').hidden    = false;
-
-        renderTable('');
-
-        // Live search
-        var searchEl = document.getElementById('mgrSearch');
-        searchEl.addEventListener('input', function () {
-          renderTable(searchEl.value);
+        // Filter direct reports by matching manager_email to this user's username (email)
+        var myEmail    = (user.username || '').toLowerCase();
+        var myRows     = allRows.filter(function (r) {
+          return (r.managerEmail || '').toLowerCase() === myEmail;
         });
 
-        // Export CSV
-        document.getElementById('mgrExportCsvBtn').addEventListener('click', function () {
-          var csvRows = [['Name', 'Email', 'Manager', 'Assigned', 'Completed', '%']];
-          _rows.forEach(function (r) {
-            var pct = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
-            csvRows.push([r.name, r.email, r.manager, r.assigned, r.completed, pct + '%']);
-          });
-          var csv = csvRows.map(function (row) {
-            return row.map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(',');
-          }).join('\n');
-          var blob = new Blob([csv], { type: 'text/csv' });
-          var a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = 'awareness-completion.csv';
-          a.click();
-        });
+        // Render stats
+        fillStats('team', calcStats(allRows));
+        fillStats('my',   calcStats(myRows));
 
-        // Export <70%
-        document.getElementById('mgrExportLowBtn').addEventListener('click', function () {
-          var lowRows = _rows.filter(function (r) {
-            return r.assigned > 0 && Math.round(r.completed / r.assigned * 100) < 70;
-          });
-          var csvRows = [['Name', 'Email', 'Manager', 'Assigned', 'Completed', '%', 'Missing Sessions']];
-          lowRows.forEach(function (r) {
-            var pct     = Math.round(r.completed / r.assigned * 100);
-            var missing = r.missing.map(function (m) { return m.title || m.type; }).join('; ');
-            csvRows.push([r.name, r.email, r.manager, r.assigned, r.completed, pct + '%', missing]);
-          });
-          var csv = csvRows.map(function (row) {
-            return row.map(function (v) { return '"' + String(v ?? '').replace(/"/g, '""') + '"'; }).join(',');
-          }).join('\r\n');
-          var blob = new Blob([csv], { type: 'text/csv' });
-          var a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = 'awareness-below-70pct.csv';
-          a.click();
-          URL.revokeObjectURL(a.href);
-        });
+        // Render direct reports table
+        renderDirectTable(myRows);
 
-        // Manager Report popup
+        // Manager Report button — opens printable popup for all rows
         var reportBtn = document.getElementById('mgrReportBtn');
         reportBtn.addEventListener('click', function () {
           reportBtn.disabled = true;
-          window.generateManagerReport(_rows).finally(function () {
+          window.generateManagerReport(allRows).finally(function () {
             reportBtn.disabled = false;
           });
         });
+
+        // Show content
+        document.getElementById('mgrLoading').hidden = true;
+        document.getElementById('mgrContent').hidden = false;
       }
 
       if (document.readyState === 'loading') {
