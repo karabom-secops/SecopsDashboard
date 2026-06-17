@@ -622,7 +622,7 @@ app.delete('/api/tenants/:id', requireSuperAdmin, async (req, res) => {
 // superadmin: full CRUD across all tenants.
 // tenant admin: CRUD within their own tenant only (no superadmin role allowed).
 
-const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$|^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 app.get('/api/users', requireAdmin, async (req, res) => {
   try {
@@ -689,7 +689,7 @@ app.post('/api/users', requireAdmin, async (req, res) => {
     }
 
     if (!USERNAME_RE.test(username)) {
-      return res.status(400).json({ error: 'Username must be 3–30 alphanumeric characters (underscores allowed).' });
+      return res.status(400).json({ error: 'Username must be 3–30 alphanumeric characters (underscores allowed), or a valid email address.' });
     }
     if (password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters.' });
