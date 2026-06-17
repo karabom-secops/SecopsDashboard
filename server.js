@@ -2020,6 +2020,186 @@ app.post('/api/grc/assessment', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Red Team Operations routes ─────────────────────────────────────────────
+
+function resolveRedteamTenant(req, paramSource) {
+  if (req.session.role === 'superadmin') {
+    const raw = paramSource === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+/** GET /api/redteam/stats */
+app.get('/api/redteam/stats', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRedteamTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const today   = new Date().toISOString().slice(0, 10);
+    const weekEnd = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+
+    const [activeRes, upcomingRes, tasksDueRes, rateRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*) FROM redteam_projects WHERE tenant_id=$1 AND status='active'`, [tenantId]),
+      pool.query(`SELECT COUNT(*) FROM redteam_projects WHERE tenant_id=$1 AND status='planned' AND start_date>$2`, [tenantId, today]),
+      pool.query(`SELECT COUNT(*) FROM redteam_tasks WHERE tenant_id=$1 AND status!='done' AND due_date BETWEEN $2 AND $3`, [tenantId, today, weekEnd]),
+      pool.query(`SELECT COUNT(*) FILTER (WHERE status='done') AS done, COUNT(*) AS total FROM redteam_tasks WHERE tenant_id=$1`, [tenantId]),
+    ]);
+
+    const done  = parseInt(rateRes.rows[0].done,  10) || 0;
+    const total = parseInt(rateRes.rows[0].total, 10) || 0;
+    res.json({
+      activeEngagements: parseInt(activeRes.rows[0].count,   10) || 0,
+      upcomingPentests:  parseInt(upcomingRes.rows[0].count, 10) || 0,
+      tasksDueThisWeek:  parseInt(tasksDueRes.rows[0].count, 10) || 0,
+      completionRate:    total > 0 ? Math.round((done / total) * 100) : 0,
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/redteam/projects */
+app.get('/api/redteam/projects', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRedteamTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      `SELECT p.*,
+              COUNT(t.id)                                 AS task_count,
+              COUNT(t.id) FILTER (WHERE t.status='done') AS tasks_done
+       FROM redteam_projects p
+       LEFT JOIN redteam_tasks t ON t.project_id = p.id
+       WHERE p.tenant_id=$1
+       GROUP BY p.id
+       ORDER BY p.start_date DESC`,
+      [tenantId]
+    );
+    res.json({ projects: result.rows });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/redteam/projects */
+app.post('/api/redteam/projects', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRedteamTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { title, client, scope, status, start_date, end_date } = req.body;
+    if (!title || !client || !start_date || !end_date)
+      return res.status(400).json({ error: 'title, client, start_date and end_date are required.' });
+
+    const result = await pool.query(
+      `INSERT INTO redteam_projects (tenant_id, title, client, scope, status, start_date, end_date, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [tenantId, title, client, scope || '', status || 'planned', start_date, end_date, req.session.userId]
+    );
+    res.json({ project: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PUT /api/redteam/projects/:id */
+app.put('/api/redteam/projects/:id', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRedteamTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { title, client, scope, status, start_date, end_date } = req.body;
+    const result = await pool.query(
+      `UPDATE redteam_projects
+       SET title=$1, client=$2, scope=$3, status=$4, start_date=$5, end_date=$6, updated_at=NOW()
+       WHERE id=$7 AND tenant_id=$8 RETURNING *`,
+      [title, client, scope || '', status, start_date, end_date, req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Project not found.' });
+    res.json({ project: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/redteam/projects/:id */
+app.delete('/api/redteam/projects/:id', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRedteamTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      'DELETE FROM redteam_projects WHERE id=$1 AND tenant_id=$2 RETURNING id',
+      [req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Project not found.' });
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/redteam/projects/:id/tasks */
+app.get('/api/redteam/projects/:id/tasks', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRedteamTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      'SELECT * FROM redteam_tasks WHERE project_id=$1 AND tenant_id=$2 ORDER BY due_date ASC NULLS LAST, id ASC',
+      [req.params.id, tenantId]
+    );
+    res.json({ tasks: result.rows });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/redteam/tasks */
+app.post('/api/redteam/tasks', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRedteamTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { project_id, title, assignee, due_date, status, notes } = req.body;
+    if (!project_id || !title)
+      return res.status(400).json({ error: 'project_id and title are required.' });
+
+    const result = await pool.query(
+      `INSERT INTO redteam_tasks (project_id, tenant_id, title, assignee, due_date, status, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [project_id, tenantId, title, assignee || '', due_date || null, status || 'todo', notes || '', req.session.userId]
+    );
+    res.json({ task: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PUT /api/redteam/tasks/:id */
+app.put('/api/redteam/tasks/:id', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRedteamTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { title, assignee, due_date, status, notes } = req.body;
+    const result = await pool.query(
+      `UPDATE redteam_tasks
+       SET title=$1, assignee=$2, due_date=$3, status=$4, notes=$5, updated_at=NOW()
+       WHERE id=$6 AND tenant_id=$7 RETURNING *`,
+      [title, assignee || '', due_date || null, status, notes || '', req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Task not found.' });
+    res.json({ task: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/redteam/tasks/:id */
+app.delete('/api/redteam/tasks/:id', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRedteamTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      'DELETE FROM redteam_tasks WHERE id=$1 AND tenant_id=$2 RETURNING id',
+      [req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Task not found.' });
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
 // ── Secure Score routes ────────────────────────────────────────────────────
 
 /**
