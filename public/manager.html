@@ -333,7 +333,7 @@
         var reportBtn = document.getElementById('mgrReportBtn');
         reportBtn.addEventListener('click', function () {
           reportBtn.disabled = true;
-          window.generateManagerReport(allRows).finally(function () {
+          window.generateManagerReport(myRows).finally(function () {
             reportBtn.disabled = false;
           });
         });
