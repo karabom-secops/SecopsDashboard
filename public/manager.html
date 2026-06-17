@@ -7,114 +7,46 @@
   <base href="/secops/" />
   <link rel="stylesheet" href="css/styles.css" />
   <style>
-    /* ── Layout ── */
     .mgr-page { min-height: 100vh; background: var(--bg, #f0f4f8); display: flex; flex-direction: column; }
 
-    /* ── Top bar ── */
+    /* Top bar */
     .mgr-topbar {
       background: var(--surface, #fff);
       border-bottom: 1px solid var(--border, #e2e8f0);
       padding: 0.75rem 1.5rem;
-      display: flex;
-      align-items: center;
-      gap: 1rem;
+      display: flex; align-items: center; gap: 1rem;
     }
     .mgr-topbar-logo { height: 32px; }
     .mgr-topbar-title { font-weight: 700; font-size: 1rem; color: var(--text, #1e293b); flex: 1; }
-    .mgr-topbar-user { font-size: 0.85rem; color: var(--muted, #64748b); }
+    .mgr-topbar-user  { font-size: 0.85rem; color: var(--muted, #64748b); }
     .mgr-topbar-logout {
       font-size: 0.82rem; color: var(--muted, #64748b); text-decoration: underline;
       background: none; border: none; cursor: pointer; padding: 0;
     }
     .mgr-topbar-logout:hover { color: var(--text, #1e293b); }
 
-    /* ── Content ── */
-    .mgr-content { padding: 1.75rem 2rem; max-width: 1100px; width: 100%; margin: 0 auto; flex: 1; }
+    /* Content */
+    .mgr-content { padding: 1.75rem 2rem; max-width: 1200px; width: 100%; margin: 0 auto; flex: 1; }
 
-    /* ── Stat summary strip ── */
-    .mgr-stats { display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
-    .mgr-stat {
-      background: var(--surface, #fff);
-      border-radius: 10px;
-      border: 1px solid var(--border, #e2e8f0);
-      padding: 0.9rem 1.25rem;
-      min-width: 140px;
-      flex: 1;
-    }
-    .mgr-stat-value { font-size: 1.6rem; font-weight: 800; color: var(--text, #1e293b); line-height: 1; }
-    .mgr-stat-label { font-size: 0.75rem; color: var(--muted, #64748b); margin-top: 0.25rem; }
-    .mgr-stat.green .mgr-stat-value { color: #15803d; }
-    .mgr-stat.red   .mgr-stat-value { color: #dc2626; }
-    .mgr-stat.amber .mgr-stat-value { color: #d97706; }
-
-    /* ── Controls bar ── */
-    .mgr-controls {
-      display: flex; align-items: center; gap: 0.75rem;
-      margin-bottom: 1rem; flex-wrap: wrap;
-    }
-    .mgr-search {
-      flex: 1; min-width: 220px; max-width: 380px;
-      padding: 0.55rem 0.9rem;
-      border: 1px solid var(--border, #e2e8f0);
-      border-radius: 8px;
-      font-size: 0.9rem;
-      background: var(--surface, #fff);
-      color: var(--text, #1e293b);
-      outline: none;
-    }
-    .mgr-search:focus { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,0.12); }
-    .mgr-filter-btns { display: flex; gap: 0.4rem; }
-    .mgr-filter-btn {
-      padding: 0.45rem 0.9rem; border-radius: 6px; font-size: 0.82rem; font-weight: 600;
-      border: 1px solid var(--border, #e2e8f0); background: var(--surface, #fff);
-      color: var(--muted, #64748b); cursor: pointer; transition: all 0.12s;
-    }
-    .mgr-filter-btn:hover, .mgr-filter-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
-    .mgr-filter-btn.danger.active { background: #dc2626; border-color: #dc2626; }
-    .btn-report {
-      margin-left: auto;
-      padding: 0.55rem 1.2rem;
-      background: #1565C0; color: #fff; border: none; border-radius: 8px;
-      font-size: 0.88rem; font-weight: 600; cursor: pointer; white-space: nowrap;
-    }
-    .btn-report:hover { background: #0d47a1; }
-    .btn-report:disabled { background: #90a4ae; cursor: not-allowed; }
-
-    /* ── Table ── */
-    .mgr-table-wrap {
+    /* Table card */
+    .mgr-table-card {
       background: var(--surface, #fff);
       border-radius: 10px;
       border: 1px solid var(--border, #e2e8f0);
       overflow: hidden;
     }
-    .mgr-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    .mgr-table th {
-      padding: 0.65rem 1rem; text-align: left; font-size: 0.75rem; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.04em;
-      color: var(--muted, #64748b); background: var(--surface-alt, #f8fafc);
+
+    /* Controls bar — matches the awareness tab header */
+    .mgr-table-header {
+      display: flex; align-items: center; gap: 0.75rem;
+      padding: 1rem 1.25rem;
       border-bottom: 1px solid var(--border, #e2e8f0);
+      flex-wrap: wrap;
     }
-    .mgr-table th.col-num { text-align: center; }
-    .mgr-table td { padding: 0.65rem 1rem; border-bottom: 1px solid var(--border, #e2e8f0); vertical-align: middle; }
-    .mgr-table td.col-num { text-align: center; }
-    .mgr-table tbody tr:last-child td { border-bottom: none; }
-    .mgr-table tbody tr:hover { background: var(--surface-alt, #f8fafc); }
-    .mgr-pct-badge {
-      display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px;
-      font-size: 0.78rem; font-weight: 700; min-width: 44px; text-align: center;
-    }
-    .pct-green { background: #dcfce7; color: #15803d; }
-    .pct-amber { background: #fef9c3; color: #92400e; }
-    .pct-red   { background: #fee2e2; color: #dc2626; }
-    .mgr-empty { padding: 3rem 1rem; text-align: center; color: var(--muted, #64748b); font-size: 0.9rem; }
-    .mgr-loading { padding: 2rem 1rem; text-align: center; color: var(--muted, #64748b); }
-    .mgr-no-data {
-      background: var(--surface, #fff); border-radius: 10px;
-      border: 1px solid var(--border, #e2e8f0);
-      padding: 2.5rem 2rem; text-align: center; color: var(--muted, #64748b);
-    }
-    .mgr-email { font-size: 0.78rem; color: var(--muted, #64748b); }
-    .mgr-complete-tick { color: #15803d; font-weight: 700; }
+    .mgr-table-title { font-weight: 700; font-size: 1rem; color: var(--text, #1e293b); flex: 1; min-width: 180px; }
+
+    /* Loading / no-data */
+    .mgr-state { padding: 3rem 1.5rem; text-align: center; color: var(--muted, #64748b); font-size: 0.9rem; }
   </style>
 </head>
 <body class="mgr-page">
@@ -129,72 +61,51 @@
 
   <!-- Main content -->
   <div class="mgr-content">
+    <div class="mgr-table-card">
 
-    <!-- Stat strip (hidden until data loads) -->
-    <div class="mgr-stats" id="mgrStats" hidden>
-      <div class="mgr-stat">
-        <div class="mgr-stat-value" id="statTotal">—</div>
-        <div class="mgr-stat-label">Total Team Members</div>
+      <!-- Controls header -->
+      <div class="mgr-table-header">
+        <span class="mgr-table-title">Employee Training Completion</span>
+
+        <input
+          id="mgrSearch"
+          type="search"
+          class="search-input"
+          placeholder="Search by name or email…"
+          autocomplete="off"
+          hidden
+        />
+
+        <button id="mgrExportCsvBtn"  class="btn btn-secondary btn-sm" hidden>&#8595; Export CSV</button>
+        <button id="mgrExportLowBtn"  class="btn btn-secondary btn-sm" hidden>&#8595; Export &lt;70% Users</button>
+        <button id="mgrReportBtn"     class="btn btn-secondary btn-sm" hidden>&#128203; Manager Report</button>
       </div>
-      <div class="mgr-stat green">
-        <div class="mgr-stat-value" id="statCompliant">—</div>
-        <div class="mgr-stat-label">At or Above 70%</div>
+
+      <!-- Loading state -->
+      <div class="mgr-state" id="mgrLoading">Loading awareness data…</div>
+
+      <!-- No-data state -->
+      <div class="mgr-state" id="mgrNoData" hidden></div>
+
+      <!-- Table — identical structure to awarenessUserCompletionTable -->
+      <div id="mgrTableWrap" hidden>
+        <table class="data-table" id="mgrTable" style="width:100%">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Manager</th>
+              <th class="col-num">Assigned</th>
+              <th class="col-num">Completed</th>
+              <th class="col-num">%</th>
+              <th class="col-num">Missing</th>
+            </tr>
+          </thead>
+          <tbody id="mgrTableBody"></tbody>
+        </table>
       </div>
-      <div class="mgr-stat red">
-        <div class="mgr-stat-value" id="statNonCompliant">—</div>
-        <div class="mgr-stat-label">Below 70%</div>
-      </div>
-      <div class="mgr-stat amber">
-        <div class="mgr-stat-value" id="statAvgPct">—</div>
-        <div class="mgr-stat-label">Average Completion</div>
-      </div>
-    </div>
 
-    <!-- Controls (hidden until data loads) -->
-    <div class="mgr-controls" id="mgrControls" hidden>
-      <input
-        class="mgr-search"
-        id="mgrSearch"
-        type="search"
-        placeholder="Search by name or email…"
-        autocomplete="off"
-      />
-      <div class="mgr-filter-btns">
-        <button class="mgr-filter-btn active" data-filter="all">All</button>
-        <button class="mgr-filter-btn" data-filter="compliant">≥ 70%</button>
-        <button class="mgr-filter-btn danger" data-filter="non-compliant">Below 70%</button>
-      </div>
-      <button class="btn-report" id="mgrReportBtn">Print Manager Report</button>
     </div>
-
-    <!-- Loading state -->
-    <div class="mgr-table-wrap" id="mgrLoading">
-      <div class="mgr-loading">Loading awareness data…</div>
-    </div>
-
-    <!-- No-data state (hidden by default) -->
-    <div class="mgr-no-data" id="mgrNoData" hidden>
-      No awareness data has been uploaded yet. Please contact your administrator.
-    </div>
-
-    <!-- Team table -->
-    <div class="mgr-table-wrap" id="mgrTableWrap" hidden>
-      <table class="mgr-table" id="mgrTable">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th class="col-num">Assigned</th>
-            <th class="col-num">Completed</th>
-            <th class="col-num">Completion %</th>
-            <th class="col-num">Status</th>
-          </tr>
-        </thead>
-        <tbody id="mgrTableBody"></tbody>
-      </table>
-      <div class="mgr-empty" id="mgrEmpty" hidden>No team members match your search.</div>
-    </div>
-
   </div>
 
   <script src="js/tab-awareness.js"></script>
@@ -213,68 +124,75 @@
           .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       }
 
-      var _allRows = [];
-      var _activeFilter = 'all';
+      var _rows = [];
 
-      function pctClass(pct) {
-        return pct >= 70 ? 'pct-green' : pct >= 50 ? 'pct-amber' : 'pct-red';
-      }
-
-      function renderTable(term, filter) {
+      function renderTable(term) {
         var tbody  = document.getElementById('mgrTableBody');
-        var empty  = document.getElementById('mgrEmpty');
         if (!tbody) return;
 
         var lc = (term || '').trim().toLowerCase();
-        var filtered = _allRows.filter(function (r) {
-          var pct = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
-          if (filter === 'compliant'     && pct < 70)  return false;
-          if (filter === 'non-compliant' && pct >= 70) return false;
-          if (!lc) return true;
-          return (r.name.toLowerCase().indexOf(lc) !== -1) ||
-                 (r.email.toLowerCase().indexOf(lc) !== -1);
-        });
+        var filtered = lc
+          ? _rows.filter(function (r) {
+              return (r.name.toLowerCase().indexOf(lc) !== -1) ||
+                     (r.email.toLowerCase().indexOf(lc) !== -1);
+            })
+          : _rows;
 
-        if (filtered.length === 0) {
-          tbody.innerHTML = '';
-          empty.hidden = false;
-          return;
-        }
-        empty.hidden = true;
+        var html = '';
+        filtered.forEach(function (r, i) {
+          var pct      = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
+          var pctClass = pct >= 80 ? 'accent-green' : pct >= 50 ? 'accent-amber' : 'accent-red';
+          var detailId  = 'mgr-detail-' + i;
+          var missCount = r.missing.length;
 
-        tbody.innerHTML = filtered.map(function (r) {
-          var pct    = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
-          var cls    = pctClass(pct);
-          var status = pct >= 70
-            ? '<span class="mgr-pct-badge pct-green mgr-complete-tick">&#10003; Compliant</span>'
-            : '<span class="mgr-pct-badge pct-red">Non-compliant</span>';
-          return '<tr>' +
-            '<td>' + esc(r.name || r.email) + '</td>' +
-            '<td><span class="mgr-email">' + esc(r.email) + '</span></td>' +
+          html += '<tr>' +
+            '<td>' + esc(r.name) + '</td>' +
+            '<td><small>' + esc(r.email) + '</small></td>' +
+            '<td>' + esc(r.manager) + '</td>' +
             '<td class="col-num">' + esc(String(r.assigned)) + '</td>' +
             '<td class="col-num">' + esc(String(r.completed)) + '</td>' +
-            '<td class="col-num"><span class="mgr-pct-badge ' + cls + '">' + esc(String(pct)) + '%</span></td>' +
-            '<td class="col-num">' + status + '</td>' +
+            '<td class="col-num"><strong class="' + esc(pctClass) + '">' + esc(String(pct)) + '%</strong></td>' +
+            '<td class="col-num">' +
+              (missCount > 0
+                ? '<button class="btn-link awareness-missing-toggle" data-target="' + esc(detailId) + '" aria-expanded="false">&#9654; ' + esc(String(missCount)) + '</button>'
+                : '<span class="muted">—</span>') +
+            '</td>' +
             '</tr>';
-        }).join('');
-      }
 
-      function updateStats(rows) {
-        var total   = rows.length;
-        var compli  = rows.filter(function (r) {
-          return r.assigned > 0 && Math.round(r.completed / r.assigned * 100) >= 70;
-        }).length;
-        var avgPct  = total > 0
-          ? Math.round(rows.reduce(function (s, r) {
-              return s + (r.assigned > 0 ? r.completed / r.assigned * 100 : 0);
-            }, 0) / total)
-          : 0;
+          if (missCount > 0) {
+            var items = r.missing.map(function (m) {
+              var dateStr = m.date
+                ? new Date(m.date).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })
+                : '';
+              var typeTag = m.type === 'Quiz'
+                ? '<span class="badge badge-amber">Quiz</span>'
+                : m.type === 'Phishing Remediation Session'
+                  ? '<span class="badge badge-red">Phishing Remediation</span>'
+                  : '<span class="badge badge-blue">Awareness</span>';
+              return '<li>' + typeTag + ' ' + esc(m.title) +
+                (dateStr ? ' <span class="muted">(' + esc(dateStr) + ')</span>' : '') + '</li>';
+            }).join('');
 
-        document.getElementById('statTotal').textContent        = total;
-        document.getElementById('statCompliant').textContent    = compli;
-        document.getElementById('statNonCompliant').textContent = total - compli;
-        document.getElementById('statAvgPct').textContent       = avgPct + '%';
-        document.getElementById('mgrStats').hidden = false;
+            html += '<tr id="' + esc(detailId) + '" class="awareness-missing-detail" hidden>' +
+              '<td colspan="7" style="padding:0.5rem 1rem 0.75rem 2rem;background:var(--surface-alt,#f5f6f8)">' +
+              '<ul class="awareness-missing-list">' + items + '</ul>' +
+              '</td></tr>';
+          }
+        });
+
+        tbody.innerHTML = html;
+
+        // Expand/collapse missing rows
+        tbody.addEventListener('click', function (e) {
+          var btn = e.target.closest('.awareness-missing-toggle');
+          if (!btn) return;
+          var detailRow = document.getElementById(btn.getAttribute('data-target'));
+          if (!detailRow) return;
+          var expanded = btn.getAttribute('aria-expanded') === 'true';
+          detailRow.hidden = expanded;
+          btn.setAttribute('aria-expanded', String(!expanded));
+          btn.innerHTML = (expanded ? '&#9654; ' : '&#9660; ') + esc(String(detailRow.querySelectorAll('li').length));
+        });
       }
 
       async function init() {
@@ -282,7 +200,6 @@
         try {
           res = await fetch(BASE + 'api/auth/me', { credentials: 'same-origin' });
         } catch (_) { location.replace(BASE + 'login.html'); return; }
-
         if (!res.ok) { location.replace(BASE + 'login.html'); return; }
 
         var user = await res.json();
@@ -291,8 +208,7 @@
           return;
         }
 
-        var usernameEl = document.getElementById('mgrUsername');
-        if (usernameEl) usernameEl.textContent = user.username;
+        document.getElementById('mgrUsername').textContent = user.username;
 
         // Logout
         document.getElementById('mgrLogoutBtn').addEventListener('click', async function () {
@@ -300,48 +216,81 @@
           location.replace(BASE + 'login.html');
         });
 
-        // Load awareness data
+        // Load data
         var rows;
         try {
           rows = await window.getAwarenessRows();
         } catch (err) {
           document.getElementById('mgrLoading').hidden = true;
-          document.getElementById('mgrNoData').hidden  = false;
-          document.getElementById('mgrNoData').textContent = err.message || 'Could not load awareness data.';
+          var nd = document.getElementById('mgrNoData');
+          nd.textContent = err.message || 'Could not load awareness data.';
+          nd.hidden = false;
           return;
         }
 
-        _allRows = rows;
-        document.getElementById('mgrLoading').hidden   = true;
+        _rows = rows;
+        document.getElementById('mgrLoading').hidden  = true;
         document.getElementById('mgrTableWrap').hidden = false;
-        document.getElementById('mgrControls').hidden  = false;
-        updateStats(rows);
-        renderTable('', 'all');
 
-        // Search
+        // Show controls
+        document.getElementById('mgrSearch').hidden     = false;
+        document.getElementById('mgrExportCsvBtn').hidden = false;
+        document.getElementById('mgrExportLowBtn').hidden = false;
+        document.getElementById('mgrReportBtn').hidden    = false;
+
+        renderTable('');
+
+        // Live search
         var searchEl = document.getElementById('mgrSearch');
         searchEl.addEventListener('input', function () {
-          renderTable(searchEl.value, _activeFilter);
+          renderTable(searchEl.value);
         });
 
-        // Filter buttons
-        document.querySelectorAll('.mgr-filter-btn').forEach(function (btn) {
-          btn.addEventListener('click', function () {
-            document.querySelectorAll('.mgr-filter-btn').forEach(function (b) { b.classList.remove('active'); });
-            btn.classList.add('active');
-            _activeFilter = btn.getAttribute('data-filter');
-            renderTable(searchEl.value, _activeFilter);
+        // Export CSV
+        document.getElementById('mgrExportCsvBtn').addEventListener('click', function () {
+          var csvRows = [['Name', 'Email', 'Manager', 'Assigned', 'Completed', '%']];
+          _rows.forEach(function (r) {
+            var pct = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
+            csvRows.push([r.name, r.email, r.manager, r.assigned, r.completed, pct + '%']);
           });
+          var csv = csvRows.map(function (row) {
+            return row.map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(',');
+          }).join('\n');
+          var blob = new Blob([csv], { type: 'text/csv' });
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'awareness-completion.csv';
+          a.click();
         });
 
-        // Print report button — reuse already-fetched rows
+        // Export <70%
+        document.getElementById('mgrExportLowBtn').addEventListener('click', function () {
+          var lowRows = _rows.filter(function (r) {
+            return r.assigned > 0 && Math.round(r.completed / r.assigned * 100) < 70;
+          });
+          var csvRows = [['Name', 'Email', 'Manager', 'Assigned', 'Completed', '%', 'Missing Sessions']];
+          lowRows.forEach(function (r) {
+            var pct     = Math.round(r.completed / r.assigned * 100);
+            var missing = r.missing.map(function (m) { return m.title || m.type; }).join('; ');
+            csvRows.push([r.name, r.email, r.manager, r.assigned, r.completed, pct + '%', missing]);
+          });
+          var csv = csvRows.map(function (row) {
+            return row.map(function (v) { return '"' + String(v ?? '').replace(/"/g, '""') + '"'; }).join(',');
+          }).join('\r\n');
+          var blob = new Blob([csv], { type: 'text/csv' });
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'awareness-below-70pct.csv';
+          a.click();
+          URL.revokeObjectURL(a.href);
+        });
+
+        // Manager Report popup
         var reportBtn = document.getElementById('mgrReportBtn');
         reportBtn.addEventListener('click', function () {
           reportBtn.disabled = true;
-          reportBtn.textContent = 'Generating…';
-          window.generateManagerReport(_allRows).finally(function () {
+          window.generateManagerReport(_rows).finally(function () {
             reportBtn.disabled = false;
-            reportBtn.textContent = 'Print Manager Report';
           });
         });
       }
