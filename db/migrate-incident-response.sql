@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS ir_incidents (
   status      VARCHAR(20) NOT NULL DEFAULT 'open'
                 CHECK (status IN ('open','contained','remediating','resolved','closed')),
   assigned_to VARCHAR(200) NOT NULL DEFAULT '',
+  phase       VARCHAR(30) NOT NULL DEFAULT 'identification'
+                CHECK (phase IN ('identification','containment','eradication','recovery','post-incident-analysis')),
   opened_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   closed_at   TIMESTAMPTZ,
   created_by  INT REFERENCES users(id) ON DELETE SET NULL,
@@ -18,6 +20,14 @@ CREATE TABLE IF NOT EXISTS ir_incidents (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_ir_incidents_tenant ON ir_incidents(tenant_id);
+
+-- Idempotent for databases where this migration already ran before the phase tracker was added
+ALTER TABLE ir_incidents ADD COLUMN IF NOT EXISTS phase VARCHAR(30) NOT NULL DEFAULT 'identification';
+DO $$ BEGIN
+  ALTER TABLE ir_incidents ADD CONSTRAINT ir_incidents_phase_check
+    CHECK (phase IN ('identification','containment','eradication','recovery','post-incident-analysis'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS ir_activities (
   id          SERIAL PRIMARY KEY,

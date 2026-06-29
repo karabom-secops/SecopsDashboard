@@ -2229,13 +2229,13 @@ app.post('/api/ir/incidents', requireAdmin, async (req, res) => {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
 
-    const { title, description, severity, status, assigned_to } = req.body;
+    const { title, description, severity, status, assigned_to, phase } = req.body;
     if (!title) return res.status(400).json({ error: 'title is required.' });
 
     const result = await pool.query(
-      `INSERT INTO ir_incidents (tenant_id, title, description, severity, status, assigned_to, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [tenantId, title, description || '', severity || 'medium', status || 'open', assigned_to || '', req.session.userId]
+      `INSERT INTO ir_incidents (tenant_id, title, description, severity, status, assigned_to, phase, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [tenantId, title, description || '', severity || 'medium', status || 'open', assigned_to || '', phase || 'identification', req.session.userId]
     );
     res.json({ incident: result.rows[0] });
   } catch (err) { return serverError(res, err); }
@@ -2247,15 +2247,34 @@ app.put('/api/ir/incidents/:id', requireAdmin, async (req, res) => {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
 
-    const { title, description, severity, status, assigned_to } = req.body;
+    const { title, description, severity, status, assigned_to, phase } = req.body;
     const result = await pool.query(
       `UPDATE ir_incidents
-       SET title=$1, description=$2, severity=$3, status=$4, assigned_to=$5, updated_at=NOW(),
+       SET title=$1, description=$2, severity=$3, status=$4, assigned_to=$5, phase=$6, updated_at=NOW(),
            closed_at = CASE WHEN $4 = 'closed' AND closed_at IS NULL THEN NOW()
                             WHEN $4 != 'closed' THEN NULL
                             ELSE closed_at END
-       WHERE id=$6 AND tenant_id=$7 RETURNING *`,
-      [title, description || '', severity, status, assigned_to || '', req.params.id, tenantId]
+       WHERE id=$7 AND tenant_id=$8 RETURNING *`,
+      [title, description || '', severity, status, assigned_to || '', phase || 'identification', req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
+    res.json({ incident: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PATCH /api/ir/incidents/:id/phase — quick-set the IR lifecycle phase */
+app.patch('/api/ir/incidents/:id/phase', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { phase } = req.body;
+    const VALID_PHASES = ['identification', 'containment', 'eradication', 'recovery', 'post-incident-analysis'];
+    if (!VALID_PHASES.includes(phase)) return res.status(400).json({ error: 'invalid phase.' });
+
+    const result = await pool.query(
+      `UPDATE ir_incidents SET phase=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3 RETURNING *`,
+      [phase, req.params.id, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
     res.json({ incident: result.rows[0] });

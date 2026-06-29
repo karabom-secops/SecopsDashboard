@@ -13,7 +13,10 @@ const IrTab = (() => {
 
   function fmt(dateStr) {
     if (!dateStr) return '—';
-    return new Date(dateStr).toLocaleString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return new Date(dateStr).toLocaleString('en-ZA', {
+      day: 'numeric', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
   }
 
   function isAdmin() {
@@ -39,6 +42,61 @@ const IrTab = (() => {
   const ACTIVITY_STATUS_BADGE = {
     pending: 'badge-muted', 'in-progress': 'badge-blue', done: 'badge-green',
   };
+
+  const PHASES = [
+    { value: 'identification',          label: 'Identification' },
+    { value: 'containment',             label: 'Containment' },
+    { value: 'eradication',             label: 'Eradication' },
+    { value: 'recovery',                label: 'Recovery' },
+    { value: 'post-incident-analysis',  label: 'Post Incident Analysis' },
+  ];
+  const PHASE_LABEL = Object.fromEntries(PHASES.map(p => [p.value, p.label]));
+
+  // ── Phase tracker ──────────────────────────────────────────────────────────
+
+  function renderPhaseTracker() {
+    const wrap = document.getElementById('ir-phase-tracker');
+    if (!wrap) return;
+
+    const incident = _incidents.find(i => i.id === _selectedId);
+    if (!incident) { wrap.innerHTML = ''; return; }
+
+    const currentIdx = PHASES.findIndex(p => p.value === incident.phase);
+    const canEdit = isAdmin();
+
+    wrap.innerHTML = `
+      <div class="ir-phase-tracker">
+        ${PHASES.map((p, i) => `
+          <div class="ir-phase-step ${i < currentIdx ? 'ir-phase-done' : ''} ${i === currentIdx ? 'ir-phase-current' : ''}"
+               data-phase="${p.value}" ${canEdit ? 'role="button" tabindex="0"' : ''}>
+            <div class="ir-phase-dot">${i < currentIdx ? '&#10003;' : i + 1}</div>
+            <div class="ir-phase-label">${p.label}</div>
+          </div>
+          ${i < PHASES.length - 1 ? `<div class="ir-phase-connector ${i < currentIdx ? 'ir-phase-done' : ''}"></div>` : ''}
+        `).join('')}
+      </div>`;
+
+    if (canEdit) {
+      wrap.querySelectorAll('.ir-phase-step').forEach(step => {
+        step.addEventListener('click', () => setPhase(incident.id, step.dataset.phase));
+      });
+    }
+  }
+
+  async function setPhase(incidentId, phase) {
+    const body = { phase };
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+    if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
+
+    await fetch(`api/ir/incidents/${incidentId}/phase`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+      body: JSON.stringify(body),
+    });
+
+    await loadIncidents();
+    renderIncidentsTable();
+    renderPhaseTracker();
+  }
 
   // ── Stats ──────────────────────────────────────────────────────────────────
 
@@ -77,7 +135,7 @@ const IrTab = (() => {
     if (!tbody) return;
 
     if (_incidents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No incidents logged.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No incidents logged.</td></tr>';
       return;
     }
 
@@ -86,8 +144,10 @@ const IrTab = (() => {
         <td>${esc(inc.title)}</td>
         <td><span class="badge ${SEVERITY_BADGE[inc.severity] || ''}">${esc(inc.severity)}</span></td>
         <td><span class="badge ${STATUS_BADGE[inc.status] || ''}">${esc(inc.status)}</span></td>
+        <td>${esc(PHASE_LABEL[inc.phase] || inc.phase)}</td>
         <td>${esc(inc.assigned_to || '—')}</td>
         <td>${fmt(inc.opened_at)}</td>
+        <td>${fmt(inc.closed_at)}</td>
         <td>${inc.activity_count || 0}</td>
         <td>
           <button class="btn btn-sm btn-secondary ir-view-btn" data-id="${inc.id}">View</button>
@@ -117,7 +177,7 @@ const IrTab = (() => {
   async function deleteIncident(id) {
     if (!confirm('Delete this incident and its activity log?')) return;
     await fetch(`api/ir/incidents/${id}` + tenantParam('?'), { method: 'DELETE', credentials: 'same-origin' });
-    if (_selectedId === id) _selectedId = null;
+    if (_selectedId === id) { _selectedId = null; renderPhaseTracker(); }
     await loadIncidents();
     renderIncidentsTable();
     renderStats();
@@ -132,6 +192,7 @@ const IrTab = (() => {
     const incident = _incidents.find(i => i.id === id);
     if (heading) heading.textContent = incident ? `Activity Log — ${incident.title}` : 'Activity Log';
     document.getElementById('ir-btn-new-activity').hidden = false;
+    renderPhaseTracker();
 
     const res = await fetch(`api/ir/incidents/${id}/activities` + tenantParam('?'), { credentials: 'same-origin' });
     const data = await res.json();
@@ -185,6 +246,7 @@ const IrTab = (() => {
     document.getElementById('ir-inc-description').value = incident ? incident.description : '';
     document.getElementById('ir-inc-severity').value = incident ? incident.severity : 'medium';
     document.getElementById('ir-inc-status').value = incident ? incident.status : 'open';
+    document.getElementById('ir-inc-phase').value = incident ? incident.phase : 'identification';
     document.getElementById('ir-inc-assigned').value = incident ? incident.assigned_to : '';
 
     modal.hidden = false;
@@ -197,6 +259,7 @@ const IrTab = (() => {
       description: document.getElementById('ir-inc-description').value.trim(),
       severity: document.getElementById('ir-inc-severity').value,
       status: document.getElementById('ir-inc-status').value,
+      phase: document.getElementById('ir-inc-phase').value,
       assigned_to: document.getElementById('ir-inc-assigned').value.trim(),
     };
     if (!body.title) { alert('Title is required.'); return; }

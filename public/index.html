@@ -694,15 +694,18 @@
       <table class="data-table" style="width:100%">
         <thead>
           <tr>
-            <th>Title</th><th>Severity</th><th>Status</th>
-            <th>Assigned To</th><th>Opened</th><th>Activity</th><th>Actions</th>
+            <th>Title</th><th>Severity</th><th>Status</th><th>Phase</th>
+            <th>Assigned To</th><th>Opened</th><th>Closed</th><th>Activity</th><th>Actions</th>
           </tr>
         </thead>
         <tbody id="ir-incidents-tbody">
-          <tr><td colspan="7" class="empty-state">Loading…</td></tr>
+          <tr><td colspan="9" class="empty-state">Loading…</td></tr>
         </tbody>
       </table>
     </div>
+
+    <!-- Phase tracker -->
+    <div id="ir-phase-tracker" style="margin-bottom:1.5rem"></div>
 
     <!-- Activity log table -->
     <div class="section-heading-row" style="margin-bottom:.75rem">
@@ -756,6 +759,16 @@
               <option value="remediating">Remediating</option>
               <option value="resolved">Resolved</option>
               <option value="closed">Closed</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ir-inc-phase">IR Phase</label>
+            <select class="form-select" id="ir-inc-phase">
+              <option value="identification">Identification</option>
+              <option value="containment">Containment</option>
+              <option value="eradication">Eradication</option>
+              <option value="recovery">Recovery</option>
+              <option value="post-incident-analysis">Post Incident Analysis</option>
             </select>
           </div>
           <div class="form-group">
