@@ -17,6 +17,7 @@
     'secure-score': document.getElementById('tab-secure-score'),
     grc:          document.getElementById('tab-grc'),
     redteam:      document.getElementById('tab-redteam'),
+    'incident-response': document.getElementById('tab-incident-response'),
     admin:        document.getElementById('tab-admin'),
   };
 
@@ -28,6 +29,7 @@
     metrics:    'Metrics & Trends',
     vulns:      'Vulnerabilities',
     awareness:  'Awareness',
+    'incident-response': 'Incident Response',
     admin:      'Admin',
   };
 
@@ -80,6 +82,9 @@
     }
     if (target === 'redteam' && typeof window.RedteamTab !== 'undefined') {
       window.RedteamTab.loadAndRender();
+    }
+    if (target === 'incident-response' && typeof window.IrTab !== 'undefined') {
+      window.IrTab.loadAndRender();
     }
     if (target === 'admin' && typeof window.renderAdmin === 'function') {
       window.renderAdmin();

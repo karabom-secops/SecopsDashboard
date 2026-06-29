@@ -2163,6 +2163,195 @@ app.delete('/api/redteam/tasks/:id', requireAdmin, async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
+// ── Incident Response routes (tenant-scoped) ───────────────────────────────
+
+function resolveIrTenant(req, source) {
+  if (req.session.role === 'superadmin') {
+    const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+/** GET /api/ir/stats */
+app.get('/api/ir/stats', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    const monthStartStr = monthStart.toISOString().slice(0, 10);
+
+    const [openRes, progressRes, resolvedRes, avgRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*) FROM ir_incidents WHERE tenant_id=$1 AND status='open'`, [tenantId]),
+      pool.query(`SELECT COUNT(*) FROM ir_incidents WHERE tenant_id=$1 AND status IN ('contained','remediating')`, [tenantId]),
+      pool.query(`SELECT COUNT(*) FROM ir_incidents WHERE tenant_id=$1 AND status IN ('resolved','closed') AND closed_at >= $2`, [tenantId, monthStartStr]),
+      pool.query(`SELECT AVG(EXTRACT(EPOCH FROM (closed_at - opened_at)) / 3600) AS avg_hours
+                  FROM ir_incidents WHERE tenant_id=$1 AND closed_at IS NOT NULL`, [tenantId]),
+    ]);
+
+    res.json({
+      open:           parseInt(openRes.rows[0].count, 10) || 0,
+      inProgress:     parseInt(progressRes.rows[0].count, 10) || 0,
+      resolvedThisMonth: parseInt(resolvedRes.rows[0].count, 10) || 0,
+      avgCloseHours:  avgRes.rows[0].avg_hours !== null ? Math.round(avgRes.rows[0].avg_hours) : null,
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/ir/incidents */
+app.get('/api/ir/incidents', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      `SELECT i.*, COUNT(a.id) AS activity_count
+       FROM ir_incidents i
+       LEFT JOIN ir_activities a ON a.incident_id = i.id
+       WHERE i.tenant_id = $1
+       GROUP BY i.id
+       ORDER BY i.opened_at DESC`,
+      [tenantId]
+    );
+    res.json({ incidents: result.rows });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/ir/incidents */
+app.post('/api/ir/incidents', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { title, description, severity, status, assigned_to } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required.' });
+
+    const result = await pool.query(
+      `INSERT INTO ir_incidents (tenant_id, title, description, severity, status, assigned_to, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [tenantId, title, description || '', severity || 'medium', status || 'open', assigned_to || '', req.session.userId]
+    );
+    res.json({ incident: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PUT /api/ir/incidents/:id */
+app.put('/api/ir/incidents/:id', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { title, description, severity, status, assigned_to } = req.body;
+    const result = await pool.query(
+      `UPDATE ir_incidents
+       SET title=$1, description=$2, severity=$3, status=$4, assigned_to=$5, updated_at=NOW(),
+           closed_at = CASE WHEN $4 = 'closed' AND closed_at IS NULL THEN NOW()
+                            WHEN $4 != 'closed' THEN NULL
+                            ELSE closed_at END
+       WHERE id=$6 AND tenant_id=$7 RETURNING *`,
+      [title, description || '', severity, status, assigned_to || '', req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
+    res.json({ incident: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/ir/incidents/:id */
+app.delete('/api/ir/incidents/:id', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      'DELETE FROM ir_incidents WHERE id=$1 AND tenant_id=$2 RETURNING id',
+      [req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/ir/incidents/:id/activities */
+app.get('/api/ir/incidents/:id/activities', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const incRes = await pool.query('SELECT id FROM ir_incidents WHERE id=$1 AND tenant_id=$2', [req.params.id, tenantId]);
+    if (incRes.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
+
+    const result = await pool.query(
+      'SELECT * FROM ir_activities WHERE incident_id=$1 ORDER BY logged_at ASC',
+      [req.params.id]
+    );
+    res.json({ activities: result.rows });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/ir/activities */
+app.post('/api/ir/activities', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { incidentId, entry, assignee, status } = req.body;
+    if (!incidentId || !entry) return res.status(400).json({ error: 'incidentId and entry are required.' });
+
+    const incRes = await pool.query('SELECT id FROM ir_incidents WHERE id=$1 AND tenant_id=$2', [incidentId, tenantId]);
+    if (incRes.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
+
+    const result = await pool.query(
+      `INSERT INTO ir_activities (incident_id, entry, assignee, status, logged_by)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [incidentId, entry, assignee || '', status || 'pending', req.session.userId]
+    );
+    res.json({ activity: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PUT /api/ir/activities/:id */
+app.put('/api/ir/activities/:id', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { entry, assignee, status } = req.body;
+    const result = await pool.query(
+      `UPDATE ir_activities a SET entry=$1, assignee=$2, status=$3
+       FROM ir_incidents i
+       WHERE a.id=$4 AND a.incident_id=i.id AND i.tenant_id=$5
+       RETURNING a.*`,
+      [entry, assignee || '', status, req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Activity not found.' });
+    res.json({ activity: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/ir/activities/:id */
+app.delete('/api/ir/activities/:id', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      `DELETE FROM ir_activities a
+       USING ir_incidents i
+       WHERE a.id=$1 AND a.incident_id=i.id AND i.tenant_id=$2
+       RETURNING a.id`,
+      [req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Activity not found.' });
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
 // ── Secure Score routes ────────────────────────────────────────────────────
 
 /**

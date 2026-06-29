@@ -76,6 +76,10 @@
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
         GRC
       </button>
+      <button class="side-nav-item" data-tab="incident-response">
+        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><circle cx="12" cy="16.5" r="0.5" fill="currentColor"/></svg>
+        Incident Response
+      </button>
       <button class="side-nav-item" data-tab="admin" id="sideAdminBtn" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Admin
@@ -671,6 +675,134 @@
     </div>
   </section>
 
+  <!-- ── Incident Response Tab Panel ─────────────────────────────────────── -->
+  <section id="tab-incident-response" class="tab-panel" role="tabpanel" hidden>
+    <div class="section-header">
+      <h2 class="section-title">Incident Response</h2>
+      <p class="section-subtitle">Log ongoing incidents, track remediation activity &amp; assignments</p>
+    </div>
+
+    <!-- Stat cards -->
+    <div id="ir-stats" class="stat-grid" style="margin-bottom:1.5rem"></div>
+
+    <!-- Incidents table -->
+    <div class="section-heading-row" style="margin-bottom:.75rem">
+      <h3 style="margin:0;font-size:1rem;font-weight:600">Incidents</h3>
+      <button class="btn btn-primary btn-sm" id="ir-btn-new-incident">+ New Incident</button>
+    </div>
+    <div style="overflow-x:auto;margin-bottom:2rem">
+      <table class="data-table" style="width:100%">
+        <thead>
+          <tr>
+            <th>Title</th><th>Severity</th><th>Status</th>
+            <th>Assigned To</th><th>Opened</th><th>Activity</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="ir-incidents-tbody">
+          <tr><td colspan="7" class="empty-state">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Activity log table -->
+    <div class="section-heading-row" style="margin-bottom:.75rem">
+      <h3 id="ir-activities-heading" style="margin:0;font-size:1rem;font-weight:600">Activity Log</h3>
+      <button class="btn btn-primary btn-sm" id="ir-btn-new-activity" hidden>+ Log Activity</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="data-table" style="width:100%">
+        <thead>
+          <tr>
+            <th>Entry</th><th>Assignee</th><th>Status</th><th>Logged At</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="ir-activities-tbody">
+          <tr><td colspan="5" class="empty-state">Select an incident to view its activity log.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Incident Modal -->
+    <div id="ir-incident-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="ir-inc-modal-title" class="modal-title">New Incident</h3>
+          <button class="modal-close" id="ir-inc-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <form id="ir-inc-form" onsubmit="return false">
+          <input type="hidden" id="ir-inc-id">
+          <div class="form-group">
+            <label class="form-label" for="ir-inc-title">Title *</label>
+            <input class="form-input" id="ir-inc-title" type="text" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ir-inc-description">Description</label>
+            <textarea class="form-textarea" id="ir-inc-description" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ir-inc-severity">Severity</label>
+            <select class="form-select" id="ir-inc-severity">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ir-inc-status">Status</label>
+            <select class="form-select" id="ir-inc-status">
+              <option value="open">Open</option>
+              <option value="contained">Contained</option>
+              <option value="remediating">Remediating</option>
+              <option value="resolved">Resolved</option>
+              <option value="closed">Closed</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ir-inc-assigned">Assigned To</label>
+            <input class="form-input" id="ir-inc-assigned" type="text">
+          </div>
+        </form>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="ir-inc-modal-close-2" onclick="document.getElementById('ir-incident-modal').hidden=true">Cancel</button>
+          <button class="btn btn-primary" id="ir-inc-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Activity Modal -->
+    <div id="ir-activity-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 class="modal-title">Log Activity</h3>
+          <button class="modal-close" id="ir-act-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <form id="ir-act-form" onsubmit="return false">
+          <div class="form-group">
+            <label class="form-label" for="ir-act-entry">Entry *</label>
+            <textarea class="form-textarea" id="ir-act-entry" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ir-act-assignee">Assignee</label>
+            <input class="form-input" id="ir-act-assignee" type="text">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ir-act-status">Status</label>
+            <select class="form-select" id="ir-act-status">
+              <option value="pending" selected>Pending</option>
+              <option value="in-progress">In Progress</option>
+              <option value="done">Done</option>
+            </select>
+          </div>
+        </form>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="ir-act-modal-close-2" onclick="document.getElementById('ir-activity-modal').hidden=true">Cancel</button>
+          <button class="btn btn-primary" id="ir-act-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
   <section id="tab-admin" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
@@ -928,6 +1060,7 @@
   <script src="js/tab-secure-score.js"></script>
   <script src="js/tab-grc.js"></script>
   <script src="js/tab-redteam.js"></script>
+  <script src="js/tab-incident-response.js"></script>
   <script src="js/tab-admin.js"></script>
 </body>
 </html>
