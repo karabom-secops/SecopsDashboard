@@ -454,6 +454,9 @@
   }
 
   // ── History: per-user completion table ─────────────────────────────────────
+  // Sort state for the user completion table
+  var _ucSort = { col: 'pct', dir: 'asc' };
+
   function _renderUserCompletionTable() {
     var table = document.getElementById('awarenessUserCompletionTable');
     if (!table || !_data) return;
@@ -493,59 +496,126 @@
       }
     });
 
-    var rows = Object.values(byUser).sort(function (a, b) {
-      var ratA = a.assigned > 0 ? a.completed / a.assigned : 1;
-      var ratB = b.assigned > 0 ? b.completed / b.assigned : 1;
-      return ratA - ratB; // worst (lowest %) first
-    });
+    var allRows = Object.values(byUser);
 
-    var html = '';
-    rows.forEach(function (r, i) {
-      var pct      = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
-      var pctClass = pct >= 80 ? 'accent-green' : pct >= 50 ? 'accent-amber' : 'accent-red';
-      var detailId  = 'uc-detail-' + i;
-      var missCount = r.missing.length;
+    function _sortRows(rows) {
+      var col = _ucSort.col;
+      var dir = _ucSort.dir === 'asc' ? 1 : -1;
+      return rows.slice().sort(function (a, b) {
+        var va, vb;
+        if (col === 'manager') {
+          va = (a.manager || '').toLowerCase();
+          vb = (b.manager || '').toLowerCase();
+          return dir * (va < vb ? -1 : va > vb ? 1 : 0);
+        } else if (col === 'assigned') {
+          return dir * (a.assigned - b.assigned);
+        } else if (col === 'completed') {
+          return dir * (a.completed - b.completed);
+        } else { // pct
+          var ra = a.assigned > 0 ? a.completed / a.assigned : 1;
+          var rb = b.assigned > 0 ? b.completed / b.assigned : 1;
+          return dir * (ra - rb);
+        }
+      });
+    }
 
-      // Main row
-      html += '<tr>' +
-        '<td>' + esc(r.name) + '</td>' +
-        '<td><small>' + esc(r.email) + '</small></td>' +
-        '<td>' + esc(r.manager) + '</td>' +
-        '<td class="col-num">' + esc(String(r.assigned)) + '</td>' +
-        '<td class="col-num">' + esc(String(r.completed)) + '</td>' +
-        '<td class="col-num"><strong class="' + esc(pctClass) + '">' + esc(String(pct)) + '%</strong></td>' +
-        '<td class="col-num">' +
-          (missCount > 0
-            ? '<button class="btn-link awareness-missing-toggle" data-target="' + esc(detailId) + '" aria-expanded="false">' +
-                '&#9654; ' + esc(String(missCount)) +
-              '</button>'
-            : '<span class="muted">\u2014</span>') +
-        '</td>' +
-        '</tr>';
+    function _updateSortIndicators() {
+      table.querySelectorAll('.sortable-col').forEach(function (th) {
+        var ind = th.querySelector('.sort-indicator');
+        if (!ind) return;
+        if (th.dataset.sortCol === _ucSort.col) {
+          ind.textContent = _ucSort.dir === 'asc' ? ' \u25b2' : ' \u25bc';
+        } else {
+          ind.textContent = '';
+        }
+      });
+    }
 
-      // Expandable detail row listing specific missing sessions
-      if (missCount > 0) {
-        var items = r.missing.map(function (m) {
-          var dateStr = m.date
-            ? new Date(m.date).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })
-            : '';
-          var typeTag = m.type === 'Quiz'
-            ? '<span class="badge badge-amber">Quiz</span>'
-            : m.type === 'Phishing Remediation Session'
-              ? '<span class="badge badge-red">Phishing Remediation</span>'
-              : '<span class="badge badge-blue">Awareness</span>';
-          return '<li>' + typeTag + ' ' + esc(m.title) +
-            (dateStr ? ' <span class="muted">(' + esc(dateStr) + ')</span>' : '') + '</li>';
-        }).join('');
+    function _rebuildCompletionBody(tbodyEl, sortedRows, searchEl) {
+      var html = '';
+      sortedRows.forEach(function (r, i) {
+        var pct      = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
+        var pctClass = pct >= 80 ? 'accent-green' : pct >= 50 ? 'accent-amber' : 'accent-red';
+        var detailId  = 'uc-detail-' + i;
+        var missCount = r.missing.length;
 
-        html += '<tr id="' + esc(detailId) + '" class="awareness-missing-detail" hidden>' +
-          '<td colspan="7" style="padding:0.5rem 1rem 0.75rem 2rem;background:var(--surface-alt,#f5f6f8)">' +
-          '<ul class="awareness-missing-list">' + items + '</ul>' +
-          '</td></tr>';
+        html += '<tr>' +
+          '<td>' + esc(r.name) + '</td>' +
+          '<td><small>' + esc(r.email) + '</small></td>' +
+          '<td>' + esc(r.manager) + '</td>' +
+          '<td class="col-num">' + esc(String(r.assigned)) + '</td>' +
+          '<td class="col-num">' + esc(String(r.completed)) + '</td>' +
+          '<td class="col-num"><strong class="' + esc(pctClass) + '">' + esc(String(pct)) + '%</strong></td>' +
+          '<td class="col-num">' +
+            (missCount > 0
+              ? '<button class="btn-link awareness-missing-toggle" data-target="' + esc(detailId) + '" aria-expanded="false">' +
+                  '&#9654; ' + esc(String(missCount)) +
+                '</button>'
+              : '<span class="muted">\u2014</span>') +
+          '</td>' +
+          '</tr>';
+
+        if (missCount > 0) {
+          var items = r.missing.map(function (m) {
+            var dateStr = m.date
+              ? new Date(m.date).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })
+              : '';
+            var typeTag = m.type === 'Quiz'
+              ? '<span class="badge badge-amber">Quiz</span>'
+              : m.type === 'Phishing Remediation Session'
+                ? '<span class="badge badge-red">Phishing Remediation</span>'
+                : '<span class="badge badge-blue">Awareness</span>';
+            return '<li>' + typeTag + ' ' + esc(m.title) +
+              (dateStr ? ' <span class="muted">(' + esc(dateStr) + ')</span>' : '') + '</li>';
+          }).join('');
+
+          html += '<tr id="' + esc(detailId) + '" class="awareness-missing-detail" hidden>' +
+            '<td colspan="7" style="padding:0.5rem 1rem 0.75rem 2rem;background:var(--surface-alt,#f5f6f8)">' +
+            '<ul class="awareness-missing-list">' + items + '</ul>' +
+            '</td></tr>';
+        }
+      });
+
+      tbodyEl.innerHTML = html;
+
+      // Re-apply search filter if there's an active term
+      if (searchEl && searchEl.value.trim()) {
+        var term = searchEl.value.trim().toLowerCase();
+        tbodyEl.querySelectorAll('tr').forEach(function (tr) {
+          if (tr.classList.contains('awareness-missing-detail')) return;
+          var show = tr.textContent.toLowerCase().indexOf(term) !== -1;
+          tr.hidden = !show;
+          var toggleBtn = tr.querySelector('.awareness-missing-toggle');
+          if (toggleBtn && !show) {
+            var dr = document.getElementById(toggleBtn.getAttribute('data-target'));
+            if (dr) dr.hidden = true;
+          }
+        });
       }
-    });
+    }
 
-    tbody.innerHTML = html;
+    var searchInput = document.getElementById('awarenessCompletionSearch');
+
+    // Attach sort click handlers once (guard with dataset flag)
+    if (!table.dataset.sortBound) {
+      table.dataset.sortBound = '1';
+      table.querySelectorAll('.sortable-col').forEach(function (th) {
+        th.addEventListener('click', function () {
+          var col = th.dataset.sortCol;
+          if (_ucSort.col === col) {
+            _ucSort.dir = _ucSort.dir === 'asc' ? 'desc' : 'asc';
+          } else {
+            _ucSort.col = col;
+            _ucSort.dir = 'asc';
+          }
+          _updateSortIndicators();
+          _rebuildCompletionBody(tbody, _sortRows(allRows), searchInput);
+        });
+      });
+    }
+
+    _updateSortIndicators();
+    _rebuildCompletionBody(tbody, _sortRows(allRows), searchInput);
 
     // Delegate toggle clicks on the tbody (works after innerHTML replacement)
     tbody.addEventListener('click', function (e) {
@@ -560,19 +630,15 @@
     });
 
     // Live search filter
-    var searchInput = document.getElementById('awarenessCompletionSearch');
     if (searchInput) {
-      // Clear any previous value when re-rendering
       searchInput.value = '';
       searchInput.oninput = function () {
         var term = searchInput.value.trim().toLowerCase();
-        var allRows = tbody.querySelectorAll('tr');
-        allRows.forEach(function (tr) {
-          if (tr.classList.contains('awareness-missing-detail')) return; // handled via parent
+        tbody.querySelectorAll('tr').forEach(function (tr) {
+          if (tr.classList.contains('awareness-missing-detail')) return;
           var text = tr.textContent.toLowerCase();
           var show = !term || text.indexOf(term) !== -1;
           tr.hidden = !show;
-          // Keep the associated detail row hidden when parent is hidden
           var toggleBtn = tr.querySelector('.awareness-missing-toggle');
           if (toggleBtn) {
             var detailRow = document.getElementById(toggleBtn.getAttribute('data-target'));

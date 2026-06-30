@@ -751,9 +751,9 @@ input[type="file"] {
   z-index: 2;
 }
 
-.data-table th[data-sort] { cursor: pointer; user-select: none; }
-.data-table th[data-sort]:hover { 
-  color: var(--text); 
+.data-table th[data-sort], .data-table th.sortable-col { cursor: pointer; user-select: none; }
+.data-table th[data-sort]:hover, .data-table th.sortable-col:hover {
+  color: var(--text);
   background: linear-gradient(180deg, #E0F4FF 0%, #D4ECFD 100%);
 }
 .data-table th[data-sort]::after {
