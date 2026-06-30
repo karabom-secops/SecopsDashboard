@@ -98,6 +98,29 @@
       <p class="mgr-welcome-sub">Here is the current Security Awareness Training status for your team.</p>
     </div>
 
+    <!-- Manager's own stats -->
+    <div class="mgr-section" id="sectionMyStats" hidden>
+      <p class="mgr-section-title">Your Training Status</p>
+      <div class="mgr-stats">
+        <div class="mgr-stat blue">
+          <div class="mgr-stat-value" id="selfAssigned">—</div>
+          <div class="mgr-stat-label">Assigned</div>
+        </div>
+        <div class="mgr-stat green">
+          <div class="mgr-stat-value" id="selfCompleted">—</div>
+          <div class="mgr-stat-label">Completed</div>
+        </div>
+        <div class="mgr-stat" id="selfPctCard">
+          <div class="mgr-stat-value" id="selfPct">—</div>
+          <div class="mgr-stat-label">Completion %</div>
+        </div>
+        <div class="mgr-stat" id="selfMissingCard">
+          <div class="mgr-stat-value" id="selfMissing">—</div>
+          <div class="mgr-stat-label">Missing</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Whole-team stats -->
     <div class="mgr-section">
       <p class="mgr-section-title">Overall Team</p>
@@ -321,6 +344,23 @@
         var myRows     = allRows.filter(function (r) {
           return (r.managerEmail || '').toLowerCase() === myEmail;
         });
+
+        // Find the manager's own row
+        var selfRow = allRows.find(function (r) {
+          return (r.email || '').toLowerCase() === myEmail;
+        });
+        if (selfRow) {
+          var selfPct = selfRow.assigned > 0 ? Math.round(selfRow.completed / selfRow.assigned * 100) : 0;
+          document.getElementById('selfAssigned').textContent  = selfRow.assigned;
+          document.getElementById('selfCompleted').textContent = selfRow.completed;
+          document.getElementById('selfPct').textContent       = selfPct + '%';
+          document.getElementById('selfMissing').textContent   = selfRow.missing.length;
+          var pctCard    = document.getElementById('selfPctCard');
+          var missCard   = document.getElementById('selfMissingCard');
+          pctCard.className  = 'mgr-stat ' + (selfPct >= 80 ? 'green' : selfPct >= 50 ? 'amber' : 'red');
+          missCard.className = 'mgr-stat ' + (selfRow.missing.length === 0 ? 'green' : 'red');
+          document.getElementById('sectionMyStats').hidden = false;
+        }
 
         // Render stats
         fillStats('team', calcStats(allRows));
