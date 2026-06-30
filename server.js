@@ -61,9 +61,6 @@ const PUBLIC = path.join(__dirname, 'public');
 // Trust proxy — required when behind nginx/reverse proxy for X-Forwarded-For headers
 app.set('trust proxy', 1);
 
-// Root redirect — send bare domain visitors straight to login
-app.get('/', (_req, res) => res.redirect(301, '/secops/login.html'));
-
 // Serve static assets BEFORE session/auth so the login page loads without auth.SO is secure score stuff fine
 app.use('/secops', express.static(PUBLIC));
 app.use(express.static(PUBLIC));
