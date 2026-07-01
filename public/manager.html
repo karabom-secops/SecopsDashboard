@@ -146,7 +146,7 @@
 
     <!-- Manager's own direct reports stats -->
     <div class="mgr-section">
-      <p class="mgr-section-title">Your Direct Reports</p>
+      <p class="mgr-section-title">Your Team</p>
       <div class="mgr-stats" id="statsMine">
         <div class="mgr-stat blue">
           <div class="mgr-stat-value" id="myTotal">—</div>
@@ -171,7 +171,7 @@
     <div class="mgr-section">
       <div class="mgr-card">
         <div class="mgr-card-header">
-          <span class="mgr-card-title">Your Direct Reports — Training Detail</span>
+          <span class="mgr-card-title">Your Team — Training Detail</span>
           <button id="mgrReportBtn" class="btn btn-secondary btn-sm">&#128203; Manager Report</button>
         </div>
         <div id="mgrDirectWrap">
@@ -339,11 +339,19 @@
           return;
         }
 
-        // Filter direct reports by matching manager_email to this user's username (email)
-        var myEmail    = (user.username || '').toLowerCase();
-        var myRows     = allRows.filter(function (r) {
-          return (r.managerEmail || '').toLowerCase() === myEmail;
-        });
+        // Collect all subordinates recursively (entire org tree below this manager)
+        var myEmail = (user.username || '').toLowerCase();
+        function getAllSubordinates(managerEmail) {
+          var result = [];
+          allRows.forEach(function (r) {
+            if ((r.managerEmail || '').toLowerCase() === managerEmail) {
+              result.push(r);
+              result = result.concat(getAllSubordinates((r.email || '').toLowerCase()));
+            }
+          });
+          return result;
+        }
+        var myRows = getAllSubordinates(myEmail);
 
         // Find the manager's own row
         var selfRow = allRows.find(function (r) {
