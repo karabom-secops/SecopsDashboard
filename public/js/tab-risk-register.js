@@ -159,6 +159,12 @@ const RiskRegisterTab = (() => {
     document.getElementById('rr-modal-save').hidden = readOnly;
 
     document.getElementById('risk-modal').hidden = false;
+    document.body.classList.add('modal-open');
+  }
+
+  function closeModal() {
+    document.getElementById('risk-modal').hidden = true;
+    document.body.classList.remove('modal-open');
   }
 
   async function saveRisk() {
@@ -188,7 +194,7 @@ const RiskRegisterTab = (() => {
       body: JSON.stringify(body),
     });
 
-    document.getElementById('risk-modal').hidden = true;
+    closeModal();
     await load();
     render();
   }
@@ -198,7 +204,7 @@ const RiskRegisterTab = (() => {
     if (!id) return;
     if (!confirm('Delete this risk?')) return;
     await fetch(`api/risks/${id}` + tenantParam('?'), { method: 'DELETE', credentials: 'same-origin' });
-    document.getElementById('risk-modal').hidden = true;
+    closeModal();
     await load();
     render();
   }
@@ -211,7 +217,8 @@ const RiskRegisterTab = (() => {
 
     document.getElementById('rr-new-btn').addEventListener('click', () => openModal(null));
     document.getElementById('rr-new-btn').hidden = !canWrite();
-    document.getElementById('rr-modal-close').addEventListener('click', () => document.getElementById('risk-modal').hidden = true);
+    document.getElementById('rr-modal-close').addEventListener('click', closeModal);
+    document.getElementById('rr-modal-close-2').addEventListener('click', closeModal);
     document.getElementById('rr-modal-save').addEventListener('click', saveRisk);
     document.getElementById('rr-modal-delete').addEventListener('click', deleteRisk);
     document.getElementById('rr-likelihood').addEventListener('change', updateScoreDisplay);
