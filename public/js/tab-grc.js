@@ -202,6 +202,15 @@ const GrcTab = (() => {
         // Refresh domain breakdown
         const breakdown = document.getElementById('grc-breakdown');
         if (breakdown) renderDomainBreakdown(breakdown);
+
+        // Refresh "answered/total" progress text
+        const progressEl = document.querySelector('.grc-progress-info');
+        if (progressEl) {
+          const totalQ   = Object.values(_sections).reduce((s, q) => s + q.length, 0);
+          const answered = Object.values(_answers).filter(a => a.answer).length;
+          const pctDone  = totalQ > 0 ? Math.round(answered / totalQ * 100) : 0;
+          progressEl.textContent = `${answered}/${totalQ} questions answered (${pctDone}%)`;
+        }
       });
     });
 
@@ -256,9 +265,13 @@ const GrcTab = (() => {
 
       _assessment = { grc_score: data.score, assessed_at: data.assessedAt };
 
-      // Refresh gauge and status
+      // Refresh gauge, "last assessed" date, and status
       const gaugeEl = document.getElementById('grc-gauge');
       if (gaugeEl) renderGauge(gaugeEl, data.score);
+      const dateEl = document.querySelector('.grc-score-date');
+      if (dateEl) {
+        dateEl.textContent = 'Last assessed: ' + new Date(data.assessedAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+      }
       if (statusEl) {
         statusEl.textContent = `Saved — GRC Score: ${data.score}/100`;
         statusEl.className = 'grc-save-status grc-save-ok';
