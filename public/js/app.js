@@ -11,13 +11,13 @@
   const tabPanels     = {
     operations:   document.getElementById('tab-operations'),
     metrics:      document.getElementById('tab-metrics'),
+    redteam:      document.getElementById('tab-redteam'),
     vulns:        document.getElementById('tab-vulns'),
     awareness:    document.getElementById('tab-awareness'),
-    'secure-score': document.getElementById('tab-secure-score'),
-    grc:          document.getElementById('tab-grc'),
-    redteam:      document.getElementById('tab-redteam'),
     'incident-response': document.getElementById('tab-incident-response'),
+    grc:          document.getElementById('tab-grc'),
     'risk-register': document.getElementById('tab-risk-register'),
+    'secure-score': document.getElementById('tab-secure-score'),
     admin:        document.getElementById('tab-admin'),
   };
 
@@ -31,6 +31,7 @@
     awareness:  'Awareness',
     'incident-response': 'Incident Response',
     'risk-register': 'Risk Register',
+    'secure-score': 'Secure Score',
     admin:      'Admin',
   };
 

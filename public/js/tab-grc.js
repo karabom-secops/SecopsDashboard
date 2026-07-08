@@ -168,12 +168,12 @@ const GrcTab = (() => {
 
       return `
         <div class="grc-section" id="grc-section-${si}">
-          <button class="grc-section-toggle" data-target="grc-body-${si}" aria-expanded="true">
+          <button class="grc-section-toggle" data-target="grc-body-${si}" aria-expanded="false">
             <span class="grc-section-title">${section}</span>
             <span class="grc-section-count">${questions.length} questions</span>
-            <span class="grc-toggle-arrow">▼</span>
+            <span class="grc-toggle-arrow">▶</span>
           </button>
-          <div class="grc-section-body" id="grc-body-${si}">
+          <div class="grc-section-body" id="grc-body-${si}" hidden>
             ${questionsHtml}
           </div>
         </div>`;
