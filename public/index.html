@@ -80,6 +80,10 @@
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><circle cx="12" cy="16.5" r="0.5" fill="currentColor"/></svg>
         Incident Response
       </button>
+      <button class="side-nav-item" data-tab="risk-register">
+        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Risk Register
+      </button>
       <button class="side-nav-item" data-tab="admin" id="sideAdminBtn" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Admin
@@ -816,6 +820,123 @@
     </div>
   </section>
 
+  <!-- ── Risk Register Tab Panel ──────────────────────────────────────────── -->
+  <section id="tab-risk-register" class="tab-panel" role="tabpanel" hidden>
+    <div class="section-header">
+      <h2 class="section-title">Risk Register</h2>
+      <button class="btn btn-primary" id="rr-new-btn">+ New Risk</button>
+    </div>
+
+    <div id="rr-board" class="rr-board">
+      <div class="rr-column" data-stage="identified">
+        <div class="rr-column-header"><span>Identified</span><span class="rr-column-count" id="rr-count-identified">0</span></div>
+        <div class="rr-column-body" id="rr-body-identified"></div>
+      </div>
+      <div class="rr-column" data-stage="assessing">
+        <div class="rr-column-header"><span>Assessing</span><span class="rr-column-count" id="rr-count-assessing">0</span></div>
+        <div class="rr-column-body" id="rr-body-assessing"></div>
+      </div>
+      <div class="rr-column" data-stage="mitigating">
+        <div class="rr-column-header"><span>Mitigating</span><span class="rr-column-count" id="rr-count-mitigating">0</span></div>
+        <div class="rr-column-body" id="rr-body-mitigating"></div>
+      </div>
+      <div class="rr-column" data-stage="monitoring">
+        <div class="rr-column-header"><span>Monitoring</span><span class="rr-column-count" id="rr-count-monitoring">0</span></div>
+        <div class="rr-column-body" id="rr-body-monitoring"></div>
+      </div>
+      <div class="rr-column" data-stage="closed">
+        <div class="rr-column-header"><span>Closed</span><span class="rr-column-count" id="rr-count-closed">0</span></div>
+        <div class="rr-column-body" id="rr-body-closed"></div>
+      </div>
+    </div>
+
+    <!-- Risk Modal -->
+    <div id="risk-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="rr-modal-title" class="modal-title">New Risk</h3>
+          <button class="modal-close" id="rr-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <form id="rr-form" onsubmit="return false">
+          <input type="hidden" id="rr-id">
+          <div class="form-group">
+            <label class="form-label" for="rr-title">Title *</label>
+            <input class="form-input" id="rr-title" type="text" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rr-description">Description</label>
+            <textarea class="form-textarea" id="rr-description" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rr-category">Category</label>
+            <select class="form-select" id="rr-category">
+              <option value="operational">Operational</option>
+              <option value="financial">Financial</option>
+              <option value="compliance">Compliance</option>
+              <option value="technical">Technical</option>
+              <option value="reputational">Reputational</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rr-likelihood">Likelihood (1-5) *</label>
+            <select class="form-select" id="rr-likelihood">
+              <option value="1">1 - Rare</option>
+              <option value="2">2 - Unlikely</option>
+              <option value="3" selected>3 - Possible</option>
+              <option value="4">4 - Likely</option>
+              <option value="5">5 - Almost Certain</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rr-impact">Impact (1-5) *</label>
+            <select class="form-select" id="rr-impact">
+              <option value="1">1 - Negligible</option>
+              <option value="2">2 - Minor</option>
+              <option value="3" selected>3 - Moderate</option>
+              <option value="4">4 - Major</option>
+              <option value="5">5 - Severe</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Risk Score</label>
+            <div id="rr-score-display" class="rr-score-display">9</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rr-owner">Owner</label>
+            <input class="form-input" id="rr-owner" type="text">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rr-mitigation">Mitigation Plan</label>
+            <textarea class="form-textarea" id="rr-mitigation" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rr-start">Start Date *</label>
+            <input class="form-input" id="rr-start" type="date" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rr-due">Due Date</label>
+            <input class="form-input" id="rr-due" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rr-stage">Stage</label>
+            <select class="form-select" id="rr-stage">
+              <option value="identified">Identified</option>
+              <option value="assessing">Assessing</option>
+              <option value="mitigating">Mitigating</option>
+              <option value="monitoring">Monitoring</option>
+              <option value="closed">Closed</option>
+            </select>
+          </div>
+        </form>
+        <div class="modal-footer">
+          <button class="btn btn-danger" id="rr-modal-delete" hidden>Delete</button>
+          <button class="btn btn-secondary" id="rr-modal-close-2" onclick="document.getElementById('risk-modal').hidden=true">Cancel</button>
+          <button class="btn btn-primary" id="rr-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
   <section id="tab-admin" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
@@ -939,6 +1060,7 @@
             <select id="newRole" class="modal-status-select">
               <option value="readonly">Read-only</option>
               <option value="manager">Manager</option>
+              <option value="sales">Sales</option>
               <option value="admin">Admin</option>
               <option value="superadmin">Super Admin</option>
             </select>
@@ -1039,6 +1161,7 @@
           <label class="modal-label" for="editUserRole">Role</label>
           <select id="editUserRole" class="modal-status-select">
             <option value="readonly">Read-only</option>
+            <option value="sales">Sales</option>
             <option value="admin">Admin</option>
           </select>
         </div>
@@ -1074,6 +1197,7 @@
   <script src="js/tab-grc.js"></script>
   <script src="js/tab-redteam.js"></script>
   <script src="js/tab-incident-response.js"></script>
+  <script src="js/tab-risk-register.js"></script>
   <script src="js/tab-admin.js"></script>
 </body>
 </html>

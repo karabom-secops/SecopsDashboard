@@ -2794,6 +2794,92 @@ body.login-page {
   background: rgba(34,197,94,.5);
 }
 
+/* Risk Register kanban board */
+.rr-board {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+.rr-column {
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 75vh;
+}
+.rr-column.drag-over {
+  background: rgba(6,182,212,.08);
+  border-color: #06b6d4;
+}
+.rr-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.75rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+.rr-column-count {
+  background: rgba(148,163,184,.2);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.75rem;
+}
+.rr-column-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.rr-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.7rem;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+}
+.rr-card[draggable="true"] { cursor: grab; }
+.rr-card.dragging { opacity: 0.5; }
+.rr-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.rr-card-title { flex: 1; }
+.rr-card-meta {
+  display: flex;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin-top: 0.35rem;
+  flex-wrap: wrap;
+}
+.rr-card-due {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+.rr-score-display {
+  display: inline-block;
+  min-width: 2.5rem;
+  text-align: center;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: rgba(148,163,184,.15);
+  font-weight: 700;
+}
+
 .form-input,
 .form-select {
   width: 100%;

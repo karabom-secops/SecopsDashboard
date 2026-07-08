@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS users (
   username         VARCHAR(254) UNIQUE NOT NULL,
   password_hash    TEXT,
   role             VARCHAR(15) NOT NULL DEFAULT 'readonly'
-                     CONSTRAINT users_role_chk CHECK (role IN ('superadmin', 'admin', 'readonly', 'manager')),
+                     CONSTRAINT users_role_chk CHECK (role IN ('superadmin', 'admin', 'readonly', 'manager', 'sales')),
   tenant_id        INT         REFERENCES tenants(id) ON DELETE SET NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_login       TIMESTAMPTZ,

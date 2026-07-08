@@ -14,7 +14,7 @@ const speakeasy = require('speakeasy');
 const QRCode    = require('qrcode');
 
 const pool = require('./lib/db');
-const { requireAuth, requireAdmin, requireSuperAdmin, requireManager } = require('./lib/auth-middleware');
+const { requireAuth, requireAdmin, requireSuperAdmin, requireManager, requireRiskWrite } = require('./lib/auth-middleware');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
 const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
@@ -696,7 +696,7 @@ app.post('/api/users', requireAdmin, async (req, res) => {
     }
 
     // Superadmin can create any role; tenant admin can only create admin/readonly.
-    const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly', 'manager'] : ['admin', 'readonly', 'manager'];
+    const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly', 'manager', 'sales'] : ['admin', 'readonly', 'manager', 'sales'];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}.` });
     }
@@ -762,7 +762,7 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
     const values  = [];
 
     if (role !== undefined) {
-      const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly', 'manager'] : ['admin', 'readonly', 'manager'];
+      const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly', 'manager', 'sales'] : ['admin', 'readonly', 'manager', 'sales'];
       if (!allowedRoles.includes(role)) {
         return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}.` });
       }
@@ -2367,6 +2367,125 @@ app.delete('/api/ir/activities/:id', requireAdmin, async (req, res) => {
       [req.params.id, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Activity not found.' });
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+// ── Risk Register routes (tenant-scoped) ───────────────────────────────────
+
+function resolveRiskTenant(req, source) {
+  if (req.session.role === 'superadmin') {
+    const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+const RISK_CATEGORIES = ['operational', 'financial', 'compliance', 'technical', 'reputational'];
+const RISK_STAGES = ['identified', 'assessing', 'mitigating', 'monitoring', 'closed'];
+
+/** GET /api/risks */
+app.get('/api/risks', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRiskTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      `SELECT * FROM risks WHERE tenant_id = $1 ORDER BY created_at DESC`,
+      [tenantId]
+    );
+    res.json({ risks: result.rows });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/risks */
+app.post('/api/risks', requireRiskWrite, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRiskTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { title, description, category, likelihood, impact, owner, mitigation_plan, stage, start_date, due_date } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required.' });
+    if (!start_date) return res.status(400).json({ error: 'start_date is required.' });
+
+    const lk = parseInt(likelihood, 10);
+    const im = parseInt(impact, 10);
+    if (isNaN(lk) || lk < 1 || lk > 5) return res.status(400).json({ error: 'likelihood must be between 1 and 5.' });
+    if (isNaN(im) || im < 1 || im > 5) return res.status(400).json({ error: 'impact must be between 1 and 5.' });
+    if (category !== undefined && !RISK_CATEGORIES.includes(category)) return res.status(400).json({ error: 'invalid category.' });
+    if (stage !== undefined && !RISK_STAGES.includes(stage)) return res.status(400).json({ error: 'invalid stage.' });
+
+    const result = await pool.query(
+      `INSERT INTO risks (tenant_id, title, description, category, likelihood, impact, risk_score, owner, mitigation_plan, stage, start_date, due_date, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [tenantId, title, description || '', category || 'operational', lk, im, lk * im, owner || '', mitigation_plan || '', stage || 'identified', start_date, due_date || null, req.session.userId]
+    );
+    res.json({ risk: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PUT /api/risks/:id */
+app.put('/api/risks/:id', requireRiskWrite, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRiskTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { title, description, category, likelihood, impact, owner, mitigation_plan, stage, start_date, due_date } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required.' });
+    if (!start_date) return res.status(400).json({ error: 'start_date is required.' });
+
+    const lk = parseInt(likelihood, 10);
+    const im = parseInt(impact, 10);
+    if (isNaN(lk) || lk < 1 || lk > 5) return res.status(400).json({ error: 'likelihood must be between 1 and 5.' });
+    if (isNaN(im) || im < 1 || im > 5) return res.status(400).json({ error: 'impact must be between 1 and 5.' });
+    if (category !== undefined && !RISK_CATEGORIES.includes(category)) return res.status(400).json({ error: 'invalid category.' });
+    if (stage !== undefined && !RISK_STAGES.includes(stage)) return res.status(400).json({ error: 'invalid stage.' });
+
+    const result = await pool.query(
+      `UPDATE risks
+       SET title=$1, description=$2, category=$3, likelihood=$4, impact=$5, risk_score=$6, owner=$7,
+           mitigation_plan=$8, stage=$9, start_date=$10, due_date=$11, updated_at=NOW()
+       WHERE id=$12 AND tenant_id=$13 RETURNING *`,
+      [title, description || '', category || 'operational', lk, im, lk * im, owner || '', mitigation_plan || '', stage || 'identified', start_date, due_date || null, req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Risk not found.' });
+    res.json({ risk: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PATCH /api/risks/:id/stage — used by kanban drag-and-drop */
+app.patch('/api/risks/:id/stage', requireRiskWrite, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRiskTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { stage } = req.body;
+    if (!RISK_STAGES.includes(stage)) return res.status(400).json({ error: 'invalid stage.' });
+
+    const result = await pool.query(
+      `UPDATE risks SET stage=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3 RETURNING *`,
+      [stage, req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Risk not found.' });
+    res.json({ risk: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/risks/:id */
+app.delete('/api/risks/:id', requireRiskWrite, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRiskTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      'DELETE FROM risks WHERE id=$1 AND tenant_id=$2 RETURNING id',
+      [req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Risk not found.' });
     res.json({ ok: true });
   } catch (err) { return serverError(res, err); }
 });

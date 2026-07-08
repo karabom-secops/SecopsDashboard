@@ -18,6 +18,7 @@
     grc:          document.getElementById('tab-grc'),
     redteam:      document.getElementById('tab-redteam'),
     'incident-response': document.getElementById('tab-incident-response'),
+    'risk-register': document.getElementById('tab-risk-register'),
     admin:        document.getElementById('tab-admin'),
   };
 
@@ -30,6 +31,7 @@
     vulns:      'Vulnerabilities',
     awareness:  'Awareness',
     'incident-response': 'Incident Response',
+    'risk-register': 'Risk Register',
     admin:      'Admin',
   };
 
@@ -85,6 +87,9 @@
     }
     if (target === 'incident-response' && typeof window.IrTab !== 'undefined') {
       window.IrTab.loadAndRender();
+    }
+    if (target === 'risk-register' && typeof window.RiskRegisterTab !== 'undefined') {
+      window.RiskRegisterTab.loadAndRender();
     }
     if (target === 'admin' && typeof window.renderAdmin === 'function') {
       window.renderAdmin();
