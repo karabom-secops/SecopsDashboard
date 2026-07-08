@@ -103,9 +103,13 @@ const RiskRegisterTab = (() => {
       body.querySelectorAll('.rr-card').forEach(card => {
         card.addEventListener('click', () => openModal(parseInt(card.dataset.id, 10)));
         if (canWrite()) {
-          card.addEventListener('dragstart', () => {
+          card.addEventListener('dragstart', (e) => {
             _dragId = parseInt(card.dataset.id, 10);
             card.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            // Some browsers (notably Firefox) require data to be set for a drag
+            // to be recognized as valid, otherwise dragover/drop never fire.
+            e.dataTransfer.setData('text/plain', String(_dragId));
           });
           card.addEventListener('dragend', () => card.classList.remove('dragging'));
         }
@@ -118,6 +122,7 @@ const RiskRegisterTab = (() => {
       col.addEventListener('dragover', (e) => {
         if (!canWrite()) return;
         e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
         col.classList.add('drag-over');
       });
       col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
