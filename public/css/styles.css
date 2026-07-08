@@ -185,25 +185,6 @@ a { color: var(--blue); }
   padding: 2px 4px;
 }
 
-#weekSelect {
-  background: var(--surface);
-  border: 1.5px solid var(--border);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: 0.5rem 0.9rem;
-  font-size: 0.85rem;
-  font-family: var(--font);
-  cursor: pointer;
-  min-width: 190px;
-  box-shadow: var(--shadow-sm);
-  transition: border-color .15s, box-shadow .15s;
-}
-#weekSelect:focus {
-  outline: none;
-  border-color: var(--logo-cyan);
-  box-shadow: 0 0 0 3px rgba(0,186,223,.18);
-}
-
 /* ── Buttons ───────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;
@@ -1559,7 +1540,6 @@ body.modal-open .tab-nav {
 @media (max-width: 600px) {
   .site-header { flex-direction: column; align-items: flex-start; }
   .header-right { width: 100%; }
-  #weekSelect { flex: 1; min-width: 0; }
   .upload-file-row { grid-template-columns: 1fr; }
   .charts-grid { grid-template-columns: 1fr; }
   .tab-btn { padding: 0.75rem 0.7rem; font-size: 0.82rem; }
@@ -2207,6 +2187,7 @@ body.login-page {
 .role-superadmin { background: #ede9fe; color: #6d28d9; }
 .role-admin      { background: #dbeafe; color: #1d4ed8; }
 .role-manager    { background: #dcfce7; color: #15803d; }
+.role-sales      { background: #fef3c7; color: #92400e; }
 .role-readonly   { background: #f3f4f6; color: #6b7280; }
 
 /* ═══════════════════════════════════════════════════════════════════════════

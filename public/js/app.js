@@ -7,7 +7,6 @@
   window.currentWeekKey = null;
   window._summaryData = [];
 
-  const weekSelect    = document.getElementById('weekSelect');
   const dashboard     = document.getElementById('dashboard');
   const tabPanels     = {
     operations:   document.getElementById('tab-operations'),
@@ -96,8 +95,23 @@
     }
   }
 
+  // ── Manager Dashboard button ─────────────────────────────────────────────
+  const MANAGER_DASHBOARD_ROLES = ['manager', 'sales', 'admin', 'superadmin'];
+  const managerDashboardBtn = document.getElementById('managerDashboardBtn');
+  if (managerDashboardBtn) {
+    managerDashboardBtn.addEventListener('click', () => {
+      const role = window.currentUser && window.currentUser.role;
+      if (!MANAGER_DASHBOARD_ROLES.includes(role)) {
+        alert('You do not have permission to access the Manager Dashboard.');
+        return;
+      }
+      location.href = 'manager.html';
+    });
+  }
+
   // Side nav items drive tab switching directly
   sideNavItems.forEach(item => {
+    if (!item.dataset.tab) return; // plain links (e.g. Manager Dashboard) navigate normally
     item.addEventListener('click', () => {
       switchTab(item.dataset.tab);
     });
@@ -106,25 +120,11 @@
   // Expose so other modules can switch tabs programmatically
   window.switchTab = switchTab;
 
-  // ── Week selector ──────────────────────────────────────────────────────────
-  weekSelect.addEventListener('change', () => {
-    const key = weekSelect.value;
-    if (key) loadWeek(key);
-  });
-
-  // ── Populate week dropdown ─────────────────────────────────────────────────
+  // ── Fetch the list of available weeks ────────────────────────────────────
   async function populateWeeks() {
     try {
       const res = await fetch('api/weeks');
-      const weeks = await res.json();
-      weekSelect.innerHTML = '<option value="">— Select week —</option>';
-      weeks.forEach(w => {
-        const opt = document.createElement('option');
-        opt.value = w.key;
-        opt.textContent = w.weekCommencing || w.key;
-        weekSelect.appendChild(opt);
-      });
-      return weeks;
+      return await res.json();
     } catch (_) {
       return [];
     }
@@ -133,9 +133,6 @@
   // ── Load a week and render all tabs ───────────────────────────────────────
   window.loadWeek = async function loadWeek(weekKey) {
     window.currentWeekKey = weekKey;
-
-    // Update selector to reflect the loaded week
-    if (weekSelect.value !== weekKey) weekSelect.value = weekKey;
 
     // Fetch week data and metrics summary in parallel
     let weekData, summaryData;

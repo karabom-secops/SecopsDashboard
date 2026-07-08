@@ -150,6 +150,9 @@
       } else if (user.role === 'manager') {
         roleEl.textContent = 'Manager';
         roleEl.className   = 'header-role-badge role-manager';
+      } else if (user.role === 'sales') {
+        roleEl.textContent = 'Sales';
+        roleEl.className   = 'header-role-badge role-sales';
       } else {
         roleEl.textContent = 'Read-only';
         roleEl.className   = 'header-role-badge role-readonly';
