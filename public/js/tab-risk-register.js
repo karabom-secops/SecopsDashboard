@@ -137,6 +137,11 @@ const RiskRegisterTab = (() => {
     const risk = id ? _risks.find(r => r.id === id) : null;
     const readOnly = !canWrite();
 
+    // Move the modal to be a direct child of <body> so its fixed positioning
+    // and stacking order can never be affected by an ancestor (e.g. .tab-panel).
+    const modalEl = document.getElementById('risk-modal');
+    if (modalEl.parentElement !== document.body) document.body.appendChild(modalEl);
+
     document.getElementById('rr-modal-title').textContent = risk ? 'Edit Risk' : 'New Risk';
     document.getElementById('rr-id').value = risk ? risk.id : '';
     document.getElementById('rr-title').value = risk ? risk.title : '';
