@@ -17,9 +17,13 @@ CREATE TABLE IF NOT EXISTS risks (
                     CHECK (stage IN ('identified','assessing','mitigating','monitoring','closed')),
   start_date      DATE NOT NULL DEFAULT CURRENT_DATE,
   due_date        DATE,
+  closed_at       TIMESTAMPTZ,
   created_by      INT REFERENCES users(id) ON DELETE SET NULL,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_risks_tenant ON risks(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_risks_tenant_stage ON risks(tenant_id, stage);
+
+-- Idempotent for databases where this migration already ran before closed_at was added
+ALTER TABLE risks ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;

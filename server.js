@@ -2388,6 +2388,35 @@ function resolveRiskTenant(req, source) {
 const RISK_CATEGORIES = ['operational', 'financial', 'compliance', 'technical', 'reputational'];
 const RISK_STAGES = ['identified', 'assessing', 'mitigating', 'monitoring', 'closed'];
 
+/** GET /api/risks/stats */
+app.get('/api/risks/stats', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveRiskTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    const monthStartStr = monthStart.toISOString().slice(0, 10);
+
+    const [openRes, highRiskRes, closedRes, avgRes, overdueRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*) FROM risks WHERE tenant_id=$1 AND stage != 'closed'`, [tenantId]),
+      pool.query(`SELECT COUNT(*) FROM risks WHERE tenant_id=$1 AND stage != 'closed' AND risk_score >= 15`, [tenantId]),
+      pool.query(`SELECT COUNT(*) FROM risks WHERE tenant_id=$1 AND stage = 'closed' AND closed_at >= $2`, [tenantId, monthStartStr]),
+      pool.query(`SELECT AVG(EXTRACT(EPOCH FROM (closed_at - created_at)) / 86400) AS avg_days
+                  FROM risks WHERE tenant_id=$1 AND closed_at IS NOT NULL`, [tenantId]),
+      pool.query(`SELECT COUNT(*) FROM risks WHERE tenant_id=$1 AND stage != 'closed' AND due_date IS NOT NULL AND due_date < CURRENT_DATE`, [tenantId]),
+    ]);
+
+    res.json({
+      open:              parseInt(openRes.rows[0].count, 10) || 0,
+      highRisk:          parseInt(highRiskRes.rows[0].count, 10) || 0,
+      closedThisMonth:   parseInt(closedRes.rows[0].count, 10) || 0,
+      avgResolutionDays: avgRes.rows[0].avg_days !== null ? Math.round(avgRes.rows[0].avg_days * 10) / 10 : null,
+      overdue:           parseInt(overdueRes.rows[0].count, 10) || 0,
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
 /** GET /api/risks */
 app.get('/api/risks', requireAuth, async (req, res) => {
   try {
@@ -2448,7 +2477,10 @@ app.put('/api/risks/:id', requireRiskWrite, async (req, res) => {
     const result = await pool.query(
       `UPDATE risks
        SET title=$1, description=$2, category=$3, likelihood=$4, impact=$5, risk_score=$6, owner=$7,
-           mitigation_plan=$8, stage=$9, start_date=$10, due_date=$11, updated_at=NOW()
+           mitigation_plan=$8, stage=$9, start_date=$10, due_date=$11, updated_at=NOW(),
+           closed_at = CASE WHEN $9 = 'closed' AND closed_at IS NULL THEN NOW()
+                            WHEN $9 != 'closed' THEN NULL
+                            ELSE closed_at END
        WHERE id=$12 AND tenant_id=$13 RETURNING *`,
       [title, description || '', category || 'operational', lk, im, lk * im, owner || '', mitigation_plan || '', stage || 'identified', start_date, due_date || null, req.params.id, tenantId]
     );
@@ -2467,7 +2499,12 @@ app.patch('/api/risks/:id/stage', requireRiskWrite, async (req, res) => {
     if (!RISK_STAGES.includes(stage)) return res.status(400).json({ error: 'invalid stage.' });
 
     const result = await pool.query(
-      `UPDATE risks SET stage=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3 RETURNING *`,
+      `UPDATE risks
+       SET stage=$1, updated_at=NOW(),
+           closed_at = CASE WHEN $1 = 'closed' AND closed_at IS NULL THEN NOW()
+                            WHEN $1 != 'closed' THEN NULL
+                            ELSE closed_at END
+       WHERE id=$2 AND tenant_id=$3 RETURNING *`,
       [stage, req.params.id, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Risk not found.' });

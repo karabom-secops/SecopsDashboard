@@ -34,6 +34,40 @@ const RiskRegisterTab = (() => {
     return 'badge-green';
   }
 
+  // ── Stats ──────────────────────────────────────────────────────────────────
+
+  async function renderStats() {
+    const el = document.getElementById('rr-stats');
+    if (!el) return;
+    try {
+      const res  = await fetch('api/risks/stats' + tenantParam('?'), { credentials: 'same-origin' });
+      const data = await res.json();
+      el.innerHTML = `
+        <div class="stat-card accent-blue">
+          <div class="stat-label">Open Risks</div>
+          <div class="stat-value">${data.open}</div>
+        </div>
+        <div class="stat-card accent-red">
+          <div class="stat-label">High Risk (Score ≥ 15)</div>
+          <div class="stat-value">${data.highRisk}</div>
+        </div>
+        <div class="stat-card accent-red">
+          <div class="stat-label">Overdue</div>
+          <div class="stat-value">${data.overdue}</div>
+        </div>
+        <div class="stat-card accent-green">
+          <div class="stat-label">Closed This Month</div>
+          <div class="stat-value">${data.closedThisMonth}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Avg. Resolution Time</div>
+          <div class="stat-value">${data.avgResolutionDays !== null ? data.avgResolutionDays + 'd' : '—'}</div>
+        </div>`;
+    } catch (_) {
+      el.innerHTML = '<p class="empty-state">Failed to load stats.</p>';
+    }
+  }
+
   // ── Board rendering ────────────────────────────────────────────────────────
 
   function render() {
@@ -108,6 +142,7 @@ const RiskRegisterTab = (() => {
             body: JSON.stringify(body),
           });
           if (!res.ok) throw new Error('stage update failed');
+          renderStats();
         } catch (_) {
           risk.stage = prevStage;
           render();
@@ -202,6 +237,7 @@ const RiskRegisterTab = (() => {
     closeModal();
     await load();
     render();
+    renderStats();
   }
 
   async function deleteRisk() {
@@ -212,6 +248,7 @@ const RiskRegisterTab = (() => {
     closeModal();
     await load();
     render();
+    renderStats();
   }
 
   // ── Wiring ─────────────────────────────────────────────────────────────────
@@ -236,6 +273,7 @@ const RiskRegisterTab = (() => {
 
   async function loadAndRender() {
     wireOnce();
+    await renderStats();
     await load();
     render();
   }
