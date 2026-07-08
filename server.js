@@ -1940,6 +1940,46 @@ function calculateGrcScore(answers, questions) {
   return totalPossible > 0 ? Math.round((totalEarned / totalPossible) * 100) : 0;
 }
 
+/**
+ * autoPopulateRisksFromGrc — for every 'no' answer on a spreadsheet-sourced
+ * question (has risk_title), auto-create a Risk Register entry if one doesn't
+ * already exist for that (tenant, question) pair. Pure insert-if-missing —
+ * never updates/closes/deletes a risk if the answer later changes.
+ */
+async function autoPopulateRisksFromGrc(tenantId, answers, questions, userId) {
+  const qMap = {};
+  questions.forEach(q => { qMap[q.id] = q; });
+
+  const noAnswers = answers.filter(a => a.answer === 'no' && qMap[a.questionId]);
+  for (const a of noAnswers) {
+    const q = qMap[a.questionId];
+    if (!q.risk_title) continue;
+
+    const existing = await pool.query(
+      'SELECT id FROM risks WHERE tenant_id = $1 AND grc_question_id = $2 LIMIT 1',
+      [tenantId, q.id]
+    );
+    if (existing.rows.length > 0) continue;
+
+    const likelihood = q.default_likelihood || 3;
+    const impact = q.default_impact || 3;
+    await pool.query(
+      `INSERT INTO risks
+         (tenant_id, title, description, category, likelihood, impact, risk_score,
+          owner, mitigation_plan, stage, start_date, created_by, grc_question_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'identified',CURRENT_DATE,$10,$11)`,
+      [
+        tenantId, q.risk_title,
+        `Auto-created from GRC self-assessment gap (${q.external_risk_id || 'Q' + q.id}): ${q.text}`,
+        q.default_category || 'operational',
+        likelihood, impact, likelihood * impact,
+        q.default_owner || '', q.default_mitigation || '',
+        userId, q.id
+      ]
+    );
+  }
+}
+
 /** GET /api/grc/questions — returns all questions grouped by section */
 app.get('/api/grc/questions', requireAuth, async (req, res) => {
   try {
@@ -1986,8 +2026,8 @@ app.post('/api/grc/assessment', requireAdmin, async (req, res) => {
     const { answers } = req.body;
     if (!Array.isArray(answers)) return res.status(400).json({ error: 'answers must be an array.' });
 
-    // Fetch all questions to calculate score
-    const qResult = await pool.query('SELECT id, weight FROM grc_questions');
+    // Fetch all questions to calculate score (full row needed for auto-population below)
+    const qResult = await pool.query('SELECT * FROM grc_questions');
     const score = calculateGrcScore(answers, qResult.rows);
 
     const client = await pool.connect();
@@ -2012,6 +2052,13 @@ app.post('/api/grc/assessment', requireAdmin, async (req, res) => {
       }
       await client.query('COMMIT');
       console.log(`[grc] Assessment saved for tenant ${tenantId}, score=${score}`);
+
+      try {
+        await autoPopulateRisksFromGrc(tenantId, answers, qResult.rows, req.session.userId);
+      } catch (popErr) {
+        console.error('[grc] auto-populate risks failed:', popErr);
+      }
+
       res.json({ ok: true, score, assessedAt: new Date().toISOString() });
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});

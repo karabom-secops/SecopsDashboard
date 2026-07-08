@@ -95,6 +95,7 @@ const RiskRegisterTab = (() => {
           <div class="rr-card-meta">
             <span>${esc(r.category)}</span>
             ${r.owner ? `<span>${esc(r.owner)}</span>` : ''}
+            ${r.grc_question_id ? `<span class="badge badge-blue">GRC gap</span>` : ''}
           </div>
           <div class="rr-card-due">Due: ${fmt(r.due_date)}</div>
         </div>
