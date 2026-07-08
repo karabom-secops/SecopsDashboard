@@ -2478,8 +2478,8 @@ app.put('/api/risks/:id', requireRiskWrite, async (req, res) => {
       `UPDATE risks
        SET title=$1, description=$2, category=$3, likelihood=$4, impact=$5, risk_score=$6, owner=$7,
            mitigation_plan=$8, stage=$9, start_date=$10, due_date=$11, updated_at=NOW(),
-           closed_at = CASE WHEN $9 = 'closed' AND closed_at IS NULL THEN NOW()
-                            WHEN $9 != 'closed' THEN NULL
+           closed_at = CASE WHEN $9::varchar = 'closed' AND closed_at IS NULL THEN NOW()
+                            WHEN $9::varchar != 'closed' THEN NULL
                             ELSE closed_at END
        WHERE id=$12 AND tenant_id=$13 RETURNING *`,
       [title, description || '', category || 'operational', lk, im, lk * im, owner || '', mitigation_plan || '', stage || 'identified', start_date, due_date || null, req.params.id, tenantId]
@@ -2501,8 +2501,8 @@ app.patch('/api/risks/:id/stage', requireRiskWrite, async (req, res) => {
     const result = await pool.query(
       `UPDATE risks
        SET stage=$1, updated_at=NOW(),
-           closed_at = CASE WHEN $1 = 'closed' AND closed_at IS NULL THEN NOW()
-                            WHEN $1 != 'closed' THEN NULL
+           closed_at = CASE WHEN $1::varchar = 'closed' AND closed_at IS NULL THEN NOW()
+                            WHEN $1::varchar != 'closed' THEN NULL
                             ELSE closed_at END
        WHERE id=$2 AND tenant_id=$3 RETURNING *`,
       [stage, req.params.id, tenantId]
