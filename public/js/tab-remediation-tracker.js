@@ -8,6 +8,9 @@ const RemediationTrackerTab = (() => {
   let _sourceFilter = 'all';
   let _statusFilter = 'all';
   let _searchTerm = '';
+  let _view = 'table';
+
+  const DEFAULT_DURATION_DAYS = 14;
 
   const STATUS_OPTIONS = {
     vuln:    [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted']],
@@ -26,6 +29,17 @@ const RemediationTrackerTab = (() => {
   function fmt(dateStr) {
     if (!dateStr) return '—';
     return String(dateStr).slice(0, 10);
+  }
+
+  function toDateOnly(v) {
+    if (!v) return null;
+    return String(v).slice(0, 10);
+  }
+
+  function addDays(dateStr, days) {
+    const d = new Date(dateStr + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
   }
 
   function isOverdue(item) {
@@ -57,38 +71,57 @@ const RemediationTrackerTab = (() => {
   // ── Normalization ──────────────────────────────────────────────────────────
 
   function normalize(data) {
-    const vulns = (data.vulns || []).map(v => ({
-      source: 'vuln',
-      id: v.idx,
-      title: v.name || v.cve || 'Unnamed finding',
-      severity: (v.risk || '').toLowerCase() || 'informational',
-      owner: '',
-      dueDate: null,
-      status: v.status || 'open',
-      raw: v,
-    }));
+    const today = new Date().toISOString().slice(0, 10);
 
-    const risks = (data.risks || []).map(r => ({
-      source: 'risk',
-      id: r.id,
-      title: r.title,
-      severity: r.risk_score >= 15 ? 'high' : r.risk_score >= 8 ? 'medium' : 'low',
-      owner: r.owner || '',
-      dueDate: r.due_date ? String(r.due_date).slice(0, 10) : null,
-      status: r.stage,
-      raw: r,
-    }));
+    const vulns = (data.vulns || []).map(v => {
+      const start = toDateOnly(v.firstSeenAt) || today;
+      return {
+        source: 'vuln',
+        id: v.idx,
+        title: v.name || v.cve || 'Unnamed finding',
+        severity: (v.risk || '').toLowerCase() || 'informational',
+        owner: '',
+        dueDate: null,
+        status: v.status || 'open',
+        startDate: start,
+        endDate: addDays(start, DEFAULT_DURATION_DAYS),
+        raw: v,
+      };
+    });
 
-    const pentest = (data.pentestFindings || []).map(p => ({
-      source: 'pentest',
-      id: p.id,
-      title: p.title,
-      severity: p.severity,
-      owner: p.owner || '',
-      dueDate: p.due_date ? String(p.due_date).slice(0, 10) : null,
-      status: p.status,
-      raw: p,
-    }));
+    const risks = (data.risks || []).map(r => {
+      const start = toDateOnly(r.created_at) || toDateOnly(r.start_date) || today;
+      const due = toDateOnly(r.due_date);
+      return {
+        source: 'risk',
+        id: r.id,
+        title: r.title,
+        severity: r.risk_score >= 15 ? 'high' : r.risk_score >= 8 ? 'medium' : 'low',
+        owner: r.owner || '',
+        dueDate: due,
+        status: r.stage,
+        startDate: start,
+        endDate: due || addDays(start, DEFAULT_DURATION_DAYS),
+        raw: r,
+      };
+    });
+
+    const pentest = (data.pentestFindings || []).map(p => {
+      const start = toDateOnly(p.created_at) || today;
+      const due = toDateOnly(p.due_date);
+      return {
+        source: 'pentest',
+        id: p.id,
+        title: p.title,
+        severity: p.severity,
+        owner: p.owner || '',
+        dueDate: due,
+        status: p.status,
+        startDate: start,
+        endDate: due || addDays(start, DEFAULT_DURATION_DAYS),
+        raw: p,
+      };
+    });
 
     return [...vulns, ...pentest, ...risks];
   }
@@ -157,7 +190,7 @@ const RemediationTrackerTab = (() => {
       btn.addEventListener('click', () => {
         _sourceFilter = btn.dataset.source;
         renderFilters();
-        renderTable();
+        renderActiveView();
       });
     });
 
@@ -165,9 +198,24 @@ const RemediationTrackerTab = (() => {
     if (searchInput) {
       searchInput.addEventListener('input', () => {
         _searchTerm = searchInput.value;
-        renderTable();
+        renderActiveView();
       });
     }
+  }
+
+  function filteredItems() {
+    let rows = _items;
+    if (_sourceFilter !== 'all') rows = rows.filter(i => i.source === _sourceFilter);
+    if (_searchTerm.trim()) {
+      const q = _searchTerm.trim().toLowerCase();
+      rows = rows.filter(i => i.title.toLowerCase().includes(q));
+    }
+    return rows;
+  }
+
+  function renderActiveView() {
+    if (_view === 'gantt') renderGantt();
+    else renderTable();
   }
 
   // ── Table ──────────────────────────────────────────────────────────────────
@@ -176,12 +224,7 @@ const RemediationTrackerTab = (() => {
     const tbody = document.getElementById('rt-table-body');
     if (!tbody) return;
 
-    let rows = _items;
-    if (_sourceFilter !== 'all') rows = rows.filter(i => i.source === _sourceFilter);
-    if (_searchTerm.trim()) {
-      const q = _searchTerm.trim().toLowerCase();
-      rows = rows.filter(i => i.title.toLowerCase().includes(q));
-    }
+    const rows = filteredItems();
 
     if (rows.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No remediation items match this view.</td></tr>';
@@ -251,11 +294,99 @@ const RemediationTrackerTab = (() => {
       }
       item.status = newStatus;
       renderStats();
-      renderTable();
+      renderActiveView();
     } catch (_) {
       selectEl.value = prevStatus;
       alert('Failed to update status.');
     }
+  }
+
+  // ── Gantt view ─────────────────────────────────────────────────────────────
+
+  function renderGantt() {
+    const container = document.getElementById('rt-gantt');
+    if (!container) return;
+
+    const rows = filteredItems();
+    if (rows.length === 0) {
+      container.innerHTML = '<div class="rt-gantt-empty">No remediation items match this view.</div>';
+      return;
+    }
+
+    const sorted = [...rows].sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const minDate = sorted.reduce((min, i) => i.startDate < min ? i.startDate : min, sorted[0].startDate);
+    const maxDate = sorted.reduce((max, i) => i.endDate > max ? i.endDate : max, sorted[0].endDate);
+
+    const totalDays = Math.max(1, dayDiff(minDate, maxDate));
+    const today = new Date().toISOString().slice(0, 10);
+    const todayPct = clampPct(dayDiff(minDate, today) / totalDays * 100);
+
+    const monthTicks = buildMonthTicks(minDate, maxDate, totalDays);
+
+    const header = `
+      <div class="rt-gantt-header">
+        <div></div>
+        <div class="rt-gantt-header-months">
+          ${monthTicks.map(t => `<span class="rt-gantt-month-tick" style="left:${t.pct}%">${t.label}</span>`).join('')}
+        </div>
+      </div>`;
+
+    const rowsHtml = sorted.map(item => {
+      const leftPct = clampPct(dayDiff(minDate, item.startDate) / totalDays * 100);
+      const widthPct = Math.max(1, clampPct(dayDiff(item.startDate, item.endDate) / totalDays * 100));
+      const title = `${item.title} — ${fmt(item.startDate)} to ${fmt(item.endDate)} (${item.status})`;
+      return `
+        <div class="rt-gantt-row">
+          <div class="rt-gantt-row-label" title="${esc(item.title)}">${esc(item.title)}</div>
+          <div class="rt-gantt-track">
+            ${todayPct >= 0 && todayPct <= 100 ? `<div class="rt-gantt-today-line" style="left:${todayPct}%"></div>` : ''}
+            <div class="rt-gantt-bar source-${item.source} ${isOverdue(item) ? 'overdue' : ''}"
+                 style="left:${leftPct}%; width:${widthPct}%;" title="${esc(title)}">
+              ${esc(item.title)}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+
+    container.innerHTML = header + rowsHtml;
+  }
+
+  function dayDiff(fromStr, toStr) {
+    const from = new Date(fromStr + 'T00:00:00Z');
+    const to = new Date(toStr + 'T00:00:00Z');
+    return (to - from) / 86400000;
+  }
+
+  function clampPct(v) {
+    return Math.min(100, Math.max(0, v));
+  }
+
+  function buildMonthTicks(minDate, maxDate, totalDays) {
+    const ticks = [];
+    const cursor = new Date(minDate + 'T00:00:00Z');
+    cursor.setUTCDate(1);
+    const end = new Date(maxDate + 'T00:00:00Z');
+    while (cursor <= end) {
+      const dateStr = cursor.toISOString().slice(0, 10);
+      const pct = clampPct(dayDiff(minDate, dateStr) / totalDays * 100);
+      ticks.push({ pct, label: cursor.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) });
+      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    }
+    return ticks;
+  }
+
+  function wireViewToggle() {
+    document.getElementById('rt-view-table-btn').addEventListener('click', () => switchView('table'));
+    document.getElementById('rt-view-gantt-btn').addEventListener('click', () => switchView('gantt'));
+  }
+
+  function switchView(view) {
+    _view = view;
+    document.getElementById('rt-view-table-btn').classList.toggle('active', view === 'table');
+    document.getElementById('rt-view-gantt-btn').classList.toggle('active', view === 'gantt');
+    document.getElementById('rt-table-view').hidden = view !== 'table';
+    document.getElementById('rt-gantt-view').hidden = view !== 'gantt';
+    renderActiveView();
   }
 
   // ── New Pentest Finding modal ────────────────────────────────────────────
@@ -350,6 +481,7 @@ const RemediationTrackerTab = (() => {
     document.getElementById('rt-modal-close').addEventListener('click', closeModal);
     document.getElementById('rt-modal-close-2').addEventListener('click', closeModal);
     document.getElementById('rt-modal-save').addEventListener('click', saveFinding);
+    wireViewToggle();
   }
 
   // ── Main entry ─────────────────────────────────────────────────────────────
@@ -359,7 +491,7 @@ const RemediationTrackerTab = (() => {
     await load();
     renderStats();
     renderFilters();
-    renderTable();
+    renderActiveView();
   }
 
   return { loadAndRender };

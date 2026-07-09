@@ -954,9 +954,15 @@
 
     <div id="rt-stats" class="stat-grid" style="margin-bottom:1.5rem"></div>
 
-    <div id="rt-filters" class="filter-chips" style="margin-bottom:1rem"></div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+      <div id="rt-filters" class="filter-chips"></div>
+      <div class="view-toggle" id="rt-view-toggle">
+        <button class="view-toggle-btn active" data-view="table" id="rt-view-table-btn">Table</button>
+        <button class="view-toggle-btn" data-view="gantt" id="rt-view-gantt-btn">Gantt</button>
+      </div>
+    </div>
 
-    <div class="table-wrapper">
+    <div id="rt-table-view" class="table-wrapper">
       <table id="rt-table" class="data-table">
         <thead>
           <tr>
@@ -970,6 +976,10 @@
         </thead>
         <tbody id="rt-table-body"></tbody>
       </table>
+    </div>
+
+    <div id="rt-gantt-view" class="rt-gantt-wrap" hidden>
+      <div id="rt-gantt"></div>
     </div>
 
     <!-- Pentest Finding Modal -->

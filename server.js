@@ -2711,7 +2711,7 @@ app.get('/api/remediation-tracker', requireAuth, async (req, res) => {
       vulnMonthKey = scanRes.rows[0].monthKey;
       const findingsRes = await pool.query(
         `SELECT finding_index AS idx, name, risk, host, cve, status, notes,
-                status_updated_at AS "statusUpdatedAt"
+                status_updated_at AS "statusUpdatedAt", first_seen_at AS "firstSeenAt"
          FROM vuln_findings WHERE scan_id=$1 ORDER BY finding_index ASC`,
         [scanRes.rows[0].id]
       );
