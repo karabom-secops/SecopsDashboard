@@ -8,6 +8,8 @@ const RedteamTab = (() => {
   let _calDate       = new Date();
   let _calView       = 'month';
   let _initialized   = false;
+  let _tenants       = [];
+  const STATUS_OPTIONS_FINDING = [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted'], ['risk-accepted', 'Risk Accepted']];
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -204,7 +206,7 @@ const RedteamTab = (() => {
     const tbody = document.getElementById('redteam-projects-tbody');
     if (!tbody) return;
     if (_projects.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No engagements yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No engagements yet.</td></tr>';
       return;
     }
     tbody.innerHTML = _projects.map(p => {
@@ -218,6 +220,7 @@ const RedteamTab = (() => {
       return `<tr class="${sel}" data-id="${p.id}" style="cursor:pointer">
         <td>${esc(p.title)}</td>
         <td>${esc(p.client)}</td>
+        <td>${p.tenant_name ? `<span class="badge badge-blue">${esc(p.tenant_name)}</span>` : '<span class="empty-state">Not linked</span>'}</td>
         <td><span class="role-badge ${STATUS_BADGE[p.status]||''}">${esc(p.status)}</span></td>
         <td>${fmt(p.start_date)}</td>
         <td>${fmt(p.end_date)}</td>
@@ -256,6 +259,7 @@ const RedteamTab = (() => {
     _selectedId = id;
     renderProjects();
     await loadTasks(id);
+    await loadFindings(id);
   }
 
   async function loadTasks(projectId) {
@@ -316,6 +320,171 @@ const RedteamTab = (() => {
     } catch (err) { alert('Delete failed: ' + err.message); }
   }
 
+  // ── Findings table ─────────────────────────────────────────────────────────
+
+  let _findings = [];
+
+  const FINDING_STATUS_BADGE = {
+    'open':          'badge-muted',
+    'in-progress':   'badge-blue',
+    'fixed':         'badge-green',
+    'accepted':      'badge-amber',
+    'risk-accepted': 'badge-amber',
+  };
+
+  async function loadFindings(projectId) {
+    const tbody   = document.getElementById('redteam-findings-tbody');
+    const heading = document.getElementById('redteam-findings-heading');
+    const hint    = document.getElementById('redteam-findings-hint');
+    if (!tbody) return;
+
+    const proj = _projects.find(p => p.id === projectId);
+    if (heading) heading.textContent = proj ? `Findings — ${proj.title}` : 'Findings';
+    if (hint) hint.hidden = !proj || !!proj.tenant_id;
+
+    try {
+      const res  = await fetch(`api/redteam/projects/${projectId}/findings`, { credentials: 'same-origin' });
+      const data = await res.json();
+      _findings = data.findings || [];
+      renderFindings();
+    } catch (_) {
+      _findings = [];
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Failed to load findings.</td></tr>';
+    }
+  }
+
+  function renderFindings() {
+    const tbody = document.getElementById('redteam-findings-tbody');
+    if (!tbody) return;
+    if (_findings.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No findings for this engagement.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = _findings.map(f => {
+      const adminBtns = isAdmin() ? `
+        <button class="btn btn-sm btn-secondary rt-edit-finding" data-id="${f.id}">Edit</button>
+        <button class="btn btn-sm btn-danger rt-del-finding"  data-id="${f.id}">Delete</button>` : '';
+      return `<tr>
+        <td>${esc(f.title)}</td>
+        <td>${esc(f.severity)}</td>
+        <td>${esc(f.owner) || '—'}</td>
+        <td>${fmt(f.due_date)}</td>
+        <td><span class="role-badge ${FINDING_STATUS_BADGE[f.status]||''}">${esc(f.status)}</span></td>
+        <td>${adminBtns}</td>
+      </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('.rt-edit-finding').forEach(btn => {
+      btn.addEventListener('click', () => openFindingModal(parseInt(btn.dataset.id, 10)));
+    });
+    tbody.querySelectorAll('.rt-del-finding').forEach(btn => {
+      btn.addEventListener('click', () => deleteFinding(parseInt(btn.dataset.id, 10)));
+    });
+  }
+
+  function findingTenantQuery(id) {
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+    if (!isSA) return '';
+    const finding = _findings.find(f => f.id === id);
+    return finding && finding.tenant_id ? `?tenantId=${encodeURIComponent(finding.tenant_id)}` : '';
+  }
+
+  async function deleteFinding(id) {
+    if (!confirm('Delete this finding?')) return;
+    try {
+      const res = await fetch(`api/pentest-findings/${id}${findingTenantQuery(id)}`, { method: 'DELETE', credentials: 'same-origin' });
+      if (!res.ok) throw new Error((await res.json()).error);
+      await loadFindings(_selectedId);
+    } catch (err) { alert('Delete failed: ' + err.message); }
+  }
+
+  function openFindingModal(editId) {
+    const modal = document.getElementById('redteam-finding-modal');
+    const form  = document.getElementById('rt-finding-form');
+    if (!modal || !form) return;
+
+    const proj = _projects.find(p => p.id === _selectedId);
+    if (!proj || !proj.tenant_id) {
+      alert('Link this engagement to a tenant before adding findings.');
+      return;
+    }
+
+    const finding = editId ? _findings.find(f => f.id === editId) : null;
+
+    form.querySelector('#rt-finding-id').value             = editId || '';
+    form.querySelector('#rt-finding-title').value          = finding ? finding.title : '';
+    form.querySelector('#rt-finding-severity').value       = finding ? finding.severity : 'medium';
+    form.querySelector('#rt-finding-description').value    = finding ? finding.description : '';
+    form.querySelector('#rt-finding-recommendation').value = finding ? finding.recommendation : '';
+    form.querySelector('#rt-finding-owner').value           = finding ? finding.owner : '';
+    form.querySelector('#rt-finding-due').value             = finding && finding.due_date ? finding.due_date.slice(0,10) : '';
+    form.querySelector('#rt-finding-status').value          = finding ? finding.status : 'open';
+    form.querySelector('#rt-finding-notes').value           = finding ? finding.notes : '';
+
+    document.getElementById('rt-finding-modal-title').textContent = editId ? 'Edit Finding' : 'New Finding';
+    document.getElementById('rt-finding-modal-delete').hidden = !editId;
+    modal.hidden = false;
+  }
+
+  async function saveFinding() {
+    const form = document.getElementById('rt-finding-form');
+    const id   = form.querySelector('#rt-finding-id').value;
+    const body = {
+      title:          form.querySelector('#rt-finding-title').value.trim(),
+      severity:       form.querySelector('#rt-finding-severity').value,
+      description:    form.querySelector('#rt-finding-description').value.trim(),
+      recommendation: form.querySelector('#rt-finding-recommendation').value.trim(),
+      owner:          form.querySelector('#rt-finding-owner').value.trim(),
+      due_date:       form.querySelector('#rt-finding-due').value || null,
+      status:         form.querySelector('#rt-finding-status').value,
+      notes:          form.querySelector('#rt-finding-notes').value.trim(),
+    };
+    if (!body.title) { alert('Title is required.'); return; }
+
+    if (id) {
+      const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+      const finding = _findings.find(f => f.id === parseInt(id, 10));
+      if (finding) body.project_id = finding.project_id;
+      if (isSA && finding) body.tenantId = finding.tenant_id;
+    }
+
+    try {
+      const url    = id ? `api/pentest-findings/${id}` : `api/redteam/projects/${_selectedId}/findings`;
+      const method = id ? 'PUT' : 'POST';
+      const res    = await fetch(url, { method, credentials: 'same-origin', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error((await res.json()).error);
+      document.getElementById('redteam-finding-modal').hidden = true;
+      await loadFindings(_selectedId);
+    } catch (err) { alert('Save failed: ' + err.message); }
+  }
+
+  // ── Tenants (for project → tenant linking) ─────────────────────────────────
+
+  async function loadTenants() {
+    try {
+      const res = await fetch('api/tenants', { credentials: 'same-origin' });
+      _tenants = await res.json();
+    } catch (_) {
+      _tenants = [];
+    }
+  }
+
+  function populateTenantSelect(selectedTenantId) {
+    const sel = document.getElementById('rt-proj-tenant');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Not linked</option>' +
+      _tenants.map(t => `<option value="${t.id}" ${t.id === selectedTenantId ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+  }
+
+  function autoMatchTenantByClient(clientName) {
+    const sel = document.getElementById('rt-proj-tenant');
+    if (!sel || sel.value) return; // don't override an explicit choice
+    const name = clientName.trim().toLowerCase();
+    if (!name) return;
+    const match = _tenants.find(t => t.name.trim().toLowerCase() === name);
+    if (match) sel.value = String(match.id);
+  }
+
   // ── Project Modal ──────────────────────────────────────────────────────────
 
   function openProjectModal(editId) {
@@ -332,6 +501,7 @@ const RedteamTab = (() => {
     form.querySelector('#rt-proj-status').value     = proj ? proj.status     : 'planned';
     form.querySelector('#rt-proj-start').value      = proj ? proj.start_date.slice(0,10) : '';
     form.querySelector('#rt-proj-end').value        = proj ? proj.end_date.slice(0,10)   : '';
+    populateTenantSelect(proj ? proj.tenant_id : null);
 
     document.getElementById('rt-proj-modal-title').textContent = editId ? 'Edit Engagement' : 'New Engagement';
     modal.hidden = false;
@@ -340,6 +510,7 @@ const RedteamTab = (() => {
   async function saveProject() {
     const form = document.getElementById('rt-proj-form');
     const id   = form.querySelector('#rt-proj-id').value;
+    const tenantVal = form.querySelector('#rt-proj-tenant').value;
     const body = {
       title:      form.querySelector('#rt-proj-title').value.trim(),
       client:     form.querySelector('#rt-proj-client').value.trim(),
@@ -347,6 +518,7 @@ const RedteamTab = (() => {
       status:     form.querySelector('#rt-proj-status').value,
       start_date: form.querySelector('#rt-proj-start').value,
       end_date:   form.querySelector('#rt-proj-end').value,
+      tenant_id:  tenantVal ? parseInt(tenantVal, 10) : null,
     };
     try {
       const url    = id ? `api/redteam/projects/${id}` : 'api/redteam/projects';
@@ -437,6 +609,32 @@ const RedteamTab = (() => {
       document.getElementById('redteam-task-modal').hidden = true;
     });
     document.getElementById('rt-task-modal-save')?.addEventListener('click', saveTask);
+
+    const btnNewFinding = document.getElementById('rt-btn-new-finding');
+    if (btnNewFinding) {
+      if (!isAdmin()) { btnNewFinding.hidden = true; }
+      else btnNewFinding.addEventListener('click', () => {
+        if (!_selectedId) { alert('Select an engagement first.'); return; }
+        openFindingModal();
+      });
+    }
+
+    document.getElementById('rt-finding-modal-close')?.addEventListener('click', () => {
+      document.getElementById('redteam-finding-modal').hidden = true;
+    });
+    document.getElementById('rt-finding-modal-close-2')?.addEventListener('click', () => {
+      document.getElementById('redteam-finding-modal').hidden = true;
+    });
+    document.getElementById('rt-finding-modal-save')?.addEventListener('click', saveFinding);
+    document.getElementById('rt-finding-modal-delete')?.addEventListener('click', () => {
+      const id = parseInt(document.getElementById('rt-finding-id').value, 10);
+      if (id) deleteFinding(id);
+      document.getElementById('redteam-finding-modal').hidden = true;
+    });
+
+    document.getElementById('rt-proj-client')?.addEventListener('blur', (e) => {
+      autoMatchTenantByClient(e.target.value);
+    });
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -445,8 +643,11 @@ const RedteamTab = (() => {
     initListeners();
 
     try {
-      const res  = await fetch('api/redteam/projects', { credentials: 'same-origin' });
-      const data = await res.json();
+      const [projRes] = await Promise.all([
+        fetch('api/redteam/projects', { credentials: 'same-origin' }),
+        loadTenants(),
+      ]);
+      const data = await projRes.json();
       _projects  = data.projects || [];
     } catch (_) {
       _projects = [];
@@ -458,11 +659,17 @@ const RedteamTab = (() => {
 
     if (_selectedId) {
       await loadTasks(_selectedId);
+      await loadFindings(_selectedId);
     } else {
       const tbody   = document.getElementById('redteam-tasks-tbody');
       const heading = document.getElementById('redteam-tasks-heading');
       if (heading) heading.textContent = 'Tasks';
       if (tbody)   tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Select an engagement to view tasks.</td></tr>';
+
+      const fTbody   = document.getElementById('redteam-findings-tbody');
+      const fHeading = document.getElementById('redteam-findings-heading');
+      if (fHeading) fHeading.textContent = 'Findings';
+      if (fTbody)   fTbody.innerHTML = '<tr><td colspan="6" class="empty-state">Select an engagement to view findings.</td></tr>';
     }
   }
 

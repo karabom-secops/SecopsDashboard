@@ -2101,12 +2101,13 @@ app.get('/api/redteam/stats', requireAuth, async (req, res) => {
 app.get('/api/redteam/projects', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT p.*,
+      `SELECT p.*, tn.name AS tenant_name,
               COUNT(t.id)                                 AS task_count,
               COUNT(t.id) FILTER (WHERE t.status='done') AS tasks_done
        FROM redteam_projects p
        LEFT JOIN redteam_tasks t ON t.project_id = p.id
-       GROUP BY p.id
+       LEFT JOIN tenants tn ON tn.id = p.tenant_id
+       GROUP BY p.id, tn.name
        ORDER BY p.start_date DESC`
     );
     res.json({ projects: result.rows });
@@ -2116,14 +2117,14 @@ app.get('/api/redteam/projects', requireAuth, async (req, res) => {
 /** POST /api/redteam/projects */
 app.post('/api/redteam/projects', requireAdmin, async (req, res) => {
   try {
-    const { title, client, scope, status, start_date, end_date } = req.body;
+    const { title, client, scope, status, start_date, end_date, tenant_id } = req.body;
     if (!title || !client || !start_date || !end_date)
       return res.status(400).json({ error: 'title, client, start_date and end_date are required.' });
 
     const result = await pool.query(
-      `INSERT INTO redteam_projects (title, client, scope, status, start_date, end_date, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [title, client, scope || '', status || 'planned', start_date, end_date, req.session.userId]
+      `INSERT INTO redteam_projects (title, client, scope, status, start_date, end_date, tenant_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [title, client, scope || '', status || 'planned', start_date, end_date, tenant_id || null, req.session.userId]
     );
     res.json({ project: result.rows[0] });
   } catch (err) { return serverError(res, err); }
@@ -2132,12 +2133,12 @@ app.post('/api/redteam/projects', requireAdmin, async (req, res) => {
 /** PUT /api/redteam/projects/:id */
 app.put('/api/redteam/projects/:id', requireAdmin, async (req, res) => {
   try {
-    const { title, client, scope, status, start_date, end_date } = req.body;
+    const { title, client, scope, status, start_date, end_date, tenant_id } = req.body;
     const result = await pool.query(
       `UPDATE redteam_projects
-       SET title=$1, client=$2, scope=$3, status=$4, start_date=$5, end_date=$6, updated_at=NOW()
-       WHERE id=$7 RETURNING *`,
-      [title, client, scope || '', status, start_date, end_date, req.params.id]
+       SET title=$1, client=$2, scope=$3, status=$4, start_date=$5, end_date=$6, tenant_id=$7, updated_at=NOW()
+       WHERE id=$8 RETURNING *`,
+      [title, client, scope || '', status, start_date, end_date, tenant_id || null, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Project not found.' });
     res.json({ project: result.rows[0] });
@@ -2207,6 +2208,60 @@ app.delete('/api/redteam/tasks/:id', requireAdmin, async (req, res) => {
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Task not found.' });
     res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * Checks the caller may act on a project's tenant-linked data: superadmin can act on
+ * any project; other roles only on projects linked to their own tenant.
+ * Returns { project } or { error }.
+ */
+async function resolveProjectForTenantAccess(req) {
+  const projResult = await pool.query('SELECT * FROM redteam_projects WHERE id=$1', [req.params.id]);
+  if (projResult.rows.length === 0) return { error: { status: 404, message: 'Project not found.' } };
+  const project = projResult.rows[0];
+
+  if (req.session.role !== 'superadmin' && project.tenant_id !== req.session.tenantId) {
+    return { error: { status: 403, message: 'You do not have access to this engagement.' } };
+  }
+  return { project };
+}
+
+/** GET /api/redteam/projects/:id/findings */
+app.get('/api/redteam/projects/:id/findings', requireAuth, async (req, res) => {
+  try {
+    const { project, error } = await resolveProjectForTenantAccess(req);
+    if (error) return res.status(error.status).json({ error: error.message });
+    if (!project.tenant_id) return res.json({ findings: [] });
+
+    const result = await pool.query(
+      'SELECT * FROM pentest_findings WHERE project_id=$1 ORDER BY created_at DESC',
+      [req.params.id]
+    );
+    res.json({ findings: result.rows });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/redteam/projects/:id/findings — tenant is derived from the project's linked tenant */
+app.post('/api/redteam/projects/:id/findings', requireAdmin, async (req, res) => {
+  try {
+    const { project, error } = await resolveProjectForTenantAccess(req);
+    if (error) return res.status(error.status).json({ error: error.message });
+    if (!project.tenant_id) {
+      return res.status(400).json({ error: 'Link this engagement to a tenant before adding findings.' });
+    }
+
+    const { title, severity, description, recommendation, owner, due_date, status, notes } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required.' });
+    if (severity !== undefined && !PENTEST_SEVERITIES.includes(severity)) return res.status(400).json({ error: 'invalid severity.' });
+    if (status !== undefined && !PENTEST_STATUSES.includes(status)) return res.status(400).json({ error: 'invalid status.' });
+
+    const result = await pool.query(
+      `INSERT INTO pentest_findings (tenant_id, project_id, title, severity, description, recommendation, owner, due_date, status, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [project.tenant_id, project.id, title, severity || 'medium', description || '', recommendation || '', owner || '', due_date || null, status || 'open', notes || '', req.session.userId]
+    );
+    res.json({ finding: result.rows[0] });
   } catch (err) { return serverError(res, err); }
 });
 
