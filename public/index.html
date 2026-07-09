@@ -789,18 +789,45 @@
       <table class="data-table" style="width:100%">
         <thead>
           <tr>
-            <th>Title</th><th>Severity</th><th>Status</th><th>Phase</th>
+            <th>Title</th><th>Type</th><th>Severity</th><th>Status</th><th>Phase</th>
             <th>Assigned To</th><th>Opened</th><th>Closed</th><th>Activity</th><th>Actions</th>
           </tr>
         </thead>
         <tbody id="ir-incidents-tbody">
-          <tr><td colspan="9" class="empty-state">Loading…</td></tr>
+          <tr><td colspan="10" class="empty-state">Loading…</td></tr>
         </tbody>
       </table>
     </div>
 
     <!-- Phase tracker -->
-    <div id="ir-phase-tracker" style="margin-bottom:1.5rem"></div>
+    <div id="ir-phase-tracker" style="margin-bottom:1rem"></div>
+
+    <!-- Playbook phase board (drag-and-drop tasks between IR phases) -->
+    <div id="ir-phase-board-wrap" style="margin-bottom:1.5rem" hidden>
+      <h3 style="margin:0 0 .5rem;font-size:1rem;font-weight:600">Playbook</h3>
+      <div id="ir-phase-board" class="ir-phase-board">
+        <div class="ir-phase-column" data-phase="identification">
+          <div class="ir-phase-column-header"><span>Identification</span><span class="ir-phase-column-count" id="ir-phase-count-identification">0</span></div>
+          <div class="ir-phase-column-body" id="ir-phase-body-identification"></div>
+        </div>
+        <div class="ir-phase-column" data-phase="containment">
+          <div class="ir-phase-column-header"><span>Containment</span><span class="ir-phase-column-count" id="ir-phase-count-containment">0</span></div>
+          <div class="ir-phase-column-body" id="ir-phase-body-containment"></div>
+        </div>
+        <div class="ir-phase-column" data-phase="eradication">
+          <div class="ir-phase-column-header"><span>Eradication</span><span class="ir-phase-column-count" id="ir-phase-count-eradication">0</span></div>
+          <div class="ir-phase-column-body" id="ir-phase-body-eradication"></div>
+        </div>
+        <div class="ir-phase-column" data-phase="recovery">
+          <div class="ir-phase-column-header"><span>Recovery</span><span class="ir-phase-column-count" id="ir-phase-count-recovery">0</span></div>
+          <div class="ir-phase-column-body" id="ir-phase-body-recovery"></div>
+        </div>
+        <div class="ir-phase-column" data-phase="post-incident-analysis">
+          <div class="ir-phase-column-header"><span>Post Incident Analysis</span><span class="ir-phase-column-count" id="ir-phase-count-post-incident-analysis">0</span></div>
+          <div class="ir-phase-column-body" id="ir-phase-body-post-incident-analysis"></div>
+        </div>
+      </div>
+    </div>
 
     <!-- Activity log table -->
     <div class="section-heading-row" style="margin-bottom:.75rem">
@@ -832,6 +859,18 @@
           <div class="form-group">
             <label class="form-label" for="ir-inc-title">Title *</label>
             <input class="form-input" id="ir-inc-title" type="text" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ir-inc-type">Incident Type</label>
+            <select class="form-select" id="ir-inc-type">
+              <option value="phishing">Phishing</option>
+              <option value="malware_ransomware">Malware / Ransomware</option>
+              <option value="data_breach">Data Breach</option>
+              <option value="insider_threat">Insider Threat</option>
+              <option value="ddos">DDoS</option>
+              <option value="unauthorized_access">Unauthorized Access</option>
+              <option value="other" selected>Other</option>
+            </select>
           </div>
           <div class="form-group">
             <label class="form-label" for="ir-inc-description">Description</label>
@@ -1393,6 +1432,7 @@
   <script src="js/tab-secure-score.js"></script>
   <script src="js/tab-grc.js"></script>
   <script src="js/tab-redteam.js"></script>
+  <script src="js/ir-playbooks-data.js"></script>
   <script src="js/tab-incident-response.js"></script>
   <script src="js/tab-risk-register.js"></script>
   <script src="js/tab-remediation-tracker.js"></script>

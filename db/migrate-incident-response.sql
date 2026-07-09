@@ -29,6 +29,14 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+-- Incident type, used to select the seeded playbook of phase tasks on creation
+ALTER TABLE ir_incidents ADD COLUMN IF NOT EXISTS incident_type VARCHAR(40) NOT NULL DEFAULT 'other';
+DO $$ BEGIN
+  ALTER TABLE ir_incidents ADD CONSTRAINT ir_incidents_type_check
+    CHECK (incident_type IN ('phishing','malware_ransomware','data_breach','insider_threat','ddos','unauthorized_access','other'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 CREATE TABLE IF NOT EXISTS ir_activities (
   id          SERIAL PRIMARY KEY,
   incident_id INT NOT NULL REFERENCES ir_incidents(id) ON DELETE CASCADE,
@@ -40,3 +48,18 @@ CREATE TABLE IF NOT EXISTS ir_activities (
   logged_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_ir_activities_incident ON ir_activities(incident_id);
+
+-- Per-task phase + ordering, so playbook tiles can be dragged across phase columns
+-- independently of the incident's own overall phase.
+ALTER TABLE ir_activities ADD COLUMN IF NOT EXISTS phase VARCHAR(30) NOT NULL DEFAULT 'identification';
+DO $$ BEGIN
+  ALTER TABLE ir_activities ADD CONSTRAINT ir_activities_phase_check
+    CHECK (phase IN ('identification','containment','eradication','recovery','post-incident-analysis'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+ALTER TABLE ir_activities ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0;
+
+-- Backfill: existing activities inherit their incident's current phase
+UPDATE ir_activities a SET phase = i.phase
+FROM ir_incidents i
+WHERE a.incident_id = i.id AND a.phase = 'identification' AND i.phase != 'identification';

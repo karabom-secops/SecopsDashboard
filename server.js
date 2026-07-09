@@ -24,6 +24,7 @@ const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } 
 const { calculateSecureScore, generateRecommendations } = require('./lib/secure-score');
 const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils');
 const arcticWolfAdapter = require('./lib/integrations/arctic-wolf');
+const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
 const irisDfirAdapter   = require('./lib/integrations/iris-dfir');
 
 const app  = express();
@@ -2325,21 +2326,41 @@ app.get('/api/ir/incidents', requireAuth, async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
+const IR_VALID_PHASES = ['identification', 'containment', 'eradication', 'recovery', 'post-incident-analysis'];
+const IR_VALID_TYPES = ['phishing', 'malware_ransomware', 'data_breach', 'insider_threat', 'ddos', 'unauthorized_access', 'other'];
+
 /** POST /api/ir/incidents */
 app.post('/api/ir/incidents', requireAdmin, async (req, res) => {
   try {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
 
-    const { title, description, severity, status, assigned_to, phase } = req.body;
+    const { title, description, severity, status, assigned_to, phase, incident_type } = req.body;
     if (!title) return res.status(400).json({ error: 'title is required.' });
+    const incidentType = IR_VALID_TYPES.includes(incident_type) ? incident_type : 'other';
 
     const result = await pool.query(
-      `INSERT INTO ir_incidents (tenant_id, title, description, severity, status, assigned_to, phase, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [tenantId, title, description || '', severity || 'medium', status || 'open', assigned_to || '', phase || 'identification', req.session.userId]
+      `INSERT INTO ir_incidents (tenant_id, title, description, severity, status, assigned_to, phase, incident_type, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [tenantId, title, description || '', severity || 'medium', status || 'open', assigned_to || '', phase || 'identification', incidentType, req.session.userId]
     );
-    res.json({ incident: result.rows[0] });
+    const incident = result.rows[0];
+
+    // Seed the activity/task board from the incident type's playbook
+    const playbook = IR_PLAYBOOKS[incidentType] || IR_PLAYBOOKS.other;
+    let sortOrder = 0;
+    for (const p of IR_VALID_PHASES) {
+      const tasks = playbook[p] || [];
+      for (const task of tasks) {
+        await pool.query(
+          `INSERT INTO ir_activities (incident_id, entry, status, phase, sort_order, logged_by)
+           VALUES ($1,$2,'pending',$3,$4,$5)`,
+          [incident.id, task, p, sortOrder++, req.session.userId]
+        );
+      }
+    }
+
+    res.json({ incident });
   } catch (err) { return serverError(res, err); }
 });
 
@@ -2349,15 +2370,16 @@ app.put('/api/ir/incidents/:id', requireAdmin, async (req, res) => {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
 
-    const { title, description, severity, status, assigned_to, phase } = req.body;
+    const { title, description, severity, status, assigned_to, phase, incident_type } = req.body;
+    const incidentType = IR_VALID_TYPES.includes(incident_type) ? incident_type : 'other';
     const result = await pool.query(
       `UPDATE ir_incidents
-       SET title=$1, description=$2, severity=$3, status=$4, assigned_to=$5, phase=$6, updated_at=NOW(),
+       SET title=$1, description=$2, severity=$3, status=$4, assigned_to=$5, phase=$6, incident_type=$7, updated_at=NOW(),
            closed_at = CASE WHEN $4 = 'closed' AND closed_at IS NULL THEN NOW()
                             WHEN $4 != 'closed' THEN NULL
                             ELSE closed_at END
-       WHERE id=$7 AND tenant_id=$8 RETURNING *`,
-      [title, description || '', severity, status, assigned_to || '', phase || 'identification', req.params.id, tenantId]
+       WHERE id=$8 AND tenant_id=$9 RETURNING *`,
+      [title, description || '', severity, status, assigned_to || '', phase || 'identification', incidentType, req.params.id, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
     res.json({ incident: result.rows[0] });
@@ -2371,8 +2393,7 @@ app.patch('/api/ir/incidents/:id/phase', requireAdmin, async (req, res) => {
     if (error) return res.status(error.status).json({ error: error.message });
 
     const { phase } = req.body;
-    const VALID_PHASES = ['identification', 'containment', 'eradication', 'recovery', 'post-incident-analysis'];
-    if (!VALID_PHASES.includes(phase)) return res.status(400).json({ error: 'invalid phase.' });
+    if (!IR_VALID_PHASES.includes(phase)) return res.status(400).json({ error: 'invalid phase.' });
 
     const result = await pool.query(
       `UPDATE ir_incidents SET phase=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3 RETURNING *`,
@@ -2408,7 +2429,8 @@ app.get('/api/ir/incidents/:id/activities', requireAuth, async (req, res) => {
     if (incRes.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
 
     const result = await pool.query(
-      'SELECT * FROM ir_activities WHERE incident_id=$1 ORDER BY logged_at ASC',
+      `SELECT * FROM ir_activities WHERE incident_id=$1
+       ORDER BY phase, sort_order ASC, logged_at ASC`,
       [req.params.id]
     );
     res.json({ activities: result.rows });
@@ -2449,6 +2471,27 @@ app.put('/api/ir/activities/:id', requireAdmin, async (req, res) => {
        WHERE a.id=$4 AND a.incident_id=i.id AND i.tenant_id=$5
        RETURNING a.*`,
       [entry, assignee || '', status, req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Activity not found.' });
+    res.json({ activity: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PATCH /api/ir/activities/:id/phase — move a playbook task tile between phase columns */
+app.patch('/api/ir/activities/:id/phase', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { phase, sort_order } = req.body;
+    if (!IR_VALID_PHASES.includes(phase)) return res.status(400).json({ error: 'invalid phase.' });
+
+    const result = await pool.query(
+      `UPDATE ir_activities a SET phase=$1, sort_order=$2
+       FROM ir_incidents i
+       WHERE a.id=$3 AND a.incident_id=i.id AND i.tenant_id=$4
+       RETURNING a.*`,
+      [phase, Number.isInteger(sort_order) ? sort_order : 0, req.params.id, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Activity not found.' });
     res.json({ activity: result.rows[0] });
