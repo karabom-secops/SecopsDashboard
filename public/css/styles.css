@@ -949,6 +949,11 @@ input[type="file"] {
 .status-pill.in-progress { background: #eff8ff; color: #1d6fab; border: 1px solid #93c5fd; }
 .status-pill.fixed       { background: #e7f8ea; color: #2c8740; border: 1px solid #9ed9aa; }
 
+/* Remediation Tracker — source badges */
+.badge-source-vuln    { background: #fef3c7; color: #92400e; }
+.badge-source-pentest { background: #ede9fe; color: #5b21b6; }
+.badge-source-risk    { background: #dbeafe; color: #1e40af; }
+
 /* Scrollable findings table */
 .vuln-findings-wrap {
   max-height: 500px;

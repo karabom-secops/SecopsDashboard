@@ -2574,6 +2574,159 @@ app.delete('/api/risks/:id', requireRiskWrite, async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
+// ── Pentest Findings routes ───────────────────────────────────────────────
+
+function resolvePentestTenant(req, source) {
+  if (req.session.role === 'superadmin') {
+    const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+const PENTEST_SEVERITIES = ['critical', 'high', 'medium', 'low', 'informational'];
+const PENTEST_STATUSES = ['open', 'in-progress', 'fixed', 'accepted', 'risk-accepted'];
+
+/** GET /api/pentest-findings */
+app.get('/api/pentest-findings', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolvePentestTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const params = [tenantId];
+    let where = 'tenant_id = $1';
+    if (req.query.projectId) {
+      params.push(parseInt(req.query.projectId, 10));
+      where += ` AND project_id = $${params.length}`;
+    }
+
+    const result = await pool.query(
+      `SELECT * FROM pentest_findings WHERE ${where} ORDER BY created_at DESC`,
+      params
+    );
+    res.json({ findings: result.rows });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/pentest-findings */
+app.post('/api/pentest-findings', requireRiskWrite, async (req, res) => {
+  try {
+    const { tenantId, error } = resolvePentestTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { title, severity, description, recommendation, owner, due_date, status, notes, project_id } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required.' });
+    if (severity !== undefined && !PENTEST_SEVERITIES.includes(severity)) return res.status(400).json({ error: 'invalid severity.' });
+    if (status !== undefined && !PENTEST_STATUSES.includes(status)) return res.status(400).json({ error: 'invalid status.' });
+
+    const result = await pool.query(
+      `INSERT INTO pentest_findings (tenant_id, project_id, title, severity, description, recommendation, owner, due_date, status, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [tenantId, project_id || null, title, severity || 'medium', description || '', recommendation || '', owner || '', due_date || null, status || 'open', notes || '', req.session.userId]
+    );
+    res.json({ finding: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PUT /api/pentest-findings/:id */
+app.put('/api/pentest-findings/:id', requireRiskWrite, async (req, res) => {
+  try {
+    const { tenantId, error } = resolvePentestTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { title, severity, description, recommendation, owner, due_date, status, notes, project_id } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required.' });
+    if (severity !== undefined && !PENTEST_SEVERITIES.includes(severity)) return res.status(400).json({ error: 'invalid severity.' });
+    if (status !== undefined && !PENTEST_STATUSES.includes(status)) return res.status(400).json({ error: 'invalid status.' });
+
+    const result = await pool.query(
+      `UPDATE pentest_findings
+       SET title=$1, severity=$2, description=$3, recommendation=$4, owner=$5, due_date=$6, status=$7, notes=$8,
+           project_id=$9, updated_at=NOW(),
+           status_updated_at = CASE WHEN $7::varchar IS DISTINCT FROM status THEN NOW() ELSE status_updated_at END
+       WHERE id=$10 AND tenant_id=$11 RETURNING *`,
+      [title, severity || 'medium', description || '', recommendation || '', owner || '', due_date || null, status || 'open', notes || '', project_id || null, req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Finding not found.' });
+    res.json({ finding: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PATCH /api/pentest-findings/:id/status */
+app.patch('/api/pentest-findings/:id/status', requireRiskWrite, async (req, res) => {
+  try {
+    const { tenantId, error } = resolvePentestTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { status, notes } = req.body;
+    if (!PENTEST_STATUSES.includes(status)) return res.status(400).json({ error: 'invalid status.' });
+
+    const result = await pool.query(
+      `UPDATE pentest_findings
+       SET status=$1, notes=COALESCE($2, notes), status_updated_at=NOW(), updated_at=NOW()
+       WHERE id=$3 AND tenant_id=$4 RETURNING *`,
+      [status, notes !== undefined ? String(notes).slice(0, 500) : null, req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Finding not found.' });
+    res.json({ finding: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/pentest-findings/:id */
+app.delete('/api/pentest-findings/:id', requireRiskWrite, async (req, res) => {
+  try {
+    const { tenantId, error } = resolvePentestTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      'DELETE FROM pentest_findings WHERE id=$1 AND tenant_id=$2 RETURNING id',
+      [req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Finding not found.' });
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+// ── Remediation Tracker (aggregation) ─────────────────────────────────────
+
+/** GET /api/remediation-tracker — combined vulns + risks + pentest findings for the current tenant */
+app.get('/api/remediation-tracker', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolvePentestTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const [scanRes, risksRes, pentestRes] = await Promise.all([
+      pool.query('SELECT id, month_key AS "monthKey" FROM vuln_scans WHERE tenant_id=$1 ORDER BY month_key DESC LIMIT 1', [tenantId]),
+      pool.query('SELECT * FROM risks WHERE tenant_id=$1 ORDER BY created_at DESC', [tenantId]),
+      pool.query('SELECT * FROM pentest_findings WHERE tenant_id=$1 ORDER BY created_at DESC', [tenantId]),
+    ]);
+
+    let vulns = [];
+    let vulnMonthKey = null;
+    if (scanRes.rows.length > 0) {
+      vulnMonthKey = scanRes.rows[0].monthKey;
+      const findingsRes = await pool.query(
+        `SELECT finding_index AS idx, name, risk, host, cve, status, notes,
+                status_updated_at AS "statusUpdatedAt"
+         FROM vuln_findings WHERE scan_id=$1 ORDER BY finding_index ASC`,
+        [scanRes.rows[0].id]
+      );
+      vulns = findingsRes.rows;
+    }
+
+    res.json({
+      vulnMonthKey,
+      vulns,
+      risks: risksRes.rows,
+      pentestFindings: pentestRes.rows,
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
 // ── Secure Score routes ────────────────────────────────────────────────────
 
 /**

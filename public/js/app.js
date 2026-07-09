@@ -17,6 +17,7 @@
     'incident-response': document.getElementById('tab-incident-response'),
     grc:          document.getElementById('tab-grc'),
     'risk-register': document.getElementById('tab-risk-register'),
+    'remediation-tracker': document.getElementById('tab-remediation-tracker'),
     'secure-score': document.getElementById('tab-secure-score'),
     admin:        document.getElementById('tab-admin'),
   };
@@ -31,6 +32,7 @@
     awareness:  'Awareness',
     'incident-response': 'Incident Response',
     'risk-register': 'Risk Register',
+    'remediation-tracker': 'Remediation Tracker',
     'secure-score': 'Secure Score',
     admin:      'Admin',
   };
@@ -90,6 +92,9 @@
     }
     if (target === 'risk-register' && typeof window.RiskRegisterTab !== 'undefined') {
       window.RiskRegisterTab.loadAndRender();
+    }
+    if (target === 'remediation-tracker' && typeof window.RemediationTrackerTab !== 'undefined') {
+      window.RemediationTrackerTab.loadAndRender();
     }
     if (target === 'admin' && typeof window.renderAdmin === 'function') {
       window.renderAdmin();

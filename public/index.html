@@ -78,6 +78,10 @@
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         Risk Register
       </button>
+      <button class="side-nav-item" data-tab="remediation-tracker">
+        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Remediation Tracker
+      </button>
       <button class="side-nav-item" data-tab="secure-score">
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         Secure Score
@@ -938,6 +942,99 @@
     </div>
   </section>
 
+  <!-- Tab: Remediation Tracker -->
+  <section id="tab-remediation-tracker" class="tab-panel" role="tabpanel" hidden>
+    <div class="section-header">
+      <h2 class="section-title">Remediation Tracker</h2>
+      <div style="display:flex; gap:0.5rem;">
+        <button class="btn btn-secondary" id="rt-export-btn">Export CSV</button>
+        <button class="btn btn-primary" id="rt-new-btn">+ New Pentest Finding</button>
+      </div>
+    </div>
+
+    <div id="rt-stats" class="stat-grid" style="margin-bottom:1.5rem"></div>
+
+    <div id="rt-filters" class="filter-chips" style="margin-bottom:1rem"></div>
+
+    <div class="table-wrapper">
+      <table id="rt-table" class="data-table">
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Title</th>
+            <th>Severity</th>
+            <th>Owner</th>
+            <th>Due Date</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="rt-table-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Pentest Finding Modal -->
+    <div id="rt-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="rt-modal-title" class="modal-title">New Pentest Finding</h3>
+          <button class="modal-close" id="rt-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <form id="rt-form" onsubmit="return false">
+          <input type="hidden" id="rt-id">
+          <div class="form-group">
+            <label class="form-label" for="rt-title">Title *</label>
+            <input class="form-input" id="rt-title" type="text" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-severity">Severity</label>
+            <select class="form-select" id="rt-severity">
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium" selected>Medium</option>
+              <option value="low">Low</option>
+              <option value="informational">Informational</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-description">Description</label>
+            <textarea class="form-textarea" id="rt-description" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-recommendation">Recommendation</label>
+            <textarea class="form-textarea" id="rt-recommendation" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-owner">Owner</label>
+            <input class="form-input" id="rt-owner" type="text">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-due">Due Date</label>
+            <input class="form-input" id="rt-due" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-status">Status</label>
+            <select class="form-select" id="rt-status">
+              <option value="open">Open</option>
+              <option value="in-progress">In Progress</option>
+              <option value="fixed">Fixed</option>
+              <option value="accepted">Accepted</option>
+              <option value="risk-accepted">Risk Accepted</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-notes">Notes</label>
+            <textarea class="form-textarea" id="rt-notes" rows="2"></textarea>
+          </div>
+        </form>
+        <div class="modal-footer">
+          <button class="btn btn-danger" id="rt-modal-delete" hidden>Delete</button>
+          <button class="btn btn-secondary" id="rt-modal-close-2">Cancel</button>
+          <button class="btn btn-primary" id="rt-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
   <section id="tab-admin" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
@@ -1199,6 +1296,7 @@
   <script src="js/tab-redteam.js"></script>
   <script src="js/tab-incident-response.js"></script>
   <script src="js/tab-risk-register.js"></script>
+  <script src="js/tab-remediation-tracker.js"></script>
   <script src="js/tab-admin.js"></script>
 </body>
 </html>
