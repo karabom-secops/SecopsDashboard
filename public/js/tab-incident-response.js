@@ -6,7 +6,6 @@ const IrTab = (() => {
   let _incidents   = [];
   let _selectedId  = null;
   let _activities  = [];
-  let _dragTaskId  = null;
 
   function canWrite() { return isAdmin(); }
 
@@ -58,63 +57,16 @@ const IrTab = (() => {
   const INCIDENT_TYPES = (window.IrPlaybooks && window.IrPlaybooks.INCIDENT_TYPES) || [{ value: 'other', label: 'Other' }];
   const INCIDENT_TYPE_LABEL = Object.fromEntries(INCIDENT_TYPES.map(t => [t.value, t.label]));
 
-  // ── Phase tracker ──────────────────────────────────────────────────────────
+  // ── Phase board (drag incidents between IR phases) ─────────────────────────
+  // Mirrors the Risk Register kanban board (public/js/tab-risk-register.js):
+  // incidents are the draggable cards, columns are the 5 IR phases, and
+  // dropping a card into a column PATCHes the incident's phase.
 
-  function renderPhaseTracker() {
-    const wrap = document.getElementById('ir-phase-tracker');
-    if (!wrap) return;
-
-    const incident = _incidents.find(i => i.id === _selectedId);
-    if (!incident) { wrap.innerHTML = ''; return; }
-
-    const currentIdx = PHASES.findIndex(p => p.value === incident.phase);
-    const canEdit = isAdmin();
-
-    wrap.innerHTML = `
-      <div class="ir-phase-tracker">
-        ${PHASES.map((p, i) => `
-          <div class="ir-phase-step ${i < currentIdx ? 'ir-phase-done' : ''} ${i === currentIdx ? 'ir-phase-current' : ''}"
-               data-phase="${p.value}" ${canEdit ? 'role="button" tabindex="0"' : ''}>
-            <div class="ir-phase-dot">${i < currentIdx ? '&#10003;' : i + 1}</div>
-            <div class="ir-phase-label">${p.label}</div>
-          </div>
-          ${i < PHASES.length - 1 ? `<div class="ir-phase-connector ${i < currentIdx ? 'ir-phase-done' : ''}"></div>` : ''}
-        `).join('')}
-      </div>`;
-
-    if (canEdit) {
-      wrap.querySelectorAll('.ir-phase-step').forEach(step => {
-        step.addEventListener('click', () => setPhase(incident.id, step.dataset.phase));
-      });
-    }
-  }
-
-  async function setPhase(incidentId, phase) {
-    const body = { phase };
-    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
-    if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
-
-    await fetch(`api/ir/incidents/${incidentId}/phase`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-      body: JSON.stringify(body),
-    });
-
-    await loadIncidents();
-    renderIncidentsTable();
-    renderPhaseTracker();
-  }
-
-  // ── Playbook phase board (drag-and-drop) ───────────────────────────────────
+  let _dragIncidentId = null;
 
   function renderPhaseBoard() {
-    const wrap = document.getElementById('ir-phase-board-wrap');
-    if (!wrap) return;
-
-    if (!_selectedId) { wrap.hidden = true; return; }
-    wrap.hidden = false;
-
     const byPhase = Object.fromEntries(PHASES.map(p => [p.value, []]));
-    _activities.forEach(a => { if (byPhase[a.phase]) byPhase[a.phase].push(a); });
+    _incidents.forEach(inc => { if (byPhase[inc.phase]) byPhase[inc.phase].push(inc); });
 
     PHASES.forEach(p => {
       const body = document.getElementById(`ir-phase-body-${p.value}`);
@@ -124,29 +76,35 @@ const IrTab = (() => {
       if (count) count.textContent = items.length;
 
       if (items.length === 0) {
-        body.innerHTML = '<p class="empty-state">No tasks.</p>';
+        body.innerHTML = '<p class="empty-state">No incidents.</p>';
         return;
       }
 
-      body.innerHTML = items.map(a => `
-        <div class="ir-phase-tile" data-id="${a.id}" ${canWrite() ? 'draggable="true"' : ''}>
-          <div class="ir-phase-tile-entry">${esc(a.entry)}</div>
+      body.innerHTML = items.map(inc => `
+        <div class="ir-phase-tile" data-id="${inc.id}" ${canWrite() ? 'draggable="true"' : ''}>
+          <div class="ir-phase-tile-header">
+            <span class="ir-phase-tile-title">${esc(inc.title)}</span>
+            <span class="badge ${SEVERITY_BADGE[inc.severity] || ''}">${esc(inc.severity)}</span>
+          </div>
           <div class="ir-phase-tile-meta">
-            <span class="badge ${ACTIVITY_STATUS_BADGE[a.status] || ''}">${esc(a.status)}</span>
-            ${a.assignee ? `<span>${esc(a.assignee)}</span>` : ''}
+            <span>${esc(INCIDENT_TYPE_LABEL[inc.incident_type] || inc.incident_type)}</span>
+            <span class="badge ${STATUS_BADGE[inc.status] || ''}">${esc(inc.status)}</span>
+            ${inc.assigned_to ? `<span>${esc(inc.assigned_to)}</span>` : ''}
           </div>
         </div>
       `).join('');
 
       body.querySelectorAll('.ir-phase-tile').forEach(tile => {
-        if (!canWrite()) return;
-        tile.addEventListener('dragstart', (e) => {
-          _dragTaskId = parseInt(tile.dataset.id, 10);
-          tile.classList.add('dragging');
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', String(_dragTaskId));
-        });
-        tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
+        tile.addEventListener('click', () => selectIncident(parseInt(tile.dataset.id, 10)));
+        if (canWrite()) {
+          tile.addEventListener('dragstart', (e) => {
+            _dragIncidentId = parseInt(tile.dataset.id, 10);
+            tile.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(_dragIncidentId));
+          });
+          tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
+        }
       });
     });
   }
@@ -163,30 +121,31 @@ const IrTab = (() => {
       col.addEventListener('drop', async (e) => {
         e.preventDefault();
         col.classList.remove('drag-over');
-        if (!canWrite() || _dragTaskId === null) return;
+        if (!canWrite() || _dragIncidentId === null) return;
         const phase = col.dataset.phase;
-        const task = _activities.find(a => a.id === _dragTaskId);
-        if (!task || task.phase === phase) { _dragTaskId = null; return; }
+        const incident = _incidents.find(i => i.id === _dragIncidentId);
+        if (!incident || incident.phase === phase) { _dragIncidentId = null; return; }
 
-        const prevPhase = task.phase;
-        const sortOrder = _activities.filter(a => a.phase === phase).length;
-        task.phase = phase;
+        const prevPhase = incident.phase;
+        incident.phase = phase;
         renderPhaseBoard();
+        renderIncidentsTable();
 
         try {
-          const body = { phase, sort_order: sortOrder };
+          const body = { phase };
           const isSA = window.currentUser && window.currentUser.role === 'superadmin';
           if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
-          const res = await fetch(`api/ir/activities/${_dragTaskId}/phase`, {
+          const res = await fetch(`api/ir/incidents/${_dragIncidentId}/phase`, {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
             body: JSON.stringify(body),
           });
           if (!res.ok) throw new Error('phase update failed');
         } catch (_) {
-          task.phase = prevPhase;
+          incident.phase = prevPhase;
           renderPhaseBoard();
+          renderIncidentsTable();
         }
-        _dragTaskId = null;
+        _dragIncidentId = null;
       });
     });
   }
@@ -271,9 +230,10 @@ const IrTab = (() => {
   async function deleteIncident(id) {
     if (!confirm('Delete this incident and its activity log?')) return;
     await fetch(`api/ir/incidents/${id}` + tenantParam('?'), { method: 'DELETE', credentials: 'same-origin' });
-    if (_selectedId === id) { _selectedId = null; renderPhaseTracker(); renderPhaseBoard(); }
+    if (_selectedId === id) { _selectedId = null; }
     await loadIncidents();
     renderIncidentsTable();
+    renderPhaseBoard();
     renderStats();
   }
 
@@ -286,13 +246,11 @@ const IrTab = (() => {
     const incident = _incidents.find(i => i.id === id);
     if (heading) heading.textContent = incident ? `Activity Log — ${incident.title}` : 'Activity Log';
     document.getElementById('ir-btn-new-activity').hidden = false;
-    renderPhaseTracker();
 
     const res = await fetch(`api/ir/incidents/${id}/activities` + tenantParam('?'), { credentials: 'same-origin' });
     const data = await res.json();
     _activities = data.activities || [];
     renderActivitiesTable();
-    renderPhaseBoard();
   }
 
   function renderActivitiesTable() {
@@ -376,6 +334,7 @@ const IrTab = (() => {
     document.getElementById('ir-incident-modal').hidden = true;
     await loadIncidents();
     renderIncidentsTable();
+    renderPhaseBoard();
     renderStats();
   }
 

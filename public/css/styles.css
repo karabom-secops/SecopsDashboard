@@ -2768,66 +2768,6 @@ body.login-page {
 .badge-red    { background: rgba(239,68,68,.15);  color: #dc2626; }
 .badge-muted  { background: rgba(148,163,184,.15);color: #64748b; }
 
-/* IR phase tracker */
-.ir-phase-tracker {
-  display: flex;
-  align-items: flex-start;
-  padding: 1.25rem 1rem;
-  background: #fff;
-  border-radius: 10px;
-  box-shadow: 0 2px 8px rgba(0,0,0,.06);
-}
-.ir-phase-step {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: .4rem;
-  min-width: 90px;
-  cursor: default;
-}
-.ir-phase-step[role="button"] { cursor: pointer; }
-.ir-phase-dot {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: .85rem;
-  font-weight: 700;
-  background: rgba(148,163,184,.15);
-  color: #64748b;
-}
-.ir-phase-step.ir-phase-done .ir-phase-dot {
-  background: rgba(34,197,94,.18);
-  color: #16a34a;
-}
-.ir-phase-step.ir-phase-current .ir-phase-dot {
-  background: #06b6d4;
-  color: #fff;
-  box-shadow: 0 0 0 4px rgba(6,182,212,.2);
-}
-.ir-phase-label {
-  font-size: .75rem;
-  text-align: center;
-  color: var(--muted);
-  max-width: 100px;
-}
-.ir-phase-step.ir-phase-current .ir-phase-label {
-  color: #06b6d4;
-  font-weight: 600;
-}
-.ir-phase-connector {
-  flex: 1;
-  height: 3px;
-  margin-top: 15px;
-  background: rgba(148,163,184,.25);
-  min-width: 20px;
-}
-.ir-phase-connector.ir-phase-done {
-  background: rgba(34,197,94,.5);
-}
-
 /* Risk Register kanban board */
 .rr-board {
   display: flex;
@@ -2953,11 +2893,21 @@ body.login-page {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.5rem 0.6rem;
+  padding: 0.6rem 0.7rem;
+  cursor: pointer;
   box-shadow: 0 1px 2px rgba(0,0,0,.04);
 }
 .ir-phase-tile[draggable="true"] { cursor: grab; -webkit-user-drag: element; user-select: none; }
 .ir-phase-tile.dragging { opacity: 0.5; }
+.ir-phase-tile-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.ir-phase-tile-title { flex: 1; }
 .ir-phase-tile-entry { font-size: 0.85rem; }
 .ir-phase-tile-meta {
   display: flex;

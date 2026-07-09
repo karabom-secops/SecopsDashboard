@@ -2477,27 +2477,6 @@ app.put('/api/ir/activities/:id', requireAdmin, async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
-/** PATCH /api/ir/activities/:id/phase — move a playbook task tile between phase columns */
-app.patch('/api/ir/activities/:id/phase', requireAdmin, async (req, res) => {
-  try {
-    const { tenantId, error } = resolveIrTenant(req, 'body');
-    if (error) return res.status(error.status).json({ error: error.message });
-
-    const { phase, sort_order } = req.body;
-    if (!IR_VALID_PHASES.includes(phase)) return res.status(400).json({ error: 'invalid phase.' });
-
-    const result = await pool.query(
-      `UPDATE ir_activities a SET phase=$1, sort_order=$2
-       FROM ir_incidents i
-       WHERE a.id=$3 AND a.incident_id=i.id AND i.tenant_id=$4
-       RETURNING a.*`,
-      [phase, Number.isInteger(sort_order) ? sort_order : 0, req.params.id, tenantId]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Activity not found.' });
-    res.json({ activity: result.rows[0] });
-  } catch (err) { return serverError(res, err); }
-});
-
 /** DELETE /api/ir/activities/:id */
 app.delete('/api/ir/activities/:id', requireAdmin, async (req, res) => {
   try {
