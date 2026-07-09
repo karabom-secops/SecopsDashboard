@@ -57,120 +57,124 @@ const IrTab = (() => {
   const INCIDENT_TYPES = (window.IrPlaybooks && window.IrPlaybooks.INCIDENT_TYPES) || [{ value: 'other', label: 'Other' }];
   const INCIDENT_TYPE_LABEL = Object.fromEntries(INCIDENT_TYPES.map(t => [t.value, t.label]));
 
-  // ── Phase board (drag the selected incident's playbook tasks through IR phases) ─
-  // Tiles are the playbook tasks (ir_activities) seeded for the selected incident.
-  // Dragging a task into a column both progresses that task (PATCH its phase) and
-  // advances the incident's own phase to match, so the incident's phase tracks
-  // wherever the playbook currently stands.
+  // ── Playbook track (the selected incident's playbook tasks, progressed in order) ─
+  // Tiles are the playbook tasks (ir_activities) seeded for the selected incident,
+  // ordered by phase then sort_order. The first non-done task is the "current" step;
+  // completing it reveals the next step and, if its phase differs, advances the
+  // incident's own phase to match.
 
-  let _dragTaskId = null;
+  const PHASE_INDEX = Object.fromEntries(PHASES.map((p, i) => [p.value, i]));
 
-  function renderPhaseBoard() {
+  function orderedPlaybookTasks() {
+    return _activities
+      .filter(a => a.phase)
+      .slice()
+      .sort((a, b) => (PHASE_INDEX[a.phase] - PHASE_INDEX[b.phase]) || (a.sort_order - b.sort_order));
+  }
+
+  function renderPlaybookTrack() {
     const heading = document.getElementById('ir-phase-board-heading');
+    const track = document.getElementById('ir-playbook-track');
+    const progressLabel = document.getElementById('ir-playbook-progress-label');
+    const progressFill = document.getElementById('ir-playbook-progress-fill');
     const incident = _incidents.find(i => i.id === _selectedId);
 
     if (heading) {
       heading.textContent = incident ? `Playbook — ${incident.title}` : 'Playbook — select an incident';
     }
+    if (!track) return;
 
-    const byPhase = Object.fromEntries(PHASES.map(p => [p.value, []]));
-    if (incident) {
-      _activities.forEach(a => { if (byPhase[a.phase]) byPhase[a.phase].push(a); });
+    if (!incident) {
+      track.innerHTML = '<p class="empty-state">Select an incident to view its playbook.</p>';
+      if (progressLabel) progressLabel.textContent = '';
+      if (progressFill) progressFill.style.width = '0%';
+      return;
     }
 
-    PHASES.forEach(p => {
-      const body = document.getElementById(`ir-phase-body-${p.value}`);
-      const count = document.getElementById(`ir-phase-count-${p.value}`);
-      if (!body) return;
-      const items = byPhase[p.value];
-      if (count) count.textContent = items.length;
+    const tasks = orderedPlaybookTasks();
+    if (tasks.length === 0) {
+      track.innerHTML = '<p class="empty-state">No playbook steps for this incident.</p>';
+      if (progressLabel) progressLabel.textContent = '';
+      if (progressFill) progressFill.style.width = '0%';
+      return;
+    }
 
-      if (!incident) {
-        body.innerHTML = '<p class="empty-state">Select an incident to view its playbook.</p>';
-        return;
-      }
-      if (items.length === 0) {
-        body.innerHTML = '<p class="empty-state">No tasks.</p>';
-        return;
-      }
+    const doneCount = tasks.filter(t => t.status === 'done').length;
+    const currentIndex = tasks.findIndex(t => t.status !== 'done');
 
-      body.innerHTML = items.map(a => `
-        <div class="ir-phase-tile" data-id="${a.id}" ${canWrite() ? 'draggable="true"' : ''}>
-          <div class="ir-phase-tile-entry">${esc(a.entry)}</div>
-          <div class="ir-phase-tile-meta">
-            <span class="badge ${ACTIVITY_STATUS_BADGE[a.status] || ''}">${esc(a.status)}</span>
-            ${a.assignee ? `<span>${esc(a.assignee)}</span>` : ''}
+    if (progressLabel) {
+      progressLabel.textContent = currentIndex === -1
+        ? `Playbook complete — ${doneCount}/${tasks.length} steps`
+        : `Step ${currentIndex + 1} of ${tasks.length} · ${PHASE_LABEL[tasks[currentIndex].phase] || tasks[currentIndex].phase}`;
+    }
+    if (progressFill) progressFill.style.width = `${Math.round((doneCount / tasks.length) * 100)}%`;
+
+    let prevPhase = null;
+    track.innerHTML = tasks.map((t, i) => {
+      const state = t.status === 'done' ? 'is-done' : (i === currentIndex ? 'is-current' : 'is-upcoming');
+      const phaseTag = t.phase !== prevPhase ? `<div class="ir-playbook-tile-phase-tag">${esc(PHASE_LABEL[t.phase] || t.phase)}</div>` : '';
+      prevPhase = t.phase;
+      const actionBtn = (state === 'is-current' && canWrite())
+        ? `<button class="btn btn-sm btn-primary ir-playbook-complete-btn" data-id="${t.id}">Mark Complete</button>` : '';
+      return `
+        <div class="ir-playbook-tile ${state}" data-id="${t.id}">
+          ${phaseTag}
+          <div class="ir-playbook-tile-step">Step ${i + 1}</div>
+          <div class="ir-playbook-tile-entry">${esc(t.entry)}</div>
+          <div class="ir-playbook-tile-meta">
+            <span class="badge ${ACTIVITY_STATUS_BADGE[t.status] || ''}">${esc(t.status)}</span>
+            ${t.assignee ? `<span>${esc(t.assignee)}</span>` : ''}
           </div>
+          ${actionBtn}
         </div>
-      `).join('');
+      `;
+    }).join('');
 
-      body.querySelectorAll('.ir-phase-tile').forEach(tile => {
-        if (!canWrite()) return;
-        tile.addEventListener('dragstart', (e) => {
-          _dragTaskId = parseInt(tile.dataset.id, 10);
-          tile.classList.add('dragging');
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', String(_dragTaskId));
-        });
-        tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
-      });
+    track.querySelectorAll('.ir-playbook-complete-btn').forEach(btn => {
+      btn.addEventListener('click', () => completeStep(parseInt(btn.dataset.id, 10)));
     });
   }
 
-  function wirePhaseBoardColumns() {
-    document.querySelectorAll('.ir-phase-column').forEach(col => {
-      col.addEventListener('dragover', (e) => {
-        if (!canWrite()) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        col.classList.add('drag-over');
+  async function completeStep(activityId) {
+    const task = _activities.find(a => a.id === activityId);
+    const incident = _incidents.find(i => i.id === _selectedId);
+    if (!task || !incident) return;
+
+    const prevStatus = task.status;
+    const prevIncidentPhase = incident.phase;
+
+    task.status = 'done';
+    renderPlaybookTrack();
+    renderIncidentsTable();
+
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+    try {
+      const body = { entry: task.entry, assignee: task.assignee || '', status: 'done' };
+      if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
+      const res = await fetch(`api/ir/activities/${activityId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify(body),
       });
-      col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
-      col.addEventListener('drop', async (e) => {
-        e.preventDefault();
-        col.classList.remove('drag-over');
-        if (!canWrite() || _dragTaskId === null || !_selectedId) return;
-        const phase = col.dataset.phase;
-        const task = _activities.find(a => a.id === _dragTaskId);
-        if (!task || task.phase === phase) { _dragTaskId = null; return; }
+      if (!res.ok) throw new Error('activity update failed');
 
-        const prevTaskPhase = task.phase;
-        const incident = _incidents.find(i => i.id === _selectedId);
-        const prevIncidentPhase = incident ? incident.phase : null;
-        const sortOrder = _activities.filter(a => a.phase === phase).length;
-
-        task.phase = phase;
-        if (incident) incident.phase = phase;
-        renderPhaseBoard();
+      const nextTasks = orderedPlaybookTasks();
+      const nextCurrent = nextTasks.find(t => t.status !== 'done');
+      if (nextCurrent && nextCurrent.phase !== incident.phase) {
+        incident.phase = nextCurrent.phase;
+        const incBody = { phase: nextCurrent.phase };
+        if (isSA && window.globalTenantId) incBody.tenantId = window.globalTenantId;
+        await fetch(`api/ir/incidents/${_selectedId}/phase`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+          body: JSON.stringify(incBody),
+        });
         renderIncidentsTable();
-
-        const isSA = window.currentUser && window.currentUser.role === 'superadmin';
-        try {
-          const taskBody = { phase, sort_order: sortOrder };
-          if (isSA && window.globalTenantId) taskBody.tenantId = window.globalTenantId;
-          const res = await fetch(`api/ir/activities/${_dragTaskId}/phase`, {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-            body: JSON.stringify(taskBody),
-          });
-          if (!res.ok) throw new Error('task phase update failed');
-
-          if (incident) {
-            const incBody = { phase };
-            if (isSA && window.globalTenantId) incBody.tenantId = window.globalTenantId;
-            await fetch(`api/ir/incidents/${_selectedId}/phase`, {
-              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-              body: JSON.stringify(incBody),
-            });
-          }
-        } catch (_) {
-          task.phase = prevTaskPhase;
-          if (incident) incident.phase = prevIncidentPhase;
-          renderPhaseBoard();
-          renderIncidentsTable();
-        }
-        _dragTaskId = null;
-      });
-    });
+      }
+    } catch (_) {
+      task.status = prevStatus;
+      incident.phase = prevIncidentPhase;
+      renderPlaybookTrack();
+      renderIncidentsTable();
+    }
   }
 
   // ── Stats ──────────────────────────────────────────────────────────────────
@@ -256,7 +260,7 @@ const IrTab = (() => {
     if (_selectedId === id) { _selectedId = null; _activities = []; }
     await loadIncidents();
     renderIncidentsTable();
-    renderPhaseBoard();
+    renderPlaybookTrack();
     renderStats();
   }
 
@@ -274,7 +278,7 @@ const IrTab = (() => {
     const data = await res.json();
     _activities = data.activities || [];
     renderActivitiesTable();
-    renderPhaseBoard();
+    renderPlaybookTrack();
   }
 
   function renderActivitiesTable() {
@@ -358,7 +362,7 @@ const IrTab = (() => {
     document.getElementById('ir-incident-modal').hidden = true;
     await loadIncidents();
     renderIncidentsTable();
-    renderPhaseBoard();
+    renderPlaybookTrack();
     renderStats();
   }
 
@@ -408,8 +412,6 @@ const IrTab = (() => {
     document.getElementById('ir-btn-new-activity').addEventListener('click', openActivityModal);
     document.getElementById('ir-act-modal-close').addEventListener('click', () => document.getElementById('ir-activity-modal').hidden = true);
     document.getElementById('ir-act-modal-save').addEventListener('click', saveActivity);
-
-    wirePhaseBoardColumns();
   }
 
   // ── Main entry ─────────────────────────────────────────────────────────────
@@ -420,7 +422,7 @@ const IrTab = (() => {
     await loadIncidents();
     renderIncidentsTable();
     renderActivitiesTable();
-    renderPhaseBoard();
+    renderPlaybookTrack();
   }
 
   return { loadAndRender };

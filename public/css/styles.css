@@ -2845,78 +2845,74 @@ body.login-page {
   margin-top: 0.25rem;
 }
 
-/* Incident Response playbook phase board */
-.ir-phase-board {
+/* Incident Response playbook track — ordered sequence of step tiles */
+.ir-playbook-progress-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.ir-playbook-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148,163,184,.2);
+  margin-bottom: 0.85rem;
+  overflow: hidden;
+}
+.ir-playbook-progress-fill {
+  height: 100%;
+  background: #06b6d4;
+  border-radius: 999px;
+  transition: width .3s ease;
+}
+.ir-playbook-track {
   display: flex;
   gap: 0.75rem;
   overflow-x: auto;
   padding-bottom: 0.5rem;
+  align-items: stretch;
 }
-.ir-phase-column {
-  flex: 0 0 240px;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  max-height: 60vh;
-}
-.ir-phase-column.drag-over {
-  background: rgba(6,182,212,.08);
-  border-color: #06b6d4;
-}
-.ir-phase-column-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.6rem 0.75rem;
-  font-weight: 600;
-  font-size: 0.85rem;
-  border-bottom: 1px solid var(--border);
-}
-.ir-phase-column-count {
-  background: rgba(148,163,184,.2);
-  color: var(--muted);
-  border-radius: 999px;
-  padding: 0.05rem 0.5rem;
-  font-size: 0.75rem;
-}
-.ir-phase-column-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.ir-phase-tile {
+.ir-playbook-tile {
+  flex: 0 0 220px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.6rem 0.7rem;
-  cursor: pointer;
+  padding: 0.7rem 0.75rem;
   box-shadow: 0 1px 2px rgba(0,0,0,.04);
-}
-.ir-phase-tile[draggable="true"] { cursor: grab; -webkit-user-drag: element; user-select: none; }
-.ir-phase-tile.dragging { opacity: 0.5; }
-.ir-phase-tile-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.5rem;
-  font-weight: 600;
-  font-size: 0.85rem;
+  flex-direction: column;
+  gap: 0.35rem;
 }
-.ir-phase-tile-title { flex: 1; }
-.ir-phase-tile-entry { font-size: 0.85rem; }
-.ir-phase-tile-meta {
+.ir-playbook-tile-phase-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+}
+.ir-playbook-tile-step {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.ir-playbook-tile-entry { font-size: 0.85rem; }
+.ir-playbook-tile-meta {
   display: flex;
   gap: 0.5rem;
   align-items: center;
   color: var(--muted);
   font-size: 0.75rem;
-  margin-top: 0.35rem;
   flex-wrap: wrap;
+}
+.ir-playbook-tile.is-done {
+  border-color: #22c55e;
+  background: rgba(34,197,94,.06);
+}
+.ir-playbook-tile.is-current {
+  border-color: #06b6d4;
+  box-shadow: 0 0 0 2px rgba(6,182,212,.25);
+}
+.ir-playbook-tile.is-upcoming {
+  opacity: 0.55;
 }
 .rr-score-display {
   display: inline-block;

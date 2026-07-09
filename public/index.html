@@ -799,31 +799,14 @@
       </table>
     </div>
 
-    <!-- Playbook phase board — drag an incident's playbook tasks through the IR phases -->
-    <div id="ir-phase-board-wrap" style="margin-bottom:1.5rem">
-      <h3 id="ir-phase-board-heading" style="margin:0 0 .5rem;font-size:1rem;font-weight:600">Playbook — select an incident</h3>
-      <div id="ir-phase-board" class="ir-phase-board">
-        <div class="ir-phase-column" data-phase="identification">
-          <div class="ir-phase-column-header"><span>Identification</span><span class="ir-phase-column-count" id="ir-phase-count-identification">0</span></div>
-          <div class="ir-phase-column-body" id="ir-phase-body-identification"></div>
-        </div>
-        <div class="ir-phase-column" data-phase="containment">
-          <div class="ir-phase-column-header"><span>Containment</span><span class="ir-phase-column-count" id="ir-phase-count-containment">0</span></div>
-          <div class="ir-phase-column-body" id="ir-phase-body-containment"></div>
-        </div>
-        <div class="ir-phase-column" data-phase="eradication">
-          <div class="ir-phase-column-header"><span>Eradication</span><span class="ir-phase-column-count" id="ir-phase-count-eradication">0</span></div>
-          <div class="ir-phase-column-body" id="ir-phase-body-eradication"></div>
-        </div>
-        <div class="ir-phase-column" data-phase="recovery">
-          <div class="ir-phase-column-header"><span>Recovery</span><span class="ir-phase-column-count" id="ir-phase-count-recovery">0</span></div>
-          <div class="ir-phase-column-body" id="ir-phase-body-recovery"></div>
-        </div>
-        <div class="ir-phase-column" data-phase="post-incident-analysis">
-          <div class="ir-phase-column-header"><span>Post Incident Analysis</span><span class="ir-phase-column-count" id="ir-phase-count-post-incident-analysis">0</span></div>
-          <div class="ir-phase-column-body" id="ir-phase-body-post-incident-analysis"></div>
-        </div>
+    <!-- Playbook track — the incident's seeded playbook steps as an ordered sequence of tiles -->
+    <div id="ir-playbook-wrap" style="margin-bottom:1.5rem">
+      <div class="section-heading-row" style="margin-bottom:.5rem">
+        <h3 id="ir-phase-board-heading" style="margin:0;font-size:1rem;font-weight:600">Playbook — select an incident</h3>
+        <span id="ir-playbook-progress-label" class="ir-playbook-progress-label"></span>
       </div>
+      <div id="ir-playbook-progress-bar" class="ir-playbook-progress-bar"><div class="ir-playbook-progress-fill" id="ir-playbook-progress-fill" style="width:0%"></div></div>
+      <div id="ir-playbook-track" class="ir-playbook-track"></div>
     </div>
 
     <!-- Activity log table -->
