@@ -177,7 +177,7 @@ const RemediationTrackerTab = (() => {
       ['pentest', 'Pentest Findings'],
       ['risk', 'Risk Register'],
     ].map(([key, label]) => `
-      <button class="filter-chip ${_sourceFilter === key ? 'active' : ''}" data-source="${key}">${label}</button>
+      <button class="chip ${_sourceFilter === key ? 'active' : ''}" data-source="${key}">${label}</button>
     `).join('');
 
     el.innerHTML = `
