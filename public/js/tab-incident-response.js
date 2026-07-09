@@ -124,6 +124,7 @@ const IrTab = (() => {
           <div class="ir-playbook-tile-meta">
             <span class="badge ${ACTIVITY_STATUS_BADGE[t.status] || ''}">${esc(t.status)}</span>
             ${t.assignee ? `<span>${esc(t.assignee)}</span>` : ''}
+            ${t.completed_at ? `<span>${fmt(t.completed_at)}</span>` : ''}
           </div>
           ${actionBtn}
         </div>
@@ -141,37 +142,53 @@ const IrTab = (() => {
     if (!task || !incident) return;
 
     const prevStatus = task.status;
+    const prevCompletedAt = task.completed_at;
     const prevIncidentPhase = incident.phase;
+    const prevIncidentStatus = incident.status;
 
     task.status = 'done';
+    task.completed_at = new Date().toISOString();
     renderPlaybookTrack();
     renderIncidentsTable();
 
     const isSA = window.currentUser && window.currentUser.role === 'superadmin';
     try {
-      const body = { entry: task.entry, assignee: task.assignee || '', status: 'done' };
-      if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
-      const res = await fetch(`api/ir/activities/${activityId}`, {
+      const actBody = { entry: task.entry, assignee: task.assignee || '', status: 'done' };
+      if (isSA && window.globalTenantId) actBody.tenantId = window.globalTenantId;
+      const actRes = await fetch(`api/ir/activities/${activityId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify(body),
+        body: JSON.stringify(actBody),
       });
-      if (!res.ok) throw new Error('activity update failed');
+      if (!actRes.ok) throw new Error('activity update failed');
+      const actData = await actRes.json();
+      if (actData.activity && actData.activity.completed_at) task.completed_at = actData.activity.completed_at;
 
       const nextTasks = orderedPlaybookTasks();
       const nextCurrent = nextTasks.find(t => t.status !== 'done');
-      if (nextCurrent && nextCurrent.phase !== incident.phase) {
-        incident.phase = nextCurrent.phase;
-        const incBody = { phase: nextCurrent.phase };
+      const newPhase = nextCurrent ? nextCurrent.phase : incident.phase;
+      const newStatus = !nextCurrent ? 'resolved' : (incident.status === 'open' ? 'remediating' : incident.status);
+
+      if (newPhase !== incident.phase || newStatus !== incident.status) {
+        const incBody = {
+          title: incident.title, incident_type: incident.incident_type, description: incident.description,
+          severity: incident.severity, status: newStatus, phase: newPhase, assigned_to: incident.assigned_to,
+        };
         if (isSA && window.globalTenantId) incBody.tenantId = window.globalTenantId;
-        await fetch(`api/ir/incidents/${_selectedId}/phase`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        const incRes = await fetch(`api/ir/incidents/${_selectedId}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
           body: JSON.stringify(incBody),
         });
+        if (!incRes.ok) throw new Error('incident update failed');
+        const incData = await incRes.json();
+        Object.assign(incident, incData.incident);
         renderIncidentsTable();
+        renderStats();
       }
     } catch (_) {
       task.status = prevStatus;
+      task.completed_at = prevCompletedAt;
       incident.phase = prevIncidentPhase;
+      incident.status = prevIncidentStatus;
       renderPlaybookTrack();
       renderIncidentsTable();
     }
@@ -264,55 +281,16 @@ const IrTab = (() => {
     renderStats();
   }
 
-  // ── Activity log ───────────────────────────────────────────────────────────
+  // ── Incident selection ─────────────────────────────────────────────────────
 
   async function selectIncident(id) {
     _selectedId = id;
     renderIncidentsTable();
-    const heading = document.getElementById('ir-activities-heading');
-    const incident = _incidents.find(i => i.id === id);
-    if (heading) heading.textContent = incident ? `Activity Log — ${incident.title}` : 'Activity Log';
-    document.getElementById('ir-btn-new-activity').hidden = false;
 
     const res = await fetch(`api/ir/incidents/${id}/activities` + tenantParam('?'), { credentials: 'same-origin' });
     const data = await res.json();
     _activities = data.activities || [];
-    renderActivitiesTable();
     renderPlaybookTrack();
-  }
-
-  function renderActivitiesTable() {
-    const tbody = document.getElementById('ir-activities-tbody');
-    if (!tbody) return;
-
-    if (!_selectedId) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Select an incident to view its activity log.</td></tr>';
-      return;
-    }
-    if (_activities.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No activity logged yet.</td></tr>';
-      return;
-    }
-
-    tbody.innerHTML = _activities.map(a => `
-      <tr data-id="${a.id}">
-        <td>${esc(a.entry)}</td>
-        <td>${esc(a.assignee || '—')}</td>
-        <td><span class="badge ${ACTIVITY_STATUS_BADGE[a.status] || ''}">${esc(a.status)}</span></td>
-        <td>${fmt(a.logged_at)}</td>
-        <td>
-          ${isAdmin() ? `<button class="btn btn-sm btn-danger ir-activity-delete-btn" data-id="${a.id}">Delete</button>` : ''}
-        </td>
-      </tr>
-    `).join('');
-
-    tbody.querySelectorAll('.ir-activity-delete-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        if (!confirm('Delete this activity entry?')) return;
-        await fetch(`api/ir/activities/${btn.dataset.id}` + tenantParam('?'), { method: 'DELETE', credentials: 'same-origin' });
-        await selectIncident(_selectedId);
-      });
-    });
   }
 
   // ── Incident modal ─────────────────────────────────────────────────────────
@@ -366,39 +344,6 @@ const IrTab = (() => {
     renderStats();
   }
 
-  // ── Activity modal ─────────────────────────────────────────────────────────
-
-  function openActivityModal() {
-    if (!_selectedId) return;
-    document.getElementById('ir-act-entry').value = '';
-    document.getElementById('ir-act-assignee').value = '';
-    document.getElementById('ir-act-status').value = 'pending';
-    document.getElementById('ir-activity-modal').hidden = false;
-  }
-
-  async function saveActivity() {
-    const body = {
-      incidentId: _selectedId,
-      entry: document.getElementById('ir-act-entry').value.trim(),
-      assignee: document.getElementById('ir-act-assignee').value.trim(),
-      status: document.getElementById('ir-act-status').value,
-    };
-    if (!body.entry) { alert('Entry text is required.'); return; }
-
-    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
-    if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
-
-    await fetch('api/ir/activities', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-      body: JSON.stringify(body),
-    });
-
-    document.getElementById('ir-activity-modal').hidden = true;
-    await selectIncident(_selectedId);
-    await loadIncidents();
-    renderIncidentsTable();
-  }
-
   // ── Wiring ─────────────────────────────────────────────────────────────────
 
   function wireOnce() {
@@ -408,10 +353,6 @@ const IrTab = (() => {
     document.getElementById('ir-btn-new-incident').addEventListener('click', () => openIncidentModal(null));
     document.getElementById('ir-inc-modal-close').addEventListener('click', () => document.getElementById('ir-incident-modal').hidden = true);
     document.getElementById('ir-inc-modal-save').addEventListener('click', saveIncident);
-
-    document.getElementById('ir-btn-new-activity').addEventListener('click', openActivityModal);
-    document.getElementById('ir-act-modal-close').addEventListener('click', () => document.getElementById('ir-activity-modal').hidden = true);
-    document.getElementById('ir-act-modal-save').addEventListener('click', saveActivity);
   }
 
   // ── Main entry ─────────────────────────────────────────────────────────────
@@ -421,7 +362,6 @@ const IrTab = (() => {
     await renderStats();
     await loadIncidents();
     renderIncidentsTable();
-    renderActivitiesTable();
     renderPlaybookTrack();
   }
 

@@ -2375,8 +2375,8 @@ app.put('/api/ir/incidents/:id', requireAdmin, async (req, res) => {
     const result = await pool.query(
       `UPDATE ir_incidents
        SET title=$1, description=$2, severity=$3, status=$4, assigned_to=$5, phase=$6, incident_type=$7, updated_at=NOW(),
-           closed_at = CASE WHEN $4 = 'closed' AND closed_at IS NULL THEN NOW()
-                            WHEN $4 != 'closed' THEN NULL
+           closed_at = CASE WHEN $4 IN ('resolved','closed') AND closed_at IS NULL THEN NOW()
+                            WHEN $4 NOT IN ('resolved','closed') THEN NULL
                             ELSE closed_at END
        WHERE id=$8 AND tenant_id=$9 RETURNING *`,
       [title, description || '', severity, status, assigned_to || '', phase || 'identification', incidentType, req.params.id, tenantId]
@@ -2466,7 +2466,10 @@ app.put('/api/ir/activities/:id', requireAdmin, async (req, res) => {
 
     const { entry, assignee, status } = req.body;
     const result = await pool.query(
-      `UPDATE ir_activities a SET entry=$1, assignee=$2, status=$3
+      `UPDATE ir_activities a SET entry=$1, assignee=$2, status=$3,
+           completed_at = CASE WHEN $3 = 'done' AND completed_at IS NULL THEN NOW()
+                                WHEN $3 != 'done' THEN NULL
+                                ELSE completed_at END
        FROM ir_incidents i
        WHERE a.id=$4 AND a.incident_id=i.id AND i.tenant_id=$5
        RETURNING a.*`,

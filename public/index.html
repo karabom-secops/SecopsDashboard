@@ -809,24 +809,6 @@
       <div id="ir-playbook-track" class="ir-playbook-track"></div>
     </div>
 
-    <!-- Activity log table -->
-    <div class="section-heading-row" style="margin-bottom:.75rem">
-      <h3 id="ir-activities-heading" style="margin:0;font-size:1rem;font-weight:600">Activity Log</h3>
-      <button class="btn btn-primary btn-sm" id="ir-btn-new-activity" hidden>+ Log Activity</button>
-    </div>
-    <div style="overflow-x:auto">
-      <table class="data-table" style="width:100%">
-        <thead>
-          <tr>
-            <th>Entry</th><th>Assignee</th><th>Status</th><th>Logged At</th><th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="ir-activities-tbody">
-          <tr><td colspan="5" class="empty-state">Select an incident to view its activity log.</td></tr>
-        </tbody>
-      </table>
-    </div>
-
     <!-- Incident Modal -->
     <div id="ir-incident-modal" class="modal-overlay" hidden>
       <div class="modal-box">
@@ -897,37 +879,6 @@
       </div>
     </div>
 
-    <!-- Activity Modal -->
-    <div id="ir-activity-modal" class="modal-overlay" hidden>
-      <div class="modal-box">
-        <div class="modal-header">
-          <h3 class="modal-title">Log Activity</h3>
-          <button class="modal-close" id="ir-act-modal-close" aria-label="Close">&times;</button>
-        </div>
-        <form id="ir-act-form" onsubmit="return false">
-          <div class="form-group">
-            <label class="form-label" for="ir-act-entry">Entry *</label>
-            <textarea class="form-textarea" id="ir-act-entry" rows="3"></textarea>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="ir-act-assignee">Assignee</label>
-            <input class="form-input" id="ir-act-assignee" type="text">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="ir-act-status">Status</label>
-            <select class="form-select" id="ir-act-status">
-              <option value="pending" selected>Pending</option>
-              <option value="in-progress">In Progress</option>
-              <option value="done">Done</option>
-            </select>
-          </div>
-        </form>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" id="ir-act-modal-close-2" onclick="document.getElementById('ir-activity-modal').hidden=true">Cancel</button>
-          <button class="btn btn-primary" id="ir-act-modal-save">Save</button>
-        </div>
-      </div>
-    </div>
   </section>
 
   <!-- ── Risk Register Tab Panel ──────────────────────────────────────────── -->

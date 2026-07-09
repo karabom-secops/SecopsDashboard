@@ -59,6 +59,9 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 ALTER TABLE ir_activities ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0;
 
+-- Timestamp recorded when a playbook step tile is marked done
+ALTER TABLE ir_activities ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
 -- Backfill: existing activities inherit their incident's current phase
 UPDATE ir_activities a SET phase = i.phase
 FROM ir_incidents i
