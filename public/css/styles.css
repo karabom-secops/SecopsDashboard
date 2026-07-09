@@ -962,27 +962,28 @@ input[type="file"] {
 }
 .view-toggle-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
 
-/* Remediation Tracker — Gantt chart */
+/* Remediation Tracker — Gantt chart (weekly) */
 .rt-gantt-wrap { overflow-x: auto; }
-.rt-gantt { min-width: 720px; }
+.rt-gantt { --rt-gantt-track-width: 600px; min-width: 820px; }
 .rt-gantt-header {
-  display: grid; grid-template-columns: 220px 1fr; border-bottom: 1px solid var(--border);
+  display: grid; grid-template-columns: 220px var(--rt-gantt-track-width); border-bottom: 1px solid var(--border);
   padding-bottom: 6px; margin-bottom: 6px;
 }
-.rt-gantt-header-months { position: relative; height: 20px; }
-.rt-gantt-month-tick {
-  position: absolute; top: 0; font-size: 0.72rem; color: var(--muted);
-  border-left: 1px solid var(--border); padding-left: 4px;
+.rt-gantt-header-weeks { position: relative; height: 20px; }
+.rt-gantt-week-tick {
+  position: absolute; top: 0; font-size: 0.7rem; color: var(--muted);
+  border-left: 1px solid var(--border); padding-left: 4px; white-space: nowrap;
 }
-.rt-gantt-row { display: grid; grid-template-columns: 220px 1fr; align-items: center; min-height: 34px; }
+.rt-gantt-row { display: grid; grid-template-columns: 220px var(--rt-gantt-track-width); align-items: center; min-height: 34px; }
 .rt-gantt-row:nth-child(odd) { background: var(--surface2); }
 .rt-gantt-row-label {
   font-size: 0.82rem; padding: 0 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .rt-gantt-track { position: relative; height: 26px; }
+.rt-gantt-week-line { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border); }
 .rt-gantt-today-line { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--red, #dc2626); z-index: 1; }
 .rt-gantt-bar {
-  position: absolute; top: 4px; height: 18px; border-radius: 4px; cursor: default;
+  position: absolute; top: 4px; height: 18px; border-radius: 4px; cursor: default; z-index: 2;
   display: flex; align-items: center; padding: 0 6px; font-size: 0.68rem; color: #fff;
   white-space: nowrap; overflow: hidden; min-width: 6px;
 }

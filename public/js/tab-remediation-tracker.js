@@ -314,22 +314,30 @@ const RemediationTrackerTab = (() => {
     }
 
     const sorted = [...rows].sort((a, b) => a.startDate.localeCompare(b.startDate));
-    const minDate = sorted.reduce((min, i) => i.startDate < min ? i.startDate : min, sorted[0].startDate);
-    const maxDate = sorted.reduce((max, i) => i.endDate > max ? i.endDate : max, sorted[0].endDate);
+    const rawMin = sorted.reduce((min, i) => i.startDate < min ? i.startDate : min, sorted[0].startDate);
+    const rawMax = sorted.reduce((max, i) => i.endDate > max ? i.endDate : max, sorted[0].endDate);
+
+    // Snap the visible range to Monday-start week boundaries so the header aligns with the gridlines.
+    const minDate = startOfWeek(rawMin);
+    const maxDate = addDays(startOfWeek(rawMax), 6);
 
     const totalDays = Math.max(1, dayDiff(minDate, maxDate));
     const today = new Date().toISOString().slice(0, 10);
     const todayPct = clampPct(dayDiff(minDate, today) / totalDays * 100);
 
-    const monthTicks = buildMonthTicks(minDate, maxDate, totalDays);
+    const weekTicks = buildWeekTicks(minDate, maxDate, totalDays);
+    const trackWidth = Math.max(600, weekTicks.length * 110);
+    container.style.setProperty('--rt-gantt-track-width', trackWidth + 'px');
 
     const header = `
       <div class="rt-gantt-header">
         <div></div>
-        <div class="rt-gantt-header-months">
-          ${monthTicks.map(t => `<span class="rt-gantt-month-tick" style="left:${t.pct}%">${t.label}</span>`).join('')}
+        <div class="rt-gantt-header-weeks">
+          ${weekTicks.map(t => `<span class="rt-gantt-week-tick" style="left:${t.pct}%">${t.label}</span>`).join('')}
         </div>
       </div>`;
+
+    const gridlines = weekTicks.map(t => `<div class="rt-gantt-week-line" style="left:${t.pct}%"></div>`).join('');
 
     const rowsHtml = sorted.map(item => {
       const leftPct = clampPct(dayDiff(minDate, item.startDate) / totalDays * 100);
@@ -339,6 +347,7 @@ const RemediationTrackerTab = (() => {
         <div class="rt-gantt-row">
           <div class="rt-gantt-row-label" title="${esc(item.title)}">${esc(item.title)}</div>
           <div class="rt-gantt-track">
+            ${gridlines}
             ${todayPct >= 0 && todayPct <= 100 ? `<div class="rt-gantt-today-line" style="left:${todayPct}%"></div>` : ''}
             <div class="rt-gantt-bar source-${item.source} ${isOverdue(item) ? 'overdue' : ''}"
                  style="left:${leftPct}%; width:${widthPct}%;" title="${esc(title)}">
@@ -361,16 +370,23 @@ const RemediationTrackerTab = (() => {
     return Math.min(100, Math.max(0, v));
   }
 
-  function buildMonthTicks(minDate, maxDate, totalDays) {
+  // Monday-start week boundary for a given date string.
+  function startOfWeek(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00Z');
+    const dow = d.getUTCDay(); // 0=Sun..6=Sat
+    const offset = dow === 0 ? 6 : dow - 1; // days since Monday
+    d.setUTCDate(d.getUTCDate() - offset);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function buildWeekTicks(minDate, maxDate, totalDays) {
     const ticks = [];
-    const cursor = new Date(minDate + 'T00:00:00Z');
-    cursor.setUTCDate(1);
-    const end = new Date(maxDate + 'T00:00:00Z');
-    while (cursor <= end) {
-      const dateStr = cursor.toISOString().slice(0, 10);
-      const pct = clampPct(dayDiff(minDate, dateStr) / totalDays * 100);
-      ticks.push({ pct, label: cursor.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) });
-      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    let cursor = minDate;
+    while (cursor <= maxDate) {
+      const pct = clampPct(dayDiff(minDate, cursor) / totalDays * 100);
+      const d = new Date(cursor + 'T00:00:00Z');
+      ticks.push({ pct, label: `Wk of ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` });
+      cursor = addDays(cursor, 7);
     }
     return ticks;
   }
