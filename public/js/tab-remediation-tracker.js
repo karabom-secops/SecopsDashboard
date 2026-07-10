@@ -13,14 +13,15 @@ const RemediationTrackerTab = (() => {
   const DEFAULT_DURATION_DAYS = 14;
 
   const STATUS_OPTIONS = {
-    vuln:    [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted']],
-    risk:    [['identified', 'Identified'], ['assessing', 'Assessing'], ['mitigating', 'Mitigating'], ['monitoring', 'Monitoring'], ['closed', 'Closed']],
-    pentest: [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted'], ['risk-accepted', 'Risk Accepted']],
+    vuln:     [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted']],
+    risk:     [['identified', 'Identified'], ['assessing', 'Assessing'], ['mitigating', 'Mitigating'], ['monitoring', 'Monitoring'], ['closed', 'Closed']],
+    pentest:  [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted'], ['risk-accepted', 'Risk Accepted']],
+    incident: [['open', 'Open'], ['contained', 'Contained'], ['remediating', 'Remediating'], ['resolved', 'Resolved'], ['closed', 'Closed']],
   };
 
-  const CLOSED_STATUSES = new Set(['fixed', 'accepted', 'closed', 'risk-accepted']);
+  const CLOSED_STATUSES = new Set(['fixed', 'accepted', 'closed', 'risk-accepted', 'resolved']);
 
-  const SOURCE_LABELS = { vuln: 'Vulnerability', risk: 'Risk', pentest: 'Pentest' };
+  const SOURCE_LABELS = { vuln: 'Vulnerability', risk: 'Risk', pentest: 'Pentest', incident: 'Incident' };
 
   function esc(s) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -63,6 +64,11 @@ const RemediationTrackerTab = (() => {
       if (status === 'closed') return 'fixed';
       if (status === 'monitoring') return 'accepted';
       return 'in-progress';
+    }
+    if (source === 'incident') {
+      if (status === 'resolved' || status === 'closed') return 'fixed';
+      if (status === 'open') return 'open';
+      return 'in-progress'; // contained | remediating
     }
     if (status === 'risk-accepted') return 'accepted';
     return status; // open | in-progress | fixed | accepted
@@ -123,7 +129,24 @@ const RemediationTrackerTab = (() => {
       };
     });
 
-    return [...vulns, ...pentest, ...risks];
+    const incidents = (data.incidents || []).map(inc => {
+      const start = toDateOnly(inc.opened_at) || today;
+      const closed = toDateOnly(inc.closed_at);
+      return {
+        source: 'incident',
+        id: inc.id,
+        title: inc.title,
+        severity: inc.severity,
+        owner: inc.assigned_to || '',
+        dueDate: null,
+        status: inc.status,
+        startDate: start,
+        endDate: closed || addDays(start, DEFAULT_DURATION_DAYS),
+        raw: inc,
+      };
+    });
+
+    return [...vulns, ...pentest, ...risks, ...incidents];
   }
 
   // ── Stats ──────────────────────────────────────────────────────────────────
@@ -135,7 +158,7 @@ const RemediationTrackerTab = (() => {
     const open = _items.filter(i => !CLOSED_STATUSES.has(i.status)).length;
     const overdue = _items.filter(isOverdue).length;
     const closed = _items.filter(i => CLOSED_STATUSES.has(i.status)).length;
-    const bySource = { vuln: 0, risk: 0, pentest: 0 };
+    const bySource = { vuln: 0, risk: 0, pentest: 0, incident: 0 };
     _items.forEach(i => { if (!CLOSED_STATUSES.has(i.status)) bySource[i.source]++; });
 
     el.innerHTML = `
@@ -159,6 +182,10 @@ const RemediationTrackerTab = (() => {
         <div class="stat-label">Open Risks</div>
         <div class="stat-value">${bySource.risk}</div>
       </div>
+      <div class="stat-card">
+        <div class="stat-label">Open Incidents</div>
+        <div class="stat-value">${bySource.incident}</div>
+      </div>
       <div class="stat-card accent-green">
         <div class="stat-label">Closed</div>
         <div class="stat-value">${closed}</div>
@@ -176,6 +203,7 @@ const RemediationTrackerTab = (() => {
       ['vuln', 'Vulnerabilities'],
       ['pentest', 'Pentest Findings'],
       ['risk', 'Risk Register'],
+      ['incident', 'Incidents'],
     ].map(([key, label]) => `
       <button class="chip ${_sourceFilter === key ? 'active' : ''}" data-source="${key}">${label}</button>
     `).join('');
@@ -287,6 +315,15 @@ const RemediationTrackerTab = (() => {
         const isSA = window.currentUser && window.currentUser.role === 'superadmin';
         if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
         const res = await fetch(`api/pentest-findings/${item.id}/status`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error('update failed');
+      } else if (item.source === 'incident') {
+        const body = { status: newStatus };
+        const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+        if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
+        const res = await fetch(`api/ir/incidents/${item.id}/status`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
           body: JSON.stringify(body),
         });

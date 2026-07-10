@@ -2328,6 +2328,7 @@ app.get('/api/ir/incidents', requireAuth, async (req, res) => {
 
 const IR_VALID_PHASES = ['identification', 'containment', 'eradication', 'recovery', 'post-incident-analysis'];
 const IR_VALID_TYPES = ['phishing', 'malware_ransomware', 'data_breach', 'insider_threat', 'ddos', 'unauthorized_access', 'other'];
+const IR_VALID_STATUSES = ['open', 'contained', 'remediating', 'resolved', 'closed'];
 
 /** POST /api/ir/incidents */
 app.post('/api/ir/incidents', requireAdmin, async (req, res) => {
@@ -2398,6 +2399,28 @@ app.patch('/api/ir/incidents/:id/phase', requireAdmin, async (req, res) => {
     const result = await pool.query(
       `UPDATE ir_incidents SET phase=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3 RETURNING *`,
       [phase, req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
+    res.json({ incident: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PATCH /api/ir/incidents/:id/status — quick-set the incident status (used by the Remediation Tracker) */
+app.patch('/api/ir/incidents/:id/status', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { status } = req.body;
+    if (!IR_VALID_STATUSES.includes(status)) return res.status(400).json({ error: 'invalid status.' });
+
+    const result = await pool.query(
+      `UPDATE ir_incidents SET status=$1::varchar, updated_at=NOW(),
+           closed_at = CASE WHEN $1::varchar IN ('resolved','closed') AND closed_at IS NULL THEN NOW()
+                            WHEN $1::varchar NOT IN ('resolved','closed') THEN NULL
+                            ELSE closed_at END
+       WHERE id=$2 AND tenant_id=$3 RETURNING *`,
+      [status, req.params.id, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
     res.json({ incident: result.rows[0] });
@@ -2800,10 +2823,11 @@ app.get('/api/remediation-tracker', requireAuth, async (req, res) => {
     const { tenantId, error } = resolvePentestTenant(req, 'query');
     if (error) return res.status(error.status).json({ error: error.message });
 
-    const [scanRes, risksRes, pentestRes] = await Promise.all([
+    const [scanRes, risksRes, pentestRes, incidentsRes] = await Promise.all([
       pool.query('SELECT id, month_key AS "monthKey" FROM vuln_scans WHERE tenant_id=$1 ORDER BY month_key DESC LIMIT 1', [tenantId]),
       pool.query('SELECT * FROM risks WHERE tenant_id=$1 ORDER BY created_at DESC', [tenantId]),
       pool.query('SELECT * FROM pentest_findings WHERE tenant_id=$1 ORDER BY created_at DESC', [tenantId]),
+      pool.query('SELECT * FROM ir_incidents WHERE tenant_id=$1 ORDER BY opened_at DESC', [tenantId]),
     ]);
 
     let vulns = [];
@@ -2824,6 +2848,7 @@ app.get('/api/remediation-tracker', requireAuth, async (req, res) => {
       vulns,
       risks: risksRes.rows,
       pentestFindings: pentestRes.rows,
+      incidents: incidentsRes.rows,
     });
   } catch (err) { return serverError(res, err); }
 });
