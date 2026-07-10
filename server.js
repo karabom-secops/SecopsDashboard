@@ -1628,11 +1628,14 @@ app.delete('/api/awareness', requireAdmin, async (req, res) => {
  * Resolve which tenant's MDR data to act on.
  * Mirrors resolveVulnTenant and resolveAwarenessTenant.
  */
-function resolveMdrTenant(req, source) {
+function resolveMdrTenant(req, source, opts = {}) {
   if (req.session.role === 'superadmin') {
     const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
     const tid = parseInt(raw, 10);
     if (isNaN(tid) || tid < 1) {
+      // Operations is a global view — a superadmin who hasn't selected a tenant
+      // yet should just see "no data" here rather than a hard error.
+      if (opts.allowGlobal) return { tenantId: null };
       return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
     }
     return { tenantId: tid };
@@ -1642,8 +1645,9 @@ function resolveMdrTenant(req, source) {
 
 app.get('/api/mdr', requireAuth, async (req, res) => {
   try {
-    const { tenantId, error } = resolveMdrTenant(req, 'query');
+    const { tenantId, error } = resolveMdrTenant(req, 'query', { allowGlobal: true });
     if (error) return res.status(error.status).json({ error: error.message });
+    if (tenantId === null) return res.json({ upload: null, tickets: [], stats: null });
 
     const uploadRes = await pool.query(
       `SELECT id, uploaded_at, total_tickets, resolved_count, pending_count, avg_resolution_hours
@@ -1675,8 +1679,9 @@ app.get('/api/mdr', requireAuth, async (req, res) => {
 
 app.get('/api/mdr/trends', requireAuth, async (req, res) => {
   try {
-    const { tenantId, error } = resolveMdrTenant(req, 'query');
+    const { tenantId, error } = resolveMdrTenant(req, 'query', { allowGlobal: true });
     if (error) return res.status(error.status).json({ error: error.message });
+    if (tenantId === null) return res.json({});
 
     const statsRes = await pool.query(
       `SELECT
