@@ -1133,9 +1133,24 @@
           <label class="form-label" for="mdrp-sensors">Number of Sensors</label>
           <input class="form-input" id="mdrp-sensors" type="number" min="0" step="1" value="0">
         </div>
-        <div class="form-group" style="flex:0 0 auto; display:flex; align-items:center; gap:0.5rem; align-self:flex-end; padding-bottom:0.6rem;">
-          <input type="checkbox" id="mdrp-data-explorer">
-          <label class="form-label" for="mdrp-data-explorer" style="margin:0;">Data Explorer</label>
+      </div>
+
+      <div style="display:flex; gap:1.5rem; flex-wrap:wrap; margin-bottom:1.5rem;">
+        <div class="form-group" style="flex:0 0 auto; display:flex; align-items:center; gap:0.5rem;">
+          <input type="checkbox" id="mdrp-data-explorer" checked>
+          <label class="form-label" for="mdrp-data-explorer" style="margin:0;">Include Data Explorer</label>
+        </div>
+        <div class="form-group" style="flex:0 0 auto; display:flex; align-items:center; gap:0.5rem;">
+          <input type="checkbox" id="mdrp-incident-response" checked>
+          <label class="form-label" for="mdrp-incident-response" style="margin:0;">Include Incident Response</label>
+        </div>
+        <div class="form-group" style="flex:0 0 auto; display:flex; align-items:center; gap:0.5rem;">
+          <input type="checkbox" id="mdrp-sensor" checked>
+          <label class="form-label" for="mdrp-sensor" style="margin:0;">Include Virtual Sensor</label>
+        </div>
+        <div class="form-group" style="flex:0 0 auto; display:flex; align-items:center; gap:0.5rem;">
+          <input type="checkbox" id="mdrp-awareness" checked>
+          <label class="form-label" for="mdrp-awareness" style="margin:0;">Include Managed Security Awareness Plus</label>
         </div>
       </div>
 

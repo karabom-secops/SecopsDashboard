@@ -22,12 +22,12 @@ const MdrPricingTab = (() => {
     { key: 'mdrUser',      label: 'MDR Connect User',                qty: (s) => s.users },
     { key: 'mdrServer',    label: 'MDR Connect Server',               qty: (s) => s.servers },
     { key: 'o365',         label: 'O365',                             qty: (s) => s.users },
-    { key: 'incident',     label: 'Incident Response',                qty: () => 1 },
+    { key: 'incident',     label: 'Incident Response',                qty: (s) => (s.incidentResponse ? 1 : 0) },
     { key: 'dataExplorer', label: 'Data Explorer',                    qty: (s) => (s.dataExplorer ? s.users + s.servers : 0) },
     { key: 'platform',     label: 'Platform',                         qty: (s) => s.users + s.servers },
     { key: 'logRetention', label: '90 Day Log Retention',             qty: (s) => s.users + s.servers },
-    { key: 'sensor',       label: 'Virtual 100 Series Sensor (Optional)', qty: (s) => s.sensors },
-    { key: 'awareness',    label: 'Managed Security Awareness Plus',  qty: (s) => s.users },
+    { key: 'sensor',       label: 'Virtual 100 Series Sensor (Optional)', qty: (s) => (s.sensor ? s.sensors : 0) },
+    { key: 'awareness',    label: 'Managed Security Awareness Plus',  qty: (s) => (s.awareness ? s.users : 0) },
   ];
 
   const fields = {};
@@ -63,11 +63,14 @@ const MdrPricingTab = (() => {
 
   function getState() {
     return {
-      users:        Number(fields.users.value) || 0,
-      servers:      Number(fields.servers.value) || 0,
-      sites:        Number(fields.sites.value) || 0,
-      sensors:      Number(fields.sensors.value) || 0,
-      dataExplorer: fields.dataExplorer.checked,
+      users:            Number(fields.users.value) || 0,
+      servers:          Number(fields.servers.value) || 0,
+      sites:            Number(fields.sites.value) || 0,
+      sensors:          Number(fields.sensors.value) || 0,
+      dataExplorer:     fields.dataExplorer.checked,
+      incidentResponse: fields.incidentResponse.checked,
+      sensor:           fields.sensor.checked,
+      awareness:        fields.awareness.checked,
     };
   }
 
@@ -156,7 +159,9 @@ const MdrPricingTab = (() => {
     ['users', 'servers', 'sites', 'sensors', 'margin', 'discount', 'roe'].forEach((key) => {
       fields[key].addEventListener('input', calculate);
     });
-    fields.dataExplorer.addEventListener('change', calculate);
+    ['dataExplorer', 'incidentResponse', 'sensor', 'awareness'].forEach((key) => {
+      fields[key].addEventListener('change', calculate);
+    });
 
     tableBody.addEventListener('input', (e) => {
       if (e.target.matches('[data-rate-key]')) calculate();
@@ -175,7 +180,10 @@ const MdrPricingTab = (() => {
     fields.servers      = document.getElementById('mdrp-servers');
     fields.sites         = document.getElementById('mdrp-sites');
     fields.sensors       = document.getElementById('mdrp-sensors');
-    fields.dataExplorer  = document.getElementById('mdrp-data-explorer');
+    fields.dataExplorer      = document.getElementById('mdrp-data-explorer');
+    fields.incidentResponse  = document.getElementById('mdrp-incident-response');
+    fields.sensor             = document.getElementById('mdrp-sensor');
+    fields.awareness          = document.getElementById('mdrp-awareness');
     fields.margin        = document.getElementById('mdrp-margin');
     fields.discount       = document.getElementById('mdrp-discount');
     fields.roe            = document.getElementById('mdrp-roe');
