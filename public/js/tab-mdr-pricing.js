@@ -14,6 +14,7 @@ const MdrPricingTab = (() => {
     platform:     8.55,
     logRetention: 0.00,
     sensor:       712.52,
+    physicalSensor: 2171.00,
     awareness:    20.38,
   };
 
@@ -27,6 +28,7 @@ const MdrPricingTab = (() => {
     { key: 'platform',     label: 'Platform',                         qty: (s) => s.users + s.servers },
     { key: 'logRetention', label: '90 Day Log Retention',             qty: (s) => s.users + s.servers },
     { key: 'sensor',       label: 'Virtual 100 Series Sensor (Optional)', qty: (s) => (s.sensor ? s.sensors : 0) },
+    { key: 'physicalSensor', label: 'Physical Sensor (Optional)',     qty: (s) => (s.physicalSensor ? s.sensors : 0) },
     { key: 'awareness',    label: 'Managed Security Awareness Plus',  qty: (s) => (s.awareness ? s.users : 0) },
   ];
 
@@ -70,6 +72,7 @@ const MdrPricingTab = (() => {
       dataExplorer:     fields.dataExplorer.checked,
       incidentResponse: fields.incidentResponse.checked,
       sensor:           fields.sensor.checked,
+      physicalSensor:   fields.physicalSensor.checked,
       awareness:        fields.awareness.checked,
     };
   }
@@ -159,7 +162,7 @@ const MdrPricingTab = (() => {
     ['users', 'servers', 'sites', 'sensors', 'margin', 'discount', 'roe'].forEach((key) => {
       fields[key].addEventListener('input', calculate);
     });
-    ['dataExplorer', 'incidentResponse', 'sensor', 'awareness'].forEach((key) => {
+    ['dataExplorer', 'incidentResponse', 'sensor', 'physicalSensor', 'awareness'].forEach((key) => {
       fields[key].addEventListener('change', calculate);
     });
 
@@ -183,6 +186,7 @@ const MdrPricingTab = (() => {
     fields.dataExplorer      = document.getElementById('mdrp-data-explorer');
     fields.incidentResponse  = document.getElementById('mdrp-incident-response');
     fields.sensor             = document.getElementById('mdrp-sensor');
+    fields.physicalSensor     = document.getElementById('mdrp-physical-sensor');
     fields.awareness          = document.getElementById('mdrp-awareness');
     fields.margin        = document.getElementById('mdrp-margin');
     fields.discount       = document.getElementById('mdrp-discount');
