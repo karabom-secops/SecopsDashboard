@@ -1112,34 +1112,66 @@
   <section id="tab-mdr-pricing" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
       <h2 class="section-title">MDR Pricing</h2>
+      <button class="btn btn-secondary" id="mdrp-reset-rates" type="button">Reset List Prices to Defaults</button>
     </div>
 
-    <div style="display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-start;">
-      <form id="mdrp-form" onsubmit="return false" style="flex:1 1 320px; min-width:280px;">
-        <div class="form-group">
+    <form id="mdrp-form" onsubmit="return false">
+      <div style="display:flex; gap:1.5rem; flex-wrap:wrap; margin-bottom:1.5rem;">
+        <div class="form-group" style="flex:1 1 140px;">
           <label class="form-label" for="mdrp-users">Number of Users</label>
           <input class="form-input" id="mdrp-users" type="number" min="0" step="1" value="0">
         </div>
-        <div class="form-group">
+        <div class="form-group" style="flex:1 1 140px;">
           <label class="form-label" for="mdrp-servers">Number of Servers</label>
           <input class="form-input" id="mdrp-servers" type="number" min="0" step="1" value="0">
         </div>
-        <div class="form-group">
+        <div class="form-group" style="flex:1 1 140px;">
           <label class="form-label" for="mdrp-sites">Number of Sites</label>
           <input class="form-input" id="mdrp-sites" type="number" min="0" step="1" value="0">
         </div>
-        <div class="form-group">
+        <div class="form-group" style="flex:1 1 140px;">
           <label class="form-label" for="mdrp-sensors">Number of Sensors</label>
           <input class="form-input" id="mdrp-sensors" type="number" min="0" step="1" value="0">
         </div>
-        <div class="form-group" style="display:flex; align-items:center; gap:0.5rem;">
+        <div class="form-group" style="flex:0 0 auto; display:flex; align-items:center; gap:0.5rem; align-self:flex-end; padding-bottom:0.6rem;">
           <input type="checkbox" id="mdrp-data-explorer">
           <label class="form-label" for="mdrp-data-explorer" style="margin:0;">Data Explorer</label>
         </div>
-      </form>
+      </div>
 
-      <div id="mdrp-summary" class="stat-grid" style="flex:1 1 280px; min-width:260px;"></div>
-    </div>
+      <div class="table-wrapper" style="margin-bottom:1.5rem;">
+        <table id="mdrp-table" class="data-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>QTY</th>
+              <th>Unit Cost ($/yr)</th>
+              <th>Annual Cost</th>
+            </tr>
+          </thead>
+          <tbody id="mdrp-table-body"></tbody>
+        </table>
+      </div>
+
+      <div style="display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-start;">
+        <div style="flex:1 1 260px; min-width:240px;">
+          <div class="form-group">
+            <label class="form-label" for="mdrp-margin">Margin (%)</label>
+            <input class="form-input" id="mdrp-margin" type="number" min="0" step="0.1" value="0">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="mdrp-discount">Discount (%)</label>
+            <input class="form-input" id="mdrp-discount" type="number" min="0" max="100" step="0.1" value="0">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="mdrp-roe">ROE (USD → ZAR)</label>
+            <input class="form-input" id="mdrp-roe" type="number" min="0" step="0.01" value="18.50">
+          </div>
+        </div>
+
+        <div id="mdrp-summary" class="stat-grid" style="flex:2 1 400px; min-width:300px;"></div>
+      </div>
+    </form>
   </section>
 
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
