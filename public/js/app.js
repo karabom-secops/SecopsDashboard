@@ -19,6 +19,7 @@
     'risk-register': document.getElementById('tab-risk-register'),
     'remediation-tracker': document.getElementById('tab-remediation-tracker'),
     'secure-score': document.getElementById('tab-secure-score'),
+    'mdr-pricing': document.getElementById('tab-mdr-pricing'),
     admin:        document.getElementById('tab-admin'),
   };
 
@@ -34,6 +35,7 @@
     'risk-register': 'Risk Register',
     'remediation-tracker': 'Remediation Tracker',
     'secure-score': 'Secure Score',
+    'mdr-pricing': 'MDR Pricing',
     admin:      'Admin',
   };
 
@@ -95,6 +97,9 @@
     }
     if (target === 'remediation-tracker' && typeof window.RemediationTrackerTab !== 'undefined') {
       window.RemediationTrackerTab.loadAndRender();
+    }
+    if (target === 'mdr-pricing' && typeof window.MdrPricingTab !== 'undefined') {
+      window.MdrPricingTab.loadAndRender();
     }
     if (target === 'admin' && typeof window.renderAdmin === 'function') {
       window.renderAdmin();

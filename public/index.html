@@ -86,6 +86,10 @@
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         Secure Score
       </button>
+      <button class="side-nav-item" data-tab="mdr-pricing">
+        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        MDR Pricing
+      </button>
       <button class="side-nav-item" data-tab="admin" id="sideAdminBtn" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Admin
@@ -1104,6 +1108,40 @@
     </div>
   </section>
 
+  <!-- ── MDR Pricing Tab Panel ───────────────────────────────────────────── -->
+  <section id="tab-mdr-pricing" class="tab-panel" role="tabpanel" hidden>
+    <div class="section-header">
+      <h2 class="section-title">MDR Pricing</h2>
+    </div>
+
+    <div style="display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-start;">
+      <form id="mdrp-form" onsubmit="return false" style="flex:1 1 320px; min-width:280px;">
+        <div class="form-group">
+          <label class="form-label" for="mdrp-users">Number of Users</label>
+          <input class="form-input" id="mdrp-users" type="number" min="0" step="1" value="0">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="mdrp-servers">Number of Servers</label>
+          <input class="form-input" id="mdrp-servers" type="number" min="0" step="1" value="0">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="mdrp-sites">Number of Sites</label>
+          <input class="form-input" id="mdrp-sites" type="number" min="0" step="1" value="0">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="mdrp-sensors">Number of Sensors</label>
+          <input class="form-input" id="mdrp-sensors" type="number" min="0" step="1" value="0">
+        </div>
+        <div class="form-group" style="display:flex; align-items:center; gap:0.5rem;">
+          <input type="checkbox" id="mdrp-data-explorer">
+          <label class="form-label" for="mdrp-data-explorer" style="margin:0;">Data Explorer</label>
+        </div>
+      </form>
+
+      <div id="mdrp-summary" class="stat-grid" style="flex:1 1 280px; min-width:260px;"></div>
+    </div>
+  </section>
+
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
   <section id="tab-admin" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
@@ -1367,6 +1405,7 @@
   <script src="js/tab-incident-response.js"></script>
   <script src="js/tab-risk-register.js"></script>
   <script src="js/tab-remediation-tracker.js"></script>
+  <script src="js/tab-mdr-pricing.js"></script>
   <script src="js/tab-admin.js"></script>
 </body>
 </html>
