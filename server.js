@@ -1947,6 +1947,44 @@ function calculateGrcScore(answers, questions) {
 }
 
 /**
+ * calculateFrameworkScores — same weighted scoring as calculateGrcScore, but
+ * grouped by framework (NIST_CSF, CIS_V8) via grc_question_frameworks rows
+ * instead of by section. A question with no framework mapping is excluded
+ * from every framework's score.
+ */
+function calculateFrameworkScores(answers, questions, frameworkRows) {
+  const weightPoints = { critical: 5, high: 3, medium: 2, low: 1 };
+  const answerMap = {};
+  answers.forEach(a => { answerMap[String(a.questionId)] = a.answer; });
+  const qMap = {};
+  questions.forEach(q => { qMap[q.id] = q; });
+
+  const frameworks = {};
+  frameworkRows.forEach(r => {
+    if (!frameworks[r.framework]) frameworks[r.framework] = { possible: 0, earned: 0, seen: new Set() };
+    const bucket = frameworks[r.framework];
+    if (bucket.seen.has(r.question_id)) return; // count each question once per framework
+    bucket.seen.add(r.question_id);
+
+    const q = qMap[r.question_id];
+    if (!q) return;
+    const ans = answerMap[String(q.id)];
+    if (!ans || ans === 'na') return;
+    const pts = weightPoints[q.weight] || 2;
+    bucket.possible += pts;
+    if (ans === 'yes')     bucket.earned += pts;
+    if (ans === 'partial') bucket.earned += pts * 0.5;
+  });
+
+  const scores = {};
+  Object.keys(frameworks).forEach(fw => {
+    const { possible, earned } = frameworks[fw];
+    scores[fw] = possible > 0 ? Math.round((earned / possible) * 100) : null;
+  });
+  return scores;
+}
+
+/**
  * autoPopulateRisksFromGrc — for every 'no' answer on a spreadsheet-sourced
  * question (has risk_title), auto-create a Risk Register entry if one doesn't
  * already exist for that (tenant, question) pair. Pure insert-if-missing —
@@ -1989,9 +2027,22 @@ async function autoPopulateRisksFromGrc(tenantId, answers, questions, userId) {
 /** GET /api/grc/questions — returns all questions grouped by section */
 app.get('/api/grc/questions', requireAuth, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM grc_questions ORDER BY section, order_num');
+    const [qResult, fwResult] = await Promise.all([
+      pool.query('SELECT * FROM grc_questions ORDER BY section, order_num'),
+      pool.query('SELECT question_id, framework, control_id, control_title FROM grc_question_frameworks'),
+    ]);
+
+    const frameworksByQuestion = {};
+    fwResult.rows.forEach(r => {
+      if (!frameworksByQuestion[r.question_id]) frameworksByQuestion[r.question_id] = [];
+      frameworksByQuestion[r.question_id].push({
+        framework: r.framework, controlId: r.control_id, controlTitle: r.control_title,
+      });
+    });
+
     const grouped = {};
-    result.rows.forEach(q => {
+    qResult.rows.forEach(q => {
+      q.frameworks = frameworksByQuestion[q.id] || [];
       if (!grouped[q.section]) grouped[q.section] = [];
       grouped[q.section].push(q);
     });
@@ -2017,7 +2068,15 @@ app.get('/api/grc/assessment', requireAuth, async (req, res) => {
       'SELECT question_id, answer, notes FROM grc_answers WHERE assessment_id = $1',
       [asmtRes.rows[0].id]
     );
-    res.json({ assessment: asmtRes.rows[0], answers: answersRes.rows });
+
+    const [qResult, fwResult] = await Promise.all([
+      pool.query('SELECT id, weight FROM grc_questions'),
+      pool.query('SELECT question_id, framework, control_id, control_title FROM grc_question_frameworks'),
+    ]);
+    const answers = answersRes.rows.map(a => ({ questionId: a.question_id, answer: a.answer }));
+    const frameworkScores = calculateFrameworkScores(answers, qResult.rows, fwResult.rows);
+
+    res.json({ assessment: asmtRes.rows[0], answers: answersRes.rows, frameworkScores });
   } catch (err) {
     return serverError(res, err);
   }
@@ -2033,8 +2092,12 @@ app.post('/api/grc/assessment', requireAdmin, async (req, res) => {
     if (!Array.isArray(answers)) return res.status(400).json({ error: 'answers must be an array.' });
 
     // Fetch all questions to calculate score (full row needed for auto-population below)
-    const qResult = await pool.query('SELECT * FROM grc_questions');
+    const [qResult, fwResult] = await Promise.all([
+      pool.query('SELECT * FROM grc_questions'),
+      pool.query('SELECT question_id, framework, control_id, control_title FROM grc_question_frameworks'),
+    ]);
     const score = calculateGrcScore(answers, qResult.rows);
+    const frameworkScores = calculateFrameworkScores(answers, qResult.rows, fwResult.rows);
 
     const client = await pool.connect();
     try {
@@ -2065,7 +2128,7 @@ app.post('/api/grc/assessment', requireAdmin, async (req, res) => {
         console.error('[grc] auto-populate risks failed:', popErr);
       }
 
-      res.json({ ok: true, score, assessedAt: new Date().toISOString() });
+      res.json({ ok: true, score, frameworkScores, assessedAt: new Date().toISOString() });
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
       return serverError(res, err);

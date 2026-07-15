@@ -6,9 +6,11 @@ const GrcTab = (() => {
   let _sections = {};   // { sectionName: [question, ...] }
   let _answers  = {};   // { questionId: { answer, notes } }
   let _assessment = null;
+  let _questionsById = {}; // { questionId: question } — flattened across all sections
 
   const WEIGHT_LABEL = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
   const WEIGHT_COLOR = { critical: 'var(--red)', high: 'var(--amber)', medium: 'var(--logo-cyan)', low: 'var(--green)' };
+  const FRAMEWORK_LABEL = { NIST_CSF: 'NIST CSF', CIS_V8: 'CIS Controls v8' };
 
   function tenantParam(sep) {
     const isSA = window.currentUser && window.currentUser.role === 'superadmin';
@@ -83,6 +85,56 @@ const GrcTab = (() => {
     return possible > 0 ? Math.round((earned / possible) * 100) : null;
   }
 
+  // ── Per-framework score cards (NIST CSF, CIS Controls v8) ───────────────────
+  function calcFrameworkScore(framework) {
+    const pts = { critical: 5, high: 3, medium: 2, low: 1 };
+    const seen = new Set();
+    let possible = 0, earned = 0;
+    Object.values(_questionsById).forEach(q => {
+      if (seen.has(q.id)) return;
+      const mapped = (q.frameworks || []).some(f => f.framework === framework);
+      if (!mapped) return;
+      seen.add(q.id);
+
+      const a = (_answers[q.id] || {}).answer;
+      if (!a || a === 'na') return;
+      const p = pts[q.weight] || 2;
+      possible += p;
+      if (a === 'yes')     earned += p;
+      if (a === 'partial') earned += p * 0.5;
+    });
+    return possible > 0 ? Math.round((earned / possible) * 100) : null;
+  }
+
+  function renderFrameworkBreakdown(container) {
+    const frameworks = Object.keys(FRAMEWORK_LABEL);
+    container.innerHTML = `
+      <div class="grc-domain-grid">
+        ${frameworks.map(fw => {
+          const score = calcFrameworkScore(fw);
+          const color = score !== null ? getScoreColor(score) : '#aaa';
+          const label = score !== null ? `${score}/100` : '—';
+          return `
+            <div class="grc-domain-card">
+              <div class="grc-domain-name">${FRAMEWORK_LABEL[fw]}</div>
+              <div class="grc-domain-bar-wrap">
+                <div class="grc-domain-bar">
+                  <div class="grc-domain-bar-fill" data-score="${score || 0}"
+                       style="width:0%;background:${color}"></div>
+                </div>
+                <span class="grc-domain-score" style="color:${color}">${label}</span>
+              </div>
+            </div>`;
+        }).join('')}
+      </div>`;
+
+    setTimeout(() => {
+      container.querySelectorAll('.grc-domain-bar-fill').forEach(el => {
+        el.style.width = el.dataset.score + '%';
+      });
+    }, 60);
+  }
+
   function renderDomainBreakdown(container) {
     const names = Object.keys(_sections);
     if (!names.length) { container.innerHTML = ''; return; }
@@ -146,6 +198,9 @@ const GrcTab = (() => {
             <div class="grc-question-header">
               <span class="grc-question-weight" style="color:${WEIGHT_COLOR[q.weight]}">${WEIGHT_LABEL[q.weight]}</span>
               ${q.nist_ref ? `<span class="grc-question-ref">${q.nist_ref}</span>` : ''}
+              ${(q.frameworks || []).filter(f => f.framework === 'CIS_V8').map(f =>
+                `<span class="grc-question-ref grc-question-ref-cis" title="${f.controlTitle || ''}">CIS ${f.controlId}</span>`
+              ).join('')}
             </div>
             <p class="grc-question-text">${q.text}</p>
             ${q.help_text ? `<p class="grc-question-help">${q.help_text}</p>` : ''}
@@ -199,9 +254,11 @@ const GrcTab = (() => {
         // Remove unanswered highlight
         qEl.classList.remove('grc-unanswered');
 
-        // Refresh domain breakdown
+        // Refresh domain and framework breakdowns
         const breakdown = document.getElementById('grc-breakdown');
         if (breakdown) renderDomainBreakdown(breakdown);
+        const fwBreakdown = document.getElementById('grc-framework-breakdown');
+        if (fwBreakdown) renderFrameworkBreakdown(fwBreakdown);
 
         // Refresh "answered/total" progress text
         const progressEl = document.querySelector('.grc-progress-info');
@@ -306,6 +363,8 @@ const GrcTab = (() => {
 
     _sections   = sectionsData;
     _assessment = assessmentData;
+    _questionsById = {};
+    Object.values(_sections).forEach(qs => qs.forEach(q => { _questionsById[q.id] = q; }));
 
     // Build _answers map from saved answers
     _answers = {};
@@ -339,6 +398,12 @@ const GrcTab = (() => {
           <div id="grc-breakdown" class="grc-breakdown"></div>
         </div>
 
+        <!-- Framework alignment -->
+        <div class="grc-framework-panel">
+          <div class="grc-framework-title">Framework Alignment</div>
+          <div id="grc-framework-breakdown" class="grc-breakdown"></div>
+        </div>
+
         <!-- Questionnaire -->
         <div class="grc-questionnaire">
           <div class="grc-questionnaire-header">
@@ -364,6 +429,7 @@ const GrcTab = (() => {
     // Render sub-components
     renderGauge(document.getElementById('grc-gauge'), score);
     renderDomainBreakdown(document.getElementById('grc-breakdown'));
+    renderFrameworkBreakdown(document.getElementById('grc-framework-breakdown'));
     renderQuestionnaire(document.getElementById('grc-questions-wrap'));
 
     // Wire save button
