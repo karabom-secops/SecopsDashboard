@@ -440,7 +440,7 @@ input[type="file"] {
 /* ── Stat cards ────────────────────────────────────────────────────────────── */
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1.25rem;
   margin-bottom: 1.5rem;
 }
@@ -485,10 +485,12 @@ input[type="file"] {
 }
 
 .stat-card .stat-value {
-  font-size: 2rem;
+  font-size: clamp(1.25rem, 1.6vw + 0.8rem, 2rem);
   font-weight: 700;
   font-family: var(--font-display);
-  line-height: 1;
+  line-height: 1.15;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .stat-card .stat-delta {
