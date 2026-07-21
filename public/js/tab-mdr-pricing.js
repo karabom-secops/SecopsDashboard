@@ -132,6 +132,8 @@ const MdrPricingTab = (() => {
     const discountAmount = sellPrice * (discount / 100);
     const finalTotalUsd = sellPrice - discountAmount;
     const finalTotalZar = finalTotalUsd * roe;
+    const finalMonthlyUsd = finalTotalUsd / 12;
+    const finalMonthlyZar = finalTotalZar / 12;
 
     summaryEl.innerHTML = `
       <div class="stat-card">
@@ -153,6 +155,14 @@ const MdrPricingTab = (() => {
       <div class="stat-card accent-blue">
         <div class="stat-label">Final Annual Total (ZAR)</div>
         <div class="stat-value">${fmtZar(finalTotalZar)}</div>
+      </div>
+      <div class="stat-card accent-green">
+        <div class="stat-label">Final Monthly Total (USD)</div>
+        <div class="stat-value">${fmtUsd(finalMonthlyUsd)}</div>
+      </div>
+      <div class="stat-card accent-green">
+        <div class="stat-label">Final Monthly Total (ZAR)</div>
+        <div class="stat-value">${fmtZar(finalMonthlyZar)}</div>
       </div>
     `;
   }
