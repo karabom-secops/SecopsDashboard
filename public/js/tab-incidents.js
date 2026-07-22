@@ -5,6 +5,7 @@
 
   let _currentMdrData = null;
   let _currentTrends  = null;
+  let _clientSearch   = '';
 
   function escHtml(str) {
     return String(str ?? '')
@@ -81,7 +82,11 @@
     const prefix = section ? `${section}-` : '';
     const tbody = document.getElementById(`${prefix}incidents-tbody`);
     if (!tbody) return;
-    const tickets = _currentMdrData && Array.isArray(_currentMdrData.tickets) ? _currentMdrData.tickets : [];
+    let tickets = _currentMdrData && Array.isArray(_currentMdrData.tickets) ? _currentMdrData.tickets : [];
+
+    if (_clientSearch) {
+      tickets = tickets.filter(ticket => (ticket.subject || '').toLowerCase().includes(_clientSearch));
+    }
 
     if (tickets.length === 0) {
       tbody.innerHTML = '<tr><td colspan="8">No tickets available.</td></tr>';
@@ -130,6 +135,18 @@
     _currentTrends  = trendsRes.ok ? await trendsRes.json() : {};
   }
 
+  function wireClientSearch(section = '') {
+    const prefix = section ? `${section}-` : '';
+    const searchInput = document.getElementById(`${prefix}incidents-client-search`);
+    if (searchInput && !searchInput.dataset.handlerSet) {
+      searchInput.dataset.handlerSet = '1';
+      searchInput.addEventListener('input', e => {
+        _clientSearch = e.target.value.trim().toLowerCase();
+        renderTicketTable(section);
+      });
+    }
+  }
+
   function renderAll(section = '') {
     const prefix = section ? `${section}-` : '';
     const hasUpload = _currentMdrData && _currentMdrData.upload;
@@ -137,6 +154,7 @@
     renderUploadInfo(_currentMdrData && _currentMdrData.upload ? _currentMdrData.upload : null, section);
     renderEmptyState(hasUpload, section);
     if (hasUpload) {
+      wireClientSearch(section);
       renderTicketTable(section);
     }
     if (!section) {
