@@ -1735,6 +1735,37 @@ function resolveIntegrationTenant(req, source) {
   return { tenantId: req.session.tenantId };
 }
 
+// Arctic Wolf tickets come in on a single MSP-wide feed (synced under the Reflex
+// tenant). Client tenants don't have their own AW org, so we route a copy of any
+// matching ticket into their tenant based on a subject keyword — Reflex (the MSP)
+// always keeps the full, unfiltered set.
+const MDR_SUBJECT_TENANT_RULES = [
+  { slug: 'ferrosa', pattern: /ferro/i },
+  { slug: 'ncs',     pattern: /ncs/i },
+];
+
+async function writeMdrTickets(client, tenantId, tickets, uploadedBy) {
+  const stats = calcMdrStats(tickets);
+  await client.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
+  const uploadRes = await client.query(
+    `INSERT INTO mdr_uploads (tenant_id, uploaded_at, uploaded_by, total_tickets, resolved_count, pending_count, avg_resolution_hours)
+     VALUES ($1, NOW(), $2, $3, $4, $5, $6) RETURNING id`,
+    [tenantId, uploadedBy, stats.total, stats.resolved_count, stats.pending_count, stats.avg_resolution_hours]
+  );
+  const uploadId = uploadRes.rows[0].id;
+
+  for (const t of tickets) {
+    await client.query(
+      `INSERT INTO mdr_tickets (upload_id, ticket_number, subject, status, ticket_type, severity, created_at, resolved_at, updated_at, assigned_to)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [uploadId, t.ticketNumber, t.subject, t.status, t.ticketType, t.severity,
+       t.createdAt || null, t.resolvedAt || null, t.updatedAt || null, t.assignedTo || null]
+    );
+  }
+
+  return stats;
+}
+
 function calcMdrStats(tickets) {
   const resolved = tickets.filter(t => t.status === 'solved' || t.status === 'closed');
   const pending  = tickets.filter(t => t.status === 'pending' || t.status === 'open');
@@ -1880,22 +1911,23 @@ app.post('/api/integrations/:provider/sync', requireAdmin, async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      // Upsert mdr_uploads — one row per tenant (delete + reinsert for clean state)
-      await client.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
-      const uploadRes = await client.query(
-        `INSERT INTO mdr_uploads (tenant_id, uploaded_at, uploaded_by, total_tickets, resolved_count, pending_count, avg_resolution_hours)
-         VALUES ($1, NOW(), $2, $3, $4, $5, $6) RETURNING id`,
-        [tenantId, req.session.userId, stats.total, stats.resolved_count, stats.pending_count, stats.avg_resolution_hours]
-      );
-      const uploadId = uploadRes.rows[0].id;
+      // The syncing tenant always keeps the full, unfiltered ticket set.
+      await writeMdrTickets(client, tenantId, tickets, req.session.userId);
 
-      for (const t of tickets) {
-        await client.query(
-          `INSERT INTO mdr_tickets (upload_id, ticket_number, subject, status, ticket_type, severity, created_at, resolved_at, updated_at, assigned_to)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [uploadId, t.ticketNumber, t.subject, t.status, t.ticketType, t.severity,
-           t.createdAt || null, t.resolvedAt || null, t.updatedAt || null, t.assignedTo || null]
-        );
+      // Arctic Wolf is a single MSP-wide feed synced under Reflex — fan matching
+      // tickets out to the relevant client tenant by subject keyword.
+      if (provider === 'arctic_wolf') {
+        const tenantRow = await client.query('SELECT slug FROM tenants WHERE id = $1', [tenantId]);
+        if (tenantRow.rows[0] && tenantRow.rows[0].slug === 'reflex') {
+          const slugs = MDR_SUBJECT_TENANT_RULES.map(r => r.slug);
+          const subTenants = await client.query('SELECT id, slug FROM tenants WHERE slug = ANY($1)', [slugs]);
+          for (const rule of MDR_SUBJECT_TENANT_RULES) {
+            const subTenant = subTenants.rows.find(r => r.slug === rule.slug);
+            if (!subTenant) continue;
+            const matched = tickets.filter(t => rule.pattern.test(t.subject || ''));
+            await writeMdrTickets(client, subTenant.id, matched, req.session.userId);
+          }
+        }
       }
 
       await client.query(
