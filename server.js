@@ -1896,155 +1896,219 @@ app.post('/api/integrations/:provider/test', requireAdmin, async (req, res) => {
   }
 });
 
-/** Sync handler for the Arctic Wolf Reports (session-history awareness) provider. */
-async function syncArcticWolfReports(req, res) {
+/** Core sync logic for the Arctic Wolf Reports (session-history awareness) provider.
+ *  Throws on failure; thrown errors carry `.httpStatus` (and `.stillGenerating` when
+ *  applicable) so both the HTTP route and the background scheduler can react. */
+async function runArcticWolfReportsSync(tenantId, userId) {
   const provider = REPORTS_PROVIDER;
+
+  const intRow = await pool.query(
+    'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE',
+    [tenantId, provider]
+  );
+  if (!intRow.rows.length) {
+    const err = new Error('Integration not configured or disabled.');
+    err.httpStatus = 404;
+    throw err;
+  }
+
+  const { base_url, api_key_enc, api_key_iv, config_json } = intRow.rows[0];
+  const api_key = decryptKey(api_key_enc, api_key_iv);
+
+  let csvText;
   try {
-    const { tenantId, error } = resolveIntegrationTenant(req, 'body');
-    if (error) return res.status(error.status).json({ error: error.message });
-
-    const intRow = await pool.query(
-      'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE',
-      [tenantId, provider]
+    csvText = await arcticWolfReportsAdapter.fetchSessionHistoryCsv({ base_url, api_key, ...(config_json || {}) });
+  } catch (fetchErr) {
+    if (fetchErr.stillGenerating) {
+      await pool.query(
+        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'pending', last_sync_message = $1
+         WHERE tenant_id = $2 AND provider = $3`,
+        ['Report is still generating — click Sync Now again shortly.', tenantId, provider]
+      );
+      const err = new Error('Report is still generating — click Sync Now again shortly.');
+      err.httpStatus = 202;
+      err.stillGenerating = true;
+      throw err;
+    }
+    await pool.query(
+      `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
+       WHERE tenant_id = $2 AND provider = $3`,
+      [fetchErr.message, tenantId, provider]
     );
-    if (!intRow.rows.length) return res.status(404).json({ error: 'Integration not configured or disabled.' });
+    fetchErr.httpStatus = 502;
+    throw fetchErr;
+  }
 
-    const { base_url, api_key_enc, api_key_iv, config_json } = intRow.rows[0];
-    const api_key = decryptKey(api_key_enc, api_key_iv);
+  let parsed;
+  try {
+    parsed = parseSessionHistoryCSV(csvText);
+  } catch (parseErr) {
+    await pool.query(
+      `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
+       WHERE tenant_id = $2 AND provider = $3`,
+      [parseErr.message, tenantId, provider]
+    );
+    parseErr.httpStatus = 502;
+    throw parseErr;
+  }
 
-    let csvText;
-    try {
-      csvText = await arcticWolfReportsAdapter.fetchSessionHistoryCsv({ base_url, api_key, ...(config_json || {}) });
-    } catch (fetchErr) {
-      if (fetchErr.stillGenerating) {
-        await pool.query(
-          `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'pending', last_sync_message = $1
-           WHERE tenant_id = $2 AND provider = $3`,
-          ['Report is still generating — click Sync Now again shortly.', tenantId, provider]
-        );
-        return res.status(202).json({ ok: false, stillGenerating: true, message: 'Report is still generating — click Sync Now again shortly.' });
-      }
-      await pool.query(
-        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
-         WHERE tenant_id = $2 AND provider = $3`,
-        [fetchErr.message, tenantId, provider]
-      );
-      return res.status(502).json({ ok: false, error: fetchErr.message });
-    }
+  const { rows, stats } = parsed;
 
-    let parsed;
-    try {
-      parsed = parseSessionHistoryCSV(csvText);
-    } catch (parseErr) {
-      await pool.query(
-        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
-         WHERE tenant_id = $2 AND provider = $3`,
-        [parseErr.message, tenantId, provider]
-      );
-      return res.status(502).json({ ok: false, error: parseErr.message });
-    }
-
-    const { rows, stats } = parsed;
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await writeAwarenessHistory(client, tenantId, req.session.userId, rows, stats);
-      await client.query(
-        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'ok', last_sync_message = $1
-         WHERE tenant_id = $2 AND provider = $3`,
-        [`Synced ${stats.totalRows} session row${stats.totalRows !== 1 ? 's' : ''}`, tenantId, provider]
-      );
-      await client.query('COMMIT');
-      console.log(`[integrations] ${provider} sync: ${stats.totalRows} rows for tenant ${tenantId}`);
-      res.json({ ok: true, synced: stats.totalRows, totalUsers: stats.uniqueUsers });
-    } catch (dbErr) {
-      await client.query('ROLLBACK').catch(() => {});
-      return serverError(res, dbErr);
-    } finally {
-      client.release();
-    }
-  } catch (err) { return serverError(res, err); }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await writeAwarenessHistory(client, tenantId, userId, rows, stats);
+    await client.query(
+      `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'ok', last_sync_message = $1
+       WHERE tenant_id = $2 AND provider = $3`,
+      [`Synced ${stats.totalRows} session row${stats.totalRows !== 1 ? 's' : ''}`, tenantId, provider]
+    );
+    await client.query('COMMIT');
+    console.log(`[integrations] ${provider} sync: ${stats.totalRows} rows for tenant ${tenantId}`);
+    return { ok: true, synced: stats.totalRows, totalUsers: stats.uniqueUsers };
+  } catch (dbErr) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw dbErr;
+  } finally {
+    client.release();
+  }
 }
 
-/** POST /api/integrations/:provider/sync — fetch all tickets, upsert into mdr tables */
-app.post('/api/integrations/:provider/sync', requireAdmin, async (req, res) => {
+/** Core sync logic for ticket-shaped providers (Arctic Wolf tickets, IrisDFIR).
+ *  Throws on failure; thrown errors carry `.httpStatus` for the HTTP route. */
+async function runTicketIntegrationSync(provider, tenantId, userId) {
+  const adapter = INTEGRATION_ADAPTERS[provider];
+  if (!adapter) {
+    const err = new Error(`Unknown provider: ${provider}`);
+    err.httpStatus = 400;
+    throw err;
+  }
+
+  const intRow = await pool.query(
+    'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE',
+    [tenantId, provider]
+  );
+  if (!intRow.rows.length) {
+    const err = new Error('Integration not configured or disabled.');
+    err.httpStatus = 404;
+    throw err;
+  }
+
+  const { base_url, api_key_enc, api_key_iv, config_json } = intRow.rows[0];
+  const api_key = decryptKey(api_key_enc, api_key_iv);
+
+  let tickets;
   try {
-    const provider = req.params.provider;
-
-    if (provider === REPORTS_PROVIDER) {
-      return syncArcticWolfReports(req, res);
-    }
-
-    const adapter  = INTEGRATION_ADAPTERS[provider];
-    if (!adapter) return res.status(400).json({ error: `Unknown provider: ${provider}` });
-
-    const { tenantId, error } = resolveIntegrationTenant(req, 'body');
-    if (error) return res.status(error.status).json({ error: error.message });
-
-    const intRow = await pool.query(
-      'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE',
-      [tenantId, provider]
+    tickets = await adapter.fetchTickets({ base_url, api_key, ...(config_json || {}) });
+  } catch (fetchErr) {
+    await pool.query(
+      `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
+       WHERE tenant_id = $2 AND provider = $3`,
+      [fetchErr.message, tenantId, provider]
     );
-    if (!intRow.rows.length) return res.status(404).json({ error: 'Integration not configured or disabled.' });
+    fetchErr.httpStatus = 502;
+    throw fetchErr;
+  }
 
-    const { base_url, api_key_enc, api_key_iv, config_json } = intRow.rows[0];
-    const api_key = decryptKey(api_key_enc, api_key_iv);
+  const stats = calcMdrStats(tickets);
 
-    let tickets;
-    try {
-      tickets = await adapter.fetchTickets({ base_url, api_key, ...(config_json || {}) });
-    } catch (fetchErr) {
-      await pool.query(
-        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
-         WHERE tenant_id = $2 AND provider = $3`,
-        [fetchErr.message, tenantId, provider]
-      );
-      return res.status(502).json({ ok: false, error: fetchErr.message });
-    }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-    const stats = calcMdrStats(tickets);
+    // The syncing tenant always keeps the full, unfiltered ticket set.
+    await writeMdrTickets(client, tenantId, tickets, userId);
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // The syncing tenant always keeps the full, unfiltered ticket set.
-      await writeMdrTickets(client, tenantId, tickets, req.session.userId);
-
-      // Arctic Wolf is a single MSP-wide feed synced under Reflex — fan matching
-      // tickets out to the relevant client tenant by subject keyword.
-      if (provider === 'arctic_wolf') {
-        const tenantRow = await client.query('SELECT slug FROM tenants WHERE id = $1', [tenantId]);
-        if (tenantRow.rows[0] && tenantRow.rows[0].slug === 'reflex') {
-          const slugs = MDR_SUBJECT_TENANT_RULES.map(r => r.slug);
-          const subTenants = await client.query('SELECT id, slug FROM tenants WHERE slug = ANY($1)', [slugs]);
-          for (const rule of MDR_SUBJECT_TENANT_RULES) {
-            const subTenant = subTenants.rows.find(r => r.slug === rule.slug);
-            if (!subTenant) continue;
-            const matched = tickets.filter(t => rule.pattern.test(t.subject || ''));
-            await writeMdrTickets(client, subTenant.id, matched, req.session.userId);
-          }
+    // Arctic Wolf is a single MSP-wide feed synced under Reflex — fan matching
+    // tickets out to the relevant client tenant by subject keyword.
+    if (provider === 'arctic_wolf') {
+      const tenantRow = await client.query('SELECT slug FROM tenants WHERE id = $1', [tenantId]);
+      if (tenantRow.rows[0] && tenantRow.rows[0].slug === 'reflex') {
+        const slugs = MDR_SUBJECT_TENANT_RULES.map(r => r.slug);
+        const subTenants = await client.query('SELECT id, slug FROM tenants WHERE slug = ANY($1)', [slugs]);
+        for (const rule of MDR_SUBJECT_TENANT_RULES) {
+          const subTenant = subTenants.rows.find(r => r.slug === rule.slug);
+          if (!subTenant) continue;
+          const matched = tickets.filter(t => rule.pattern.test(t.subject || ''));
+          await writeMdrTickets(client, subTenant.id, matched, userId);
         }
       }
-
-      await client.query(
-        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'ok', last_sync_message = $1
-         WHERE tenant_id = $2 AND provider = $3`,
-        [`Synced ${tickets.length} ticket${tickets.length !== 1 ? 's' : ''}`, tenantId, provider]
-      );
-
-      await client.query('COMMIT');
-      console.log(`[integrations] ${provider} sync: ${tickets.length} tickets for tenant ${tenantId}`);
-      res.json({ ok: true, synced: tickets.length, stats });
-    } catch (dbErr) {
-      await client.query('ROLLBACK').catch(() => {});
-      return serverError(res, dbErr);
-    } finally {
-      client.release();
     }
-  } catch (err) { return serverError(res, err); }
+
+    await client.query(
+      `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'ok', last_sync_message = $1
+       WHERE tenant_id = $2 AND provider = $3`,
+      [`Synced ${tickets.length} ticket${tickets.length !== 1 ? 's' : ''}`, tenantId, provider]
+    );
+
+    await client.query('COMMIT');
+    console.log(`[integrations] ${provider} sync: ${tickets.length} tickets for tenant ${tenantId}`);
+    return { ok: true, synced: tickets.length, stats };
+  } catch (dbErr) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw dbErr;
+  } finally {
+    client.release();
+  }
+}
+
+/** POST /api/integrations/:provider/sync — fetch fresh data from the provider and store it */
+app.post('/api/integrations/:provider/sync', requireAdmin, async (req, res) => {
+  const provider = req.params.provider;
+  const { tenantId, error } = resolveIntegrationTenant(req, 'body');
+  if (error) return res.status(error.status).json({ error: error.message });
+
+  try {
+    const result = provider === REPORTS_PROVIDER
+      ? await runArcticWolfReportsSync(tenantId, req.session.userId)
+      : await runTicketIntegrationSync(provider, tenantId, req.session.userId);
+    return res.json(result);
+  } catch (err) {
+    if (err.stillGenerating) {
+      return res.status(202).json({ ok: false, stillGenerating: true, message: err.message });
+    }
+    if (err.httpStatus) {
+      return res.status(err.httpStatus).json({ ok: false, error: err.message });
+    }
+    return serverError(res, err);
+  }
 });
+
+// ── Scheduled integration sync (every 24h) ──────────────────────────────────
+
+const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+async function runScheduledSyncs() {
+  let rows;
+  try {
+    rows = (await pool.query('SELECT tenant_id, provider FROM integrations WHERE is_enabled = TRUE')).rows;
+  } catch (err) {
+    console.error('[integrations] scheduled sync: failed to load integrations —', err.message);
+    return;
+  }
+
+  for (const row of rows) {
+    const tenantId = row.tenant_id;
+    const provider  = row.provider;
+    try {
+      const result = provider === REPORTS_PROVIDER
+        ? await runArcticWolfReportsSync(tenantId, null)
+        : await runTicketIntegrationSync(provider, tenantId, null);
+      console.log(`[integrations] scheduled sync ok: ${provider} tenant ${tenantId} (${result.synced})`);
+    } catch (err) {
+      if (err.stillGenerating) {
+        console.log(`[integrations] scheduled sync: ${provider} tenant ${tenantId} report still generating`);
+      } else {
+        console.error(`[integrations] scheduled sync failed: ${provider} tenant ${tenantId} — ${err.message}`);
+      }
+    }
+  }
+}
+
+// Run once shortly after startup (so newly-enabled integrations don't wait a full
+// day for their first sync), then every 24 hours thereafter.
+setTimeout(() => { runScheduledSyncs().catch(err => console.error('[integrations] scheduled sync crashed —', err.message)); }, 60 * 1000);
+setInterval(() => { runScheduledSyncs().catch(err => console.error('[integrations] scheduled sync crashed —', err.message)); }, SYNC_INTERVAL_MS);
 
 // ── GRC & Insurability routes ──────────────────────────────────────────────
 
