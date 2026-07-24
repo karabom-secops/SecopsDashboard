@@ -1753,15 +1753,6 @@ function resolveIntegrationTenant(req, source) {
   return { tenantId: req.session.tenantId };
 }
 
-// Arctic Wolf tickets come in on a single MSP-wide feed (synced under the Reflex
-// tenant). Client tenants don't have their own AW org, so we route a copy of any
-// matching ticket into their tenant based on a subject keyword — Reflex (the MSP)
-// always keeps the full, unfiltered set.
-const MDR_SUBJECT_TENANT_RULES = [
-  { slug: 'ferrosa', pattern: /ferro/i },
-  { slug: 'ncs',     pattern: /ncs/i },
-];
-
 async function writeMdrTickets(client, tenantId, tickets, uploadedBy) {
   const stats = calcMdrStats(tickets);
   await client.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
@@ -2016,24 +2007,7 @@ async function runTicketIntegrationSync(provider, tenantId, userId) {
   try {
     await client.query('BEGIN');
 
-    // The syncing tenant always keeps the full, unfiltered ticket set.
     await writeMdrTickets(client, tenantId, tickets, userId);
-
-    // Arctic Wolf is a single MSP-wide feed synced under Reflex — fan matching
-    // tickets out to the relevant client tenant by subject keyword.
-    if (provider === 'arctic_wolf') {
-      const tenantRow = await client.query('SELECT slug FROM tenants WHERE id = $1', [tenantId]);
-      if (tenantRow.rows[0] && tenantRow.rows[0].slug === 'reflex') {
-        const slugs = MDR_SUBJECT_TENANT_RULES.map(r => r.slug);
-        const subTenants = await client.query('SELECT id, slug FROM tenants WHERE slug = ANY($1)', [slugs]);
-        for (const rule of MDR_SUBJECT_TENANT_RULES) {
-          const subTenant = subTenants.rows.find(r => r.slug === rule.slug);
-          if (!subTenant) continue;
-          const matched = tickets.filter(t => rule.pattern.test(t.subject || ''));
-          await writeMdrTickets(client, subTenant.id, matched, userId);
-        }
-      }
-    }
 
     await client.query(
       `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'ok', last_sync_message = $1
