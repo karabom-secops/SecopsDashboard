@@ -26,6 +26,7 @@ const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils
 const arcticWolfAdapter = require('./lib/integrations/arctic-wolf');
 const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
 const irisDfirAdapter   = require('./lib/integrations/iris-dfir');
+const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -1443,6 +1444,53 @@ function resolveAwarenessTenant(req, source) {
   return { tenantId: req.session.tenantId };
 }
 
+/**
+ * Replace a tenant's session-history awareness data with freshly parsed rows.
+ * Shared by the manual CSV/XLSX upload route and the Arctic Wolf Reports sync route.
+ */
+async function writeAwarenessHistory(client, tenantId, uploadedBy, rows, stats) {
+  await client.query('DELETE FROM awareness_uploads WHERE tenant_id = $1', [tenantId]);
+
+  const notStartedCount = rows.filter(r =>
+    r.status === 'Not Started' &&
+    r.sessionType !== 'Phishing Simulation'
+  ).length;
+
+  const uploadRes = await client.query(
+    `INSERT INTO awareness_uploads (tenant_id, uploaded_by, total_users, total_incomplete, upload_type)
+     VALUES ($1, $2, $3, $4, 'history') RETURNING id, uploaded_at`,
+    [tenantId, uploadedBy, stats.uniqueUsers, notStartedCount]
+  );
+  const uploadId   = uploadRes.rows[0].id;
+  const uploadedAt = uploadRes.rows[0].uploaded_at;
+
+  for (const row of rows) {
+    await client.query(
+      `INSERT INTO awareness_sessions
+         (upload_id, user_first_name, user_last_name, user_email,
+          manager_first_name, manager_last_name, manager_email,
+          sent_date, session_type, title, status,
+          completed_date, elapsed_seconds, clicked_at, quiz_score)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [
+        uploadId,
+        row.userFirstName, row.userLastName, row.userEmail,
+        row.managerFirstName, row.managerLastName, row.managerEmail,
+        row.sentDate        ? new Date(row.sentDate)        : null,
+        row.sessionType,
+        row.title,
+        row.status,
+        row.completedDate   ? new Date(row.completedDate)   : null,
+        row.elapsedSeconds,
+        row.clickedAt       ? new Date(row.clickedAt)       : null,
+        row.quizScore,
+      ]
+    );
+  }
+
+  return { uploadId, uploadedAt, notStartedCount };
+}
+
 app.post('/api/awareness/upload', requireAdmin, awarenessUpload.single('awarenessFile'), async (req, res) => {
   const client = await pool.connect();
   try {
@@ -1479,42 +1527,7 @@ app.post('/api/awareness/upload', requireAdmin, awarenessUpload.single('awarenes
       }
 
       const { rows, stats } = parsed;
-      const notStartedCount = rows.filter(r =>
-        r.status === 'Not Started' &&
-        r.sessionType !== 'Phishing Simulation'
-      ).length;
-
-      const uploadRes = await client.query(
-        `INSERT INTO awareness_uploads (tenant_id, uploaded_by, total_users, total_incomplete, upload_type)
-         VALUES ($1, $2, $3, $4, 'history') RETURNING id, uploaded_at`,
-        [tenantId, req.session.userId, stats.uniqueUsers, notStartedCount]
-      );
-      const uploadId   = uploadRes.rows[0].id;
-      const uploadedAt = uploadRes.rows[0].uploaded_at;
-
-      for (const row of rows) {
-        await client.query(
-          `INSERT INTO awareness_sessions
-             (upload_id, user_first_name, user_last_name, user_email,
-              manager_first_name, manager_last_name, manager_email,
-              sent_date, session_type, title, status,
-              completed_date, elapsed_seconds, clicked_at, quiz_score)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-          [
-            uploadId,
-            row.userFirstName, row.userLastName, row.userEmail,
-            row.managerFirstName, row.managerLastName, row.managerEmail,
-            row.sentDate        ? new Date(row.sentDate)        : null,
-            row.sessionType,
-            row.title,
-            row.status,
-            row.completedDate   ? new Date(row.completedDate)   : null,
-            row.elapsedSeconds,
-            row.clickedAt       ? new Date(row.clickedAt)       : null,
-            row.quizScore,
-          ]
-        );
-      }
+      const { uploadedAt, notStartedCount } = await writeAwarenessHistory(client, tenantId, req.session.userId, rows, stats);
 
       await client.query('COMMIT');
       return res.json({
@@ -1723,6 +1736,11 @@ const INTEGRATION_ADAPTERS = {
   iris_dfir:   irisDfirAdapter,
 };
 
+// Arctic Wolf Reports (security-awareness session history) isn't ticket-shaped,
+// so it isn't in INTEGRATION_ADAPTERS — it's special-cased in the test/sync routes.
+const REPORTS_PROVIDER = 'arctic_wolf_reports';
+const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER]);
+
 function resolveIntegrationTenant(req, source) {
   if (req.session.role === 'superadmin') {
     const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
@@ -1803,7 +1821,7 @@ app.get('/api/integrations', requireAuth, async (req, res) => {
 app.post('/api/integrations/:provider', requireAdmin, async (req, res) => {
   try {
     const provider = req.params.provider;
-    if (!INTEGRATION_ADAPTERS[provider]) {
+    if (!KNOWN_PROVIDERS.has(provider)) {
       return res.status(400).json({ error: `Unknown provider: ${provider}` });
     }
     const { tenantId, error } = resolveIntegrationTenant(req, 'body');
@@ -1852,7 +1870,7 @@ app.delete('/api/integrations/:provider', requireAdmin, async (req, res) => {
 app.post('/api/integrations/:provider/test', requireAdmin, async (req, res) => {
   try {
     const provider = req.params.provider;
-    const adapter  = INTEGRATION_ADAPTERS[provider];
+    const adapter  = provider === REPORTS_PROVIDER ? arcticWolfReportsAdapter : INTEGRATION_ADAPTERS[provider];
     if (!adapter) return res.status(400).json({ error: `Unknown provider: ${provider}` });
 
     const { tenantId, error } = resolveIntegrationTenant(req, 'body');
@@ -1867,17 +1885,97 @@ app.post('/api/integrations/:provider/test', requireAdmin, async (req, res) => {
     const { base_url, api_key_enc, api_key_iv, config_json } = row.rows[0];
     const api_key = decryptKey(api_key_enc, api_key_iv);
 
-    await adapter.fetchTickets({ base_url, api_key, ...(config_json || {}) }, true);
+    if (provider === REPORTS_PROVIDER) {
+      await arcticWolfReportsAdapter.testConnection({ base_url, api_key, ...(config_json || {}) });
+    } else {
+      await adapter.fetchTickets({ base_url, api_key, ...(config_json || {}) }, true);
+    }
     res.json({ ok: true, message: 'Connection successful.' });
   } catch (err) {
     res.status(400).json({ ok: false, error: err.message });
   }
 });
 
+/** Sync handler for the Arctic Wolf Reports (session-history awareness) provider. */
+async function syncArcticWolfReports(req, res) {
+  const provider = REPORTS_PROVIDER;
+  try {
+    const { tenantId, error } = resolveIntegrationTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const intRow = await pool.query(
+      'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE',
+      [tenantId, provider]
+    );
+    if (!intRow.rows.length) return res.status(404).json({ error: 'Integration not configured or disabled.' });
+
+    const { base_url, api_key_enc, api_key_iv, config_json } = intRow.rows[0];
+    const api_key = decryptKey(api_key_enc, api_key_iv);
+
+    let csvText;
+    try {
+      csvText = await arcticWolfReportsAdapter.fetchSessionHistoryCsv({ base_url, api_key, ...(config_json || {}) });
+    } catch (fetchErr) {
+      if (fetchErr.stillGenerating) {
+        await pool.query(
+          `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'pending', last_sync_message = $1
+           WHERE tenant_id = $2 AND provider = $3`,
+          ['Report is still generating — click Sync Now again shortly.', tenantId, provider]
+        );
+        return res.status(202).json({ ok: false, stillGenerating: true, message: 'Report is still generating — click Sync Now again shortly.' });
+      }
+      await pool.query(
+        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
+         WHERE tenant_id = $2 AND provider = $3`,
+        [fetchErr.message, tenantId, provider]
+      );
+      return res.status(502).json({ ok: false, error: fetchErr.message });
+    }
+
+    let parsed;
+    try {
+      parsed = parseSessionHistoryCSV(csvText);
+    } catch (parseErr) {
+      await pool.query(
+        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
+         WHERE tenant_id = $2 AND provider = $3`,
+        [parseErr.message, tenantId, provider]
+      );
+      return res.status(502).json({ ok: false, error: parseErr.message });
+    }
+
+    const { rows, stats } = parsed;
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await writeAwarenessHistory(client, tenantId, req.session.userId, rows, stats);
+      await client.query(
+        `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'ok', last_sync_message = $1
+         WHERE tenant_id = $2 AND provider = $3`,
+        [`Synced ${stats.totalRows} session row${stats.totalRows !== 1 ? 's' : ''}`, tenantId, provider]
+      );
+      await client.query('COMMIT');
+      console.log(`[integrations] ${provider} sync: ${stats.totalRows} rows for tenant ${tenantId}`);
+      res.json({ ok: true, synced: stats.totalRows, totalUsers: stats.uniqueUsers });
+    } catch (dbErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      return serverError(res, dbErr);
+    } finally {
+      client.release();
+    }
+  } catch (err) { return serverError(res, err); }
+}
+
 /** POST /api/integrations/:provider/sync — fetch all tickets, upsert into mdr tables */
 app.post('/api/integrations/:provider/sync', requireAdmin, async (req, res) => {
   try {
     const provider = req.params.provider;
+
+    if (provider === REPORTS_PROVIDER) {
+      return syncArcticWolfReports(req, res);
+    }
+
     const adapter  = INTEGRATION_ADAPTERS[provider];
     if (!adapter) return res.status(400).json({ error: `Unknown provider: ${provider}` });
 

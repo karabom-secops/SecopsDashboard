@@ -710,6 +710,15 @@
     { value: 'https://ticket-api.managedgw.ca001-prod.arcticwolf.net', label: 'CA001 — Canada' },
   ];
 
+  const AW_REPORTS_REGIONS = [
+    { value: 'https://msp-reporting.managedgw.us001-prod.arcticwolf.net', label: 'US001 — United States' },
+    { value: 'https://msp-reporting.managedgw.us002-prod.arcticwolf.net', label: 'US002 — United States' },
+    { value: 'https://msp-reporting.managedgw.us003-prod.arcticwolf.net', label: 'US003 — United States' },
+    { value: 'https://msp-reporting.managedgw.eu001-prod.arcticwolf.net', label: 'EU001 — Europe' },
+    { value: 'https://msp-reporting.managedgw.au001-prod.arcticwolf.net', label: 'AU001 — Australia' },
+    { value: 'https://msp-reporting.managedgw.ca001-prod.arcticwolf.net', label: 'CA001 — Canada' },
+  ];
+
   const PROVIDERS = [
     {
       id:   'arctic_wolf',
@@ -725,6 +734,13 @@
       desc:     'DFIR case management — syncs investigation cases as incident tickets.',
       urlLabel: 'IRIS Base URL',
       urlHint:  'e.g. https://iris.yourdomain.com',
+    },
+    {
+      id:   'arctic_wolf_reports',
+      name: 'Arctic Wolf Reports',
+      icon: '📊',
+      desc: 'Security-awareness session history — automatically syncs training/phishing session data.',
+      awRegions: true,
     },
   ];
 
@@ -793,7 +809,7 @@
             <div class="form-group">
               <label class="modal-label">Region</label>
               <select class="int-region-select form-input" data-provider="${p.id}">
-                ${AW_REGIONS.map(r => `<option value="${escHtmlInt(r.value)}" ${cfg && cfg.base_url === r.value ? 'selected' : ''}>${escHtmlInt(r.label)}</option>`).join('')}
+                ${(p.id === 'arctic_wolf_reports' ? AW_REPORTS_REGIONS : AW_REGIONS).map(r => `<option value="${escHtmlInt(r.value)}" ${cfg && cfg.base_url === r.value ? 'selected' : ''}>${escHtmlInt(r.label)}</option>`).join('')}
               </select>
             </div>
             <div class="form-group">
@@ -886,7 +902,7 @@
     if (api_key) body.api_key = api_key;
 
     // Provider-specific extra config
-    if (providerId === 'arctic_wolf') {
+    if (providerId === 'arctic_wolf' || providerId === 'arctic_wolf_reports') {
       const orgUuidInput = container.querySelector(`.int-org-uuid[data-provider="${providerId}"]`);
       const orgUuid = orgUuidInput ? orgUuidInput.value.trim() : '';
       if (!orgUuid) { setIntFeedback(providerId, 'Organization UUID is required for Arctic Wolf.', true); return; }
@@ -923,7 +939,8 @@
   }
 
   async function syncIntegration(providerId, container) {
-    setIntFeedback(providerId, 'Syncing…', false);
+    const isReports = providerId === 'arctic_wolf_reports';
+    setIntFeedback(providerId, isReports ? 'Generating report…' : 'Syncing…', false);
     const syncBtn = container.querySelector(`.int-sync-btn[data-provider="${providerId}"]`);
     if (syncBtn) syncBtn.disabled = true;
 
@@ -935,7 +952,15 @@
         body: JSON.stringify(tenantBody()),
       });
       const data = await res.json();
-      if (data.ok) {
+      if (res.status === 202 && data.stillGenerating) {
+        setIntFeedback(providerId, '⏳ ' + (data.message || 'Report is still generating — click Sync Now again shortly.'), true);
+      } else if (data.ok && isReports) {
+        setIntFeedback(providerId, `✓ Synced ${data.synced} session rows. Refreshing awareness…`, false);
+        if (typeof window.renderAwareness === 'function') {
+          window.renderAwareness().catch(() => {});
+        }
+        setTimeout(() => renderIntegrations(), 1500);
+      } else if (data.ok) {
         setIntFeedback(providerId, `✓ Synced ${data.synced} tickets. Refreshing incidents…`, false);
         // Refresh incidents tab if it's currently visible
         if (typeof window.renderIncidents === 'function') {
