@@ -34,7 +34,8 @@ window.ReportsTab = (function () {
       return 'api/reports/metrics?period=' + encodeURIComponent(ctx.period) + tenantParam('&');
     },
     secureScore:      function () { return 'api/secure-score' + tenantParam('?'); },
-    awarenessSummary: function () { return 'api/reports/awareness-summary' + tenantParam('?'); },
+    // Same endpoint the Awareness tab uses, so the deck cannot drift from it.
+    awareness:        function () { return 'api/awareness' + tenantParam('?'); },
     mdr:              function () { return 'api/mdr' + tenantParam('?'); },
     vulnSummary:      function () { return 'api/vulns/latest-summary' + tenantParam('?'); },
     vulnFindings:     function () { return 'api/remediation-tracker' + tenantParam('?'); },

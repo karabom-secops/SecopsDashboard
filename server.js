@@ -3288,79 +3288,9 @@ app.post('/api/reports/metrics/sync', requireAdmin, async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
-/**
- * GET /api/reports/awareness-summary?tenantId
- * The "Last 3 Sessions" / "Last 3 Quizzes" tables for the deck's awareness slide.
- * Only meaningful for tenants on a session-history upload — the summary format
- * genuinely cannot produce these tables.
- */
-app.get('/api/reports/awareness-summary', requireAuth, async (req, res) => {
-  const EMPTY = { sessions: [], quizzes: [], totals: null, warnings: [] };
-  try {
-    const { tenantId, error } = resolveReportTenant(req, 'query');
-    if (error) return res.status(error.status).json({ error: error.message });
-
-    const uploadRes = await pool.query(
-      'SELECT id, upload_type FROM awareness_uploads WHERE tenant_id = $1',
-      [tenantId]
-    );
-    if (!uploadRes.rows.length) {
-      return res.json({ ...EMPTY, warnings: ['No awareness data has been uploaded for this client.'] });
-    }
-    const upload = uploadRes.rows[0];
-    if ((upload.upload_type || 'summary') !== 'history') {
-      return res.json({ ...EMPTY, warnings: ['Awareness data is in summary format — session and quiz breakdowns require a session-history upload.'] });
-    }
-
-    // `status` is only ever 'Not Started' | 'Complete' | 'N/A'; there is no
-    // 'In Progress'. A started-but-unfinished session shows as 'Not Started'
-    // with elapsed time on the clock, so that is what we count.
-    const AGG = `
-      SELECT to_char(sent_date, 'YYYY-MM-DD')                                AS "sentDate",
-             COALESCE(title, '(untitled)')                                   AS title,
-             COUNT(*)::int                                                   AS assigned,
-             COUNT(*) FILTER (WHERE status = 'Complete')::int                AS completed,
-             COUNT(*) FILTER (WHERE status = 'Not Started'
-                                AND COALESCE(elapsed_seconds, 0) > 0)::int   AS "inProgress",
-             COUNT(*) FILTER (WHERE status = 'Not Started'
-                                AND COALESCE(elapsed_seconds, 0) = 0)::int   AS "notStarted"
-        FROM awareness_sessions
-       WHERE upload_id = $1 AND session_type = $2 AND status <> 'N/A'
-       GROUP BY sent_date, title
-       ORDER BY sent_date DESC, title
-       LIMIT 3`;
-
-    const [sessRes, quizRes] = await Promise.all([
-      pool.query(AGG, [upload.id, 'Awareness Session']),
-      pool.query(AGG, [upload.id, 'Quiz']),
-    ]);
-
-    const pct = (done, total) => (total > 0 ? Math.round((done / total) * 1000) / 10 : 0);
-
-    const withPct = rows => rows.map(r => ({ ...r, completionPct: pct(r.completed, r.assigned) }));
-
-    function totalRow(rows) {
-      const t = rows.reduce((a, r) => ({
-        assigned:   a.assigned   + r.assigned,
-        notStarted: a.notStarted + r.notStarted,
-        inProgress: a.inProgress + r.inProgress,
-        completed:  a.completed  + r.completed,
-      }), { assigned: 0, notStarted: 0, inProgress: 0, completed: 0 });
-      t.completionPct = pct(t.completed, t.assigned);
-      return t;
-    }
-
-    const sessions = withPct(sessRes.rows);
-    const quizzes  = withPct(quizRes.rows);
-    const totals   = { sessions: totalRow(sessions), quizzes: totalRow(quizzes) };
-
-    // The deck's gauge shows the dashboard's Secure Score (/api/secure-score), so
-    // no awareness-only composite is computed here — there is no defensible
-    // weighting for one, and inventing a number for a client deck is worse than
-    // reusing the score the product already stands behind.
-    res.json({ sessions, quizzes, totals, warnings: [] });
-  } catch (err) { return serverError(res, err); }
-});
+// The deck's awareness slide groups the raw rows from /api/awareness client-side
+// (see groupSessions in public/js/report-sections.js) rather than using a bespoke
+// aggregate here, so it can never disagree with the Awareness tab.
 
 // ── Secure Score routes ────────────────────────────────────────────────────
 

@@ -155,6 +155,75 @@ window.ReportSections = (function () {
 
   // ── Slide 3: Managed Security Awareness ───────────────────────────────────
 
+  /**
+   * Group raw session rows from /api/awareness — the same payload the Awareness
+   * tab renders — into the deck's "Last 3 <type>" table.
+   *
+   * Deliberately client-side off the shared endpoint rather than a bespoke SQL
+   * aggregate, so the deck can never disagree with what the Awareness tab shows.
+   *
+   * `status` is only ever 'Complete' | 'Not Started' | 'N/A' — there is no
+   * 'In Progress', so a started-but-unfinished session is inferred from having
+   * time on the clock.
+   */
+  // Two decimals, because the table renders toFixed(2). Rounding to one first
+  // would turn 7/549 (1.2750%) into "1.30 %" instead of "1.28 %".
+  function completionPct(done, total) {
+    return total > 0 ? Math.round((done / total) * 10000) / 100 : 0;
+  }
+
+  function groupSessions(sessions, sessionType) {
+    var buckets = {};
+    var order   = [];
+
+    (sessions || []).forEach(function (s) {
+      if (s.session_type !== sessionType) return;
+      if (s.status === 'N/A') return;
+      if (!s.sent_date) return;
+
+      var day = String(s.sent_date).slice(0, 10);
+      var key = day + '||' + (s.title || '');
+      if (!buckets[key]) {
+        buckets[key] = {
+          sentDate: day,
+          title: s.title || '(untitled)',
+          assigned: 0, completed: 0, inProgress: 0, notStarted: 0,
+        };
+        order.push(key);
+      }
+      var b = buckets[key];
+      b.assigned++;
+      if (s.status === 'Complete') b.completed++;
+      else if ((s.elapsed_seconds || 0) > 0) b.inProgress++;
+      else b.notStarted++;
+    });
+
+    return order
+      .map(function (k) { return buckets[k]; })
+      .sort(function (a, b) {
+        if (a.sentDate !== b.sentDate) return a.sentDate < b.sentDate ? 1 : -1;
+        return a.title < b.title ? -1 : 1;
+      })
+      .slice(0, MAX_AWARENESS_ROWS)
+      .map(function (r) {
+        r.completionPct = completionPct(r.completed, r.assigned);
+        return r;
+      });
+  }
+
+  function totalsFor(rows) {
+    var t = rows.reduce(function (a, r) {
+      return {
+        assigned:   a.assigned   + r.assigned,
+        notStarted: a.notStarted + r.notStarted,
+        inProgress: a.inProgress + r.inProgress,
+        completed:  a.completed  + r.completed,
+      };
+    }, { assigned: 0, notStarted: 0, inProgress: 0, completed: 0 });
+    t.completionPct = completionPct(t.completed, t.assigned);
+    return t;
+  }
+
   function awarenessTable(caption, rows, totals) {
     var cols = [
       { label: 'Date',         key: 'sentDate',      width: '19%', raw: function (r) { return esc(fmtLongDate(r.sentDate)); } },
@@ -187,9 +256,19 @@ window.ReportSections = (function () {
   }
 
   function renderAwareness(ctx) {
-    var a = ctx.data.awarenessSummary;
+    var a = ctx.data.awareness;
     if (!a) return null;
-    if (!(a.sessions || []).length && !(a.quizzes || []).length) return null;
+
+    // Summary-format uploads carry no session rows, so the tables genuinely
+    // cannot be built — the section self-disables.
+    var sessionRows = a.sessions || [];
+    if (!sessionRows.length) return null;
+
+    var sessions = groupSessions(sessionRows, 'Awareness Session');
+    var quizzes  = groupSessions(sessionRows, 'Quiz');
+    if (!sessions.length && !quizzes.length) return null;
+
+    var totals = { sessions: totalsFor(sessions), quizzes: totalsFor(quizzes) };
 
     // The gauge shows the dashboard's own Secure Score (same figure as the
     // Secure Score tab), not a metric invented for this deck.
@@ -201,10 +280,10 @@ window.ReportSections = (function () {
     // tables are full.
     var html =
       '<div style="margin-bottom:4mm">' +
-        awarenessTable('Last 3 Sessions', a.sessions || [], (a.totals || {}).sessions) +
+        awarenessTable('Last 3 Sessions', sessions, totals.sessions) +
       '</div>' +
       '<div style="margin-bottom:3.5mm">' +
-        awarenessTable('Last 3 Quizzes', a.quizzes || [], (a.totals || {}).quizzes) +
+        awarenessTable('Last 3 Quizzes', quizzes, totals.quizzes) +
       '</div>';
 
     if (score != null) {
@@ -253,11 +332,13 @@ window.ReportSections = (function () {
       lines.push('No MDR incidents were raised for ' + client + ' during the ' + label + ' reporting period.');
     }
 
-    var a = ctx.data.awarenessSummary;
-    if (a && a.totals && a.totals.sessions && a.totals.sessions.assigned) {
-      var pct = a.totals.sessions.completionPct;
-      lines.push('Security awareness session completion stands at ' + pct + '%' +
-        (pct < 70 ? ', which remains below the 70% target — manager follow-up is recommended.' : '.'));
+    var a = ctx.data.awareness;
+    if (a && (a.sessions || []).length) {
+      var t = totalsFor(groupSessions(a.sessions, 'Awareness Session'));
+      if (t.assigned) {
+        lines.push('Security awareness session completion stands at ' + t.completionPct + '%' +
+          (t.completionPct < 70 ? ', which remains below the 70% target — manager follow-up is recommended.' : '.'));
+      }
     }
 
     var vs = vulnSummaryFor(ctx);
@@ -384,7 +465,7 @@ window.ReportSections = (function () {
     // `metrics` is not required — it only supplies an optional override for the
     // Secure Score gauge, and the section must still render without it.
     { id: 'awareness',    label: 'Managed Security Awareness',     group: 'Awareness',
-      requires: ['awarenessSummary'],            render: renderAwareness },
+      requires: ['awareness'],                   render: renderAwareness },
     { id: 'observations', label: 'Observations',                   group: 'MDR Tickets',
       requires: [],                              render: renderObservations },
     { id: 'tickets',      label: 'Tickets Activity',               group: 'MDR Tickets',
