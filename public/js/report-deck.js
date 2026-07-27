@@ -80,8 +80,20 @@ window.ReportDeck = (function () {
 /* Single row of three. The row is centred in the slide body and each card
    centres its own content, so three tiles don't read as a top-heavy strip with
    the values stranded at the bottom. */
-'.ov-row.three{grid-template-columns:repeat(3,1fr);height:100%;align-content:center}',
-'.ov-row.three .ov-card{min-height:82mm}',
+'.ov-stack{height:100%;display:flex;flex-direction:column;justify-content:center;gap:7mm}',
+'.ov-row.three{grid-template-columns:repeat(3,1fr)}',
+'.ov-row.three .ov-card{min-height:58mm}',
+
+/* Secure Score component breakdown (mirrors the cards on the Secure Score tab) */
+'.cmp-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6mm}',
+'.cmp-card{border:.5pt solid #D6E4F0;border-radius:1.5mm;padding:5mm 5.5mm}',
+'.cmp-head{display:flex;align-items:baseline;justify-content:space-between;gap:3mm}',
+'.cmp-t{font-size:12pt;font-weight:600;color:' + P.DECK_INK + '}',
+'.cmp-w{font-size:9pt;color:' + P.DECK_MUTED + '}',
+'.cmp-bar{margin:3mm 0 2.5mm;height:2.4mm;border-radius:1.2mm;background:#E6ECF2;overflow:hidden}',
+'.cmp-fill{height:100%;border-radius:1.2mm}',
+'.cmp-score{font-size:19pt;font-weight:700;color:' + P.DECK_INK + ';line-height:1}',
+'.cmp-d{margin-top:2mm;font-size:8.5pt;color:' + P.DECK_MUTED + ';line-height:1.4}',
 '.ov-card{background:' + P.DECK_CARD + ';border-radius:1.5mm;padding:6mm 6mm 5mm;',
 '  display:flex;flex-direction:column;min-height:0}',
 '.ov-ico{width:8.5mm;height:8.5mm;color:' + P.DECK_BLUE + ';margin-bottom:3mm;flex:0 0 auto}',

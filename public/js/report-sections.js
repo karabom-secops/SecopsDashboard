@@ -127,6 +127,46 @@ window.ReportSections = (function () {
     return '<div class="ov-num">' + esc(shown) + '</div>';
   }
 
+  // The three weighted inputs to the Secure Score, as shown on the Secure Score
+  // tab. Weights and scores both come from /api/secure-score — nothing is
+  // recomputed here.
+  var COMPONENTS = [
+    { key: 'vulnerabilities',  label: 'Vulnerabilities',   desc: 'Based on critical, high, medium, and low findings' },
+    { key: 'awareness',        label: 'Security Awareness', desc: 'Training completion rate' },
+    { key: 'incidentResponse', label: 'Incident Response',  desc: 'Ticket resolution & speed' },
+  ];
+
+  function componentCard(c, comp) {
+    var score  = Math.round(Number(comp.score) || 0);
+    var weight = comp.weight != null ? Math.round(comp.weight * 100) + '%' : '';
+    var band   = scoreBand(score);
+
+    return '<div class="cmp-card">' +
+        '<div class="cmp-head">' +
+          '<span class="cmp-t">' + esc(c.label) + '</span>' +
+          (weight ? '<span class="cmp-w">(' + esc(weight) + ')</span>' : '') +
+        '</div>' +
+        '<div class="cmp-bar">' +
+          '<div class="cmp-fill" style="width:' + score + '%;background:' + band.color + '"></div>' +
+        '</div>' +
+        '<div class="cmp-score">' + score + '/100</div>' +
+        '<div class="cmp-d">' + esc(c.desc) + '</div>' +
+      '</div>';
+  }
+
+  /** The weighted breakdown row, or '' when no score data is available. */
+  function componentRow(ctx) {
+    var comps = (ctx.data.secureScore || {}).components;
+    if (!comps) return '';
+
+    var cards = COMPONENTS
+      .filter(function (c) { return comps[c.key] && comps[c.key].score != null; })
+      .map(function (c) { return componentCard(c, comps[c.key]); });
+
+    if (!cards.length) return '';
+    return '<div class="cmp-row">' + cards.join('') + '</div>';
+  }
+
   function renderOverview(ctx) {
     var tiles = (ctx.data.metrics || {}).tiles;
     if (!tiles) return null;
@@ -139,17 +179,20 @@ window.ReportSections = (function () {
     // A Secure Score is out of 100, not a percentage — no '%' suffix.
     var scoreLabel = score != null ? String(score) : raw;
 
-    return '<div class="ov-row three">' +
-        overviewCard(ICONS.secureScore, 'Secure Score',
-          'Your overall security posture score across vulnerabilities, awareness and incident response.',
-          pill(scoreLabel, band ? band.color : 'green') +
-          (band ? '<div class="ov-sub">' + esc(band.label) + '</div>' : '')) +
-        overviewCard(ICONS.tickets, 'Open Tickets',
-          'The number of open tickets that still require action.',
-          pill(tileValue(tiles, 'openTickets'), 'amber')) +
-        overviewCard(ICONS.incidents, 'Ticketed Incidents',
-          'Security incidents brought to your attention.',
-          bigNumber(tileValue(tiles, 'ticketedIncidents'), false)) +
+    return '<div class="ov-stack">' +
+        '<div class="ov-row three">' +
+          overviewCard(ICONS.secureScore, 'Secure Score',
+            'Your overall security posture score across vulnerabilities, awareness and incident response.',
+            pill(scoreLabel, band ? band.color : 'green') +
+            (band ? '<div class="ov-sub">' + esc(band.label) + '</div>' : '')) +
+          overviewCard(ICONS.tickets, 'Open Tickets',
+            'The number of open tickets that still require action.',
+            pill(tileValue(tiles, 'openTickets'), 'amber')) +
+          overviewCard(ICONS.incidents, 'Ticketed Incidents',
+            'Security incidents brought to your attention.',
+            bigNumber(tileValue(tiles, 'ticketedIncidents'), false)) +
+        '</div>' +
+        componentRow(ctx) +
       '</div>';
   }
 
