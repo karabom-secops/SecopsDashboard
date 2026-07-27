@@ -2070,6 +2070,21 @@ async function runScheduledSyncs() {
         ? await runArcticWolfReportsSync(tenantId, null)
         : await runTicketIntegrationSync(provider, tenantId, null);
       console.log(`[integrations] scheduled sync ok: ${provider} tenant ${tenantId} (${result.synced})`);
+
+      // Same credentials, different reports: warm the client-deck Overview tiles
+      // that only Arctic Wolf can supply. Never allowed to fail the main sync.
+      if (provider === REPORTS_PROVIDER) {
+        try {
+          const period = new Date().toISOString().slice(0, 7);
+          const m = await arcticWolfMetricsAdapter.syncDeckMetrics({
+            pool, tenantId, period, decrypt: decryptKey,
+          });
+          console.log(`[integrations] deck metrics: wrote ${m.written} for tenant ${tenantId} (${period})`);
+          (m.warnings || []).forEach(w => console.log(`[integrations] deck metrics: ${w}`));
+        } catch (metricsErr) {
+          console.error(`[integrations] deck metrics failed for tenant ${tenantId} — ${metricsErr.message}`);
+        }
+      }
     } catch (err) {
       if (err.stillGenerating) {
         console.log(`[integrations] scheduled sync: ${provider} tenant ${tenantId} report still generating`);
@@ -3279,6 +3294,40 @@ app.put('/api/reports/metrics', requireAdmin, async (req, res) => {
     }
 
     res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * POST /api/reports/metrics/sync
+ * Body: { tenantId?, period }   Query: ?debug=1 to include the raw payload.
+ *
+ * Pulls the Arctic Wolf tiles live and caches them in report_metrics. Separate
+ * from report generation because each report can take up to two minutes to
+ * generate on Arctic Wolf's side.
+ */
+app.post('/api/reports/metrics/sync', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveReportTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const period = normalisePeriod(req.body.period);
+    const debug  = req.query.debug === '1' || req.body.debug === true;
+
+    const result = await arcticWolfMetricsAdapter.syncDeckMetrics({
+      pool, tenantId, period, decrypt: decryptKey, debug,
+    });
+
+    const values = {};
+    Object.keys(result.metrics || {}).forEach(k => { values[k] = result.metrics[k].value; });
+
+    res.json({
+      ok:       true,
+      period,
+      written:  result.written,
+      values,
+      warnings: result.warnings || [],
+      raw:      debug ? (result.raw || {}) : undefined,
+    });
   } catch (err) { return serverError(res, err); }
 });
 

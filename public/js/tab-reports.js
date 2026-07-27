@@ -54,6 +54,12 @@ window.ReportsTab = (function () {
     return !!(window.currentUser && window.currentUser.role === 'superadmin');
   }
 
+  /** Whether this user may write report_metrics / trigger an Arctic Wolf sync. */
+  function canPersist() {
+    var r = window.currentUser && window.currentUser.role;
+    return r === 'admin' || r === 'superadmin';
+  }
+
   function tenantParam(sep) {
     if (!isSuperAdmin()) return '';
     var el = document.getElementById('rpt-client');
@@ -257,8 +263,7 @@ window.ReportsTab = (function () {
 
   /** Persist manual overrides. Best-effort — localStorage already has them. */
   async function saveOverrides(period, overrides) {
-    var role = window.currentUser && window.currentUser.role;
-    if (role !== 'admin' && role !== 'superadmin') return;
+    if (!canPersist()) return;
 
     var payload = { period: period, overrides: {} };
     if (isSuperAdmin()) payload.tenantId = selectedTenantId();
@@ -274,6 +279,48 @@ window.ReportsTab = (function () {
         body: JSON.stringify(payload),
       });
     } catch (_) { /* the deck does not depend on this succeeding */ }
+  }
+
+  /**
+   * Pull the Arctic Wolf tiles live and cache them server-side, then re-read.
+   * Kept off the generate path: each report can take up to two minutes to build
+   * on Arctic Wolf's side.
+   */
+  async function syncArcticWolf() {
+    var btn = document.getElementById('rpt-awsync-btn');
+    var period = (document.getElementById('rpt-period') || {}).value || '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+    notice('Requesting MONTHLY_EXECUTIVE_TICKET_SUMMARY from Arctic Wolf…');
+
+    try {
+      var payload = { period: period };
+      if (isSuperAdmin()) payload.tenantId = selectedTenantId();
+
+      var res = await fetch('api/reports/metrics/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload),
+      });
+      var body = await res.json().catch(function () { return null; });
+
+      if (!res.ok) {
+        notice((body && body.error) || 'Arctic Wolf refresh failed.', true);
+        return;
+      }
+
+      var msgs = [];
+      msgs.push('Arctic Wolf: updated ' + (body.written || 0) + ' value' +
+                (body.written === 1 ? '' : 's') + '.');
+      (body.warnings || []).forEach(function (w) { msgs.push(w); });
+      notice(msgs.join(' '), !body.written);
+
+      await refreshMetrics();
+    } catch (err) {
+      notice('Arctic Wolf refresh failed: ' + err.message, true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Refresh from Arctic Wolf'; }
+    }
   }
 
   // ── Generate ──────────────────────────────────────────────────────────────
@@ -403,6 +450,17 @@ window.ReportsTab = (function () {
 
       var rst = document.getElementById('rpt-reset-btn');
       if (rst) rst.onclick = reset;
+
+      // The sync + override-persistence routes are requireAdmin; data-admin-only
+      // hides for readonly alone, so gate the rest of the roles explicitly.
+      var awsync = document.getElementById('rpt-awsync-btn');
+      if (awsync) {
+        if (canPersist()) awsync.onclick = syncArcticWolf;
+        else {
+          var wrap = awsync.closest ? awsync.closest('.rpt-tile-actions') : null;
+          (wrap || awsync).hidden = true;
+        }
+      }
 
       var draft = document.getElementById('rpt-redraft-btn');
       if (draft) draft.onclick = function () {
