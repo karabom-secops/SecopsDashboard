@@ -705,17 +705,7 @@
 
   // ── Manager compliance report (printable popup) ─────────────────────────────
   async function _logoToDataUri() {
-    try {
-      var res = await fetch('img/reflex-logo.png');
-      if (!res.ok) return null;
-      var blob = await res.blob();
-      return new Promise(function (resolve) {
-        var reader = new FileReader();
-        reader.onload  = function () { resolve(reader.result); };
-        reader.onerror = function () { resolve(null); };
-        reader.readAsDataURL(blob);
-      });
-    } catch (_) { return null; }
+    return window.ReportShell.logoToDataUri();
   }
 
   async function _generateManagerReport(rows) {
@@ -863,10 +853,7 @@
       '</div>' +
       '</body></html>';
 
-    var win = window.open('', '_blank', 'width=960,height=700');
-    if (!win) { alert('Pop-up blocked. Please allow pop-ups for this page.'); return; }
-    win.document.write(html);
-    win.document.close();
+    window.ReportShell.openReportWindow(html, { width: 960, height: 700 });
   }
 
   // Shared: fetch awareness data and build per-user completion rows (history mode)

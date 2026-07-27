@@ -523,10 +523,7 @@ const SecureScoreTab = (() => {
   // ── Exco Report Generation ────────────────────────────────────────────────
 
   function hexToRgba(hex, alpha) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r},${g},${b},${alpha})`;
+    return window.ReportShell.hexToRgba(hex, alpha);
   }
 
   function buildGaugeSvg(score) {
@@ -761,17 +758,7 @@ const SecureScoreTab = (() => {
   }
 
   async function logoToDataUri() {
-    try {
-      const res = await fetch('img/reflex-logo.png');
-      if (!res.ok) return null;
-      const blob = await res.blob();
-      return new Promise(resolve => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => resolve(null);
-        reader.readAsDataURL(blob);
-      });
-    } catch (_) { return null; }
+    return window.ReportShell.logoToDataUri();
   }
 
   async function generateExcoReport(scoreData, history, grcData) {
@@ -1033,14 +1020,7 @@ const SecureScoreTab = (() => {
 </body>
 </html>`;
 
-    const w = window.open('', '_blank', 'width=1060,height=860,scrollbars=yes');
-    if (!w) {
-      alert('Pop-up blocked. Please allow pop-ups for this site and try again.');
-      return;
-    }
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
+    window.ReportShell.openReportWindow(html, { width: 1060, height: 860 });
   }
 
   return {

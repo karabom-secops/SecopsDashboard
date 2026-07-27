@@ -27,6 +27,7 @@ const arcticWolfAdapter = require('./lib/integrations/arctic-wolf');
 const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
 const irisDfirAdapter   = require('./lib/integrations/iris-dfir');
 const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports');
+const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -3085,6 +3086,292 @@ app.get('/api/remediation-tracker', requireAuth, async (req, res) => {
       risks: risksRes.rows,
       pentestFindings: pentestRes.rows,
       incidents: incidentsRes.rows,
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+// ── Client report deck ─────────────────────────────────────────────────────
+
+function resolveReportTenant(req, source) {
+  if (req.session.role === 'superadmin') {
+    const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+/** Current month as 'YYYY-MM'. */
+function currentPeriod() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function normalisePeriod(raw) {
+  return /^\d{4}-\d{2}$/.test(raw || '') ? raw : currentPeriod();
+}
+
+/**
+ * Coverage Score and Investigations live in the legacy weekly-report ingest
+ * (data/weeks.json), which is global and keyed by free-text org name. The only
+ * available join to a tenant is a name match, so this is best-effort and always
+ * reports what it did through `warnings`.
+ */
+function coverageFromWeeklyIngest(tenantName, period, warnings) {
+  const out = { coverage: null, alerts: null, escalated: null };
+  try {
+    const history = getOrgHistory(readData(WEEKS_FILE));
+    const wanted  = (tenantName || '').trim().toLowerCase();
+    const key     = Object.keys(history).find(k => k.trim().toLowerCase() === wanted);
+
+    if (!key) {
+      warnings.push(`No weekly-report org matched the client name "${tenantName}" — Coverage Score and Investigations are unavailable.`);
+      return out;
+    }
+
+    const all      = history[key] || [];
+    const inPeriod = all.filter(r => (r.weekKey || '').slice(0, 7) === period);
+    const rows     = inPeriod.length ? inPeriod : all.slice(-1);
+    if (!rows.length) return out;
+    if (!inPeriod.length) {
+      warnings.push('No weekly-report rows in the selected period — Coverage Score reflects the most recent week on record.');
+    }
+
+    const scores = rows.map(r => r.coverageScore).filter(v => v !== null && v !== undefined);
+    if (scores.length) {
+      out.coverage = Math.round(scores.reduce((s, v) => s + v, 0) / scores.length);
+    }
+    out.alerts    = rows.reduce((s, r) => s + (r.alerts    || 0), 0) || null;
+    out.escalated = rows.reduce((s, r) => s + (r.escalated || 0), 0) || null;
+  } catch (_) {
+    warnings.push('Weekly-report data could not be read.');
+  }
+  return out;
+}
+
+/**
+ * GET /api/reports/metrics?tenantId&period=YYYY-MM
+ * Overview tile values for the client deck. Every tile is the uniform triple
+ * { derived, source, override } — the effective value is override ?? derived.
+ */
+app.get('/api/reports/metrics', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveReportTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const period   = normalisePeriod(req.query.period);
+    const warnings = [];
+
+    const [tenantRes, ticketRes, uploadRes, overrideRes] = await Promise.all([
+      pool.query('SELECT name FROM tenants WHERE id = $1', [tenantId]),
+      pool.query(
+        `SELECT COUNT(*) FILTER (WHERE t.status IN ('open','pending'))::int AS open_tickets,
+                COUNT(*)::int                                              AS ticketed_incidents
+           FROM mdr_tickets t
+           JOIN mdr_uploads u ON u.id = t.upload_id
+          WHERE u.tenant_id = $1
+            AND to_char(t.created_at, 'YYYY-MM') = $2`,
+        [tenantId, period]
+      ).catch(() => ({ rows: [{ open_tickets: null, ticketed_incidents: null }] })),
+      pool.query(
+        `SELECT to_char(uploaded_at, 'YYYY-MM') AS upload_period
+           FROM mdr_uploads WHERE tenant_id = $1 ORDER BY uploaded_at DESC LIMIT 1`,
+        [tenantId]
+      ).catch(() => ({ rows: [] })),
+      pool.query(
+        `SELECT metric_id, value FROM report_metrics
+          WHERE tenant_id = $1 AND period = $2 AND source = 'manual'`,
+        [tenantId, period]
+      ).catch(() => ({ rows: [] })),
+    ]);
+
+    const tenantName = (tenantRes.rows[0] || {}).name || null;
+    const tickets    = ticketRes.rows[0] || {};
+
+    // MDR data is stored latest-snapshot-only, so a period older than the most
+    // recent sync legitimately has no tickets. Say so rather than reporting 0.
+    const uploadPeriod = (uploadRes.rows[0] || {}).upload_period;
+    if (!uploadPeriod) {
+      warnings.push('No MDR ticket data has been synced for this client yet.');
+    } else if (uploadPeriod !== period) {
+      warnings.push(`MDR tickets were last synced in ${uploadPeriod}; ticket counts for ${period} are drawn from that snapshot and may be incomplete.`);
+    }
+
+    const weekly = coverageFromWeeklyIngest(tenantName, period, warnings);
+
+    // Tiles Arctic Wolf owns. Cache-only — never block report generation on the
+    // Reports API poll window.
+    const aw = await arcticWolfMetricsAdapter
+      .fetchDeckMetrics({ pool, tenantId, period, decrypt: decryptKey, refresh: false })
+      .catch(err => ({ metrics: {}, warnings: ['Arctic Wolf metrics unavailable: ' + err.message] }));
+    warnings.push(...(aw.warnings || []));
+
+    const overrides = {};
+    overrideRes.rows.forEach(r => {
+      if (r.value != null && r.value !== '') overrides[r.metric_id] = r.value;
+    });
+
+    const awValue = id => (aw.metrics[id] ? aw.metrics[id].value : null);
+
+    function tile(id, derived, source) {
+      const fromAw = awValue(id);
+      return {
+        derived:  fromAw != null ? fromAw : (derived === undefined ? null : derived),
+        source:   fromAw != null ? 'arctic-wolf' : (derived === null || derived === undefined ? 'unavailable' : source),
+        override: overrides[id] != null ? overrides[id] : null,
+      };
+    }
+
+    res.json({
+      tenantId,
+      tenantName,
+      period,
+      tiles: {
+        coverageScore:     tile('coverageScore',     weekly.coverage,             'weekly-report'),
+        openTickets:       tile('openTickets',       tickets.open_tickets,        'mdr-tickets'),
+        observations:      tile('observations',      null,                        'unavailable'),
+        investigations:    tile('investigations',    weekly.alerts,               'weekly-report-alerts'),
+        ticketedIncidents: tile('ticketedIncidents', tickets.ticketed_incidents,  'mdr-tickets'),
+        // Derived on the awareness route from session/quiz/phishing rates; the
+        // Arctic Wolf figure supersedes it once the report mapping lands.
+        cultureScore:      tile('cultureScore',      null,                        'unavailable'),
+      },
+      warnings,
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * PUT /api/reports/metrics
+ * Body: { tenantId?, period, overrides: { metricId: value|null } }
+ * Manual tile overrides. Null / empty clears the override.
+ */
+app.put('/api/reports/metrics', requireAdmin, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveReportTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const period    = normalisePeriod(req.body.period);
+    const overrides = req.body.overrides;
+    if (!overrides || typeof overrides !== 'object') {
+      return res.status(400).json({ error: 'overrides object is required.' });
+    }
+
+    for (const [metricId, raw] of Object.entries(overrides)) {
+      const value = raw == null ? '' : String(raw).trim();
+      if (value === '') {
+        await pool.query(
+          `DELETE FROM report_metrics
+            WHERE tenant_id=$1 AND period=$2 AND metric_id=$3 AND source='manual'`,
+          [tenantId, period, metricId]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO report_metrics (tenant_id, period, metric_id, value, source, updated_by, updated_at)
+                VALUES ($1, $2, $3, $4, 'manual', $5, NOW())
+           ON CONFLICT (tenant_id, period, metric_id, source)
+             DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+          [tenantId, period, metricId, value, req.session.userId]
+        );
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * GET /api/reports/awareness-summary?tenantId
+ * The "Last 3 Sessions" / "Last 3 Quizzes" tables plus a Secure Culture Score.
+ * Only meaningful for tenants on a session-history upload — the summary format
+ * genuinely cannot produce these tables.
+ */
+app.get('/api/reports/awareness-summary', requireAuth, async (req, res) => {
+  const EMPTY = { sessions: [], quizzes: [], totals: null, culture: null, warnings: [] };
+  try {
+    const { tenantId, error } = resolveReportTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const uploadRes = await pool.query(
+      'SELECT id, upload_type FROM awareness_uploads WHERE tenant_id = $1',
+      [tenantId]
+    );
+    if (!uploadRes.rows.length) {
+      return res.json({ ...EMPTY, warnings: ['No awareness data has been uploaded for this client.'] });
+    }
+    const upload = uploadRes.rows[0];
+    if ((upload.upload_type || 'summary') !== 'history') {
+      return res.json({ ...EMPTY, warnings: ['Awareness data is in summary format — session and quiz breakdowns require a session-history upload.'] });
+    }
+
+    // `status` is only ever 'Not Started' | 'Complete' | 'N/A'; there is no
+    // 'In Progress'. A started-but-unfinished session shows as 'Not Started'
+    // with elapsed time on the clock, so that is what we count.
+    const AGG = `
+      SELECT to_char(sent_date, 'YYYY-MM-DD')                                AS "sentDate",
+             COALESCE(title, '(untitled)')                                   AS title,
+             COUNT(*)::int                                                   AS assigned,
+             COUNT(*) FILTER (WHERE status = 'Complete')::int                AS completed,
+             COUNT(*) FILTER (WHERE status = 'Not Started'
+                                AND COALESCE(elapsed_seconds, 0) > 0)::int   AS "inProgress",
+             COUNT(*) FILTER (WHERE status = 'Not Started'
+                                AND COALESCE(elapsed_seconds, 0) = 0)::int   AS "notStarted"
+        FROM awareness_sessions
+       WHERE upload_id = $1 AND session_type = $2 AND status <> 'N/A'
+       GROUP BY sent_date, title
+       ORDER BY sent_date DESC, title
+       LIMIT 3`;
+
+    const [sessRes, quizRes, phishRes] = await Promise.all([
+      pool.query(AGG, [upload.id, 'Awareness Session']),
+      pool.query(AGG, [upload.id, 'Quiz']),
+      pool.query(
+        `SELECT COUNT(*)::int                                          AS sent,
+                COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)::int    AS clicked
+           FROM awareness_sessions
+          WHERE upload_id = $1 AND session_type = 'Phishing Simulation'`,
+        [upload.id]
+      ).catch(() => ({ rows: [{ sent: 0, clicked: 0 }] })),
+    ]);
+
+    const pct = (done, total) => (total > 0 ? Math.round((done / total) * 1000) / 10 : 0);
+
+    const withPct = rows => rows.map(r => ({ ...r, completionPct: pct(r.completed, r.assigned) }));
+
+    function totalRow(rows) {
+      const t = rows.reduce((a, r) => ({
+        assigned:   a.assigned   + r.assigned,
+        notStarted: a.notStarted + r.notStarted,
+        inProgress: a.inProgress + r.inProgress,
+        completed:  a.completed  + r.completed,
+      }), { assigned: 0, notStarted: 0, inProgress: 0, completed: 0 });
+      t.completionPct = pct(t.completed, t.assigned);
+      return t;
+    }
+
+    const sessions = withPct(sessRes.rows);
+    const quizzes  = withPct(quizRes.rows);
+    const totals   = { sessions: totalRow(sessions), quizzes: totalRow(quizzes) };
+
+    // NOTE: this weighting is a placeholder. The real Secure Culture Score is an
+    // Arctic Wolf figure; once the Reports API mapping lands in
+    // lib/integrations/arctic-wolf-metrics.js it should supersede this.
+    const phish         = phishRes.rows[0] || { sent: 0, clicked: 0 };
+    const phishClickPct = pct(phish.clicked, phish.sent);
+    const sessionPct    = totals.sessions.completionPct;
+    const quizPct       = totals.quizzes.completionPct;
+    const derivedScore  = Math.round(
+      0.5 * sessionPct + 0.3 * quizPct + 0.2 * (100 - phishClickPct)
+    );
+
+    res.json({
+      sessions,
+      quizzes,
+      totals,
+      culture: { sessionPct, quizPct, phishClickPct, derivedScore, source: 'derived' },
+      warnings: [],
     });
   } catch (err) { return serverError(res, err); }
 });
