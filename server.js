@@ -3129,44 +3129,6 @@ function normalisePeriod(raw) {
 }
 
 /**
- * Coverage Score and Investigations live in the legacy weekly-report ingest
- * (data/weeks.json), which is global and keyed by free-text org name. The only
- * available join to a tenant is a name match, so this is best-effort and always
- * reports what it did through `warnings`.
- */
-function coverageFromWeeklyIngest(tenantName, period, warnings) {
-  const out = { coverage: null, alerts: null, escalated: null };
-  try {
-    const history = getOrgHistory(readData(WEEKS_FILE));
-    const wanted  = (tenantName || '').trim().toLowerCase();
-    const key     = Object.keys(history).find(k => k.trim().toLowerCase() === wanted);
-
-    if (!key) {
-      warnings.push(`No weekly-report org matched the client name "${tenantName}" — Coverage Score and Investigations are unavailable.`);
-      return out;
-    }
-
-    const all      = history[key] || [];
-    const inPeriod = all.filter(r => (r.weekKey || '').slice(0, 7) === period);
-    const rows     = inPeriod.length ? inPeriod : all.slice(-1);
-    if (!rows.length) return out;
-    if (!inPeriod.length) {
-      warnings.push('No weekly-report rows in the selected period — Coverage Score reflects the most recent week on record.');
-    }
-
-    const scores = rows.map(r => r.coverageScore).filter(v => v !== null && v !== undefined);
-    if (scores.length) {
-      out.coverage = Math.round(scores.reduce((s, v) => s + v, 0) / scores.length);
-    }
-    out.alerts    = rows.reduce((s, r) => s + (r.alerts    || 0), 0) || null;
-    out.escalated = rows.reduce((s, r) => s + (r.escalated || 0), 0) || null;
-  } catch (_) {
-    warnings.push('Weekly-report data could not be read.');
-  }
-  return out;
-}
-
-/**
  * GET /api/reports/metrics?tenantId&period=YYYY-MM
  * Overview tile values for the client deck. Every tile is the uniform triple
  * { derived, source, override } — the effective value is override ?? derived.
@@ -3214,8 +3176,6 @@ app.get('/api/reports/metrics', requireAuth, async (req, res) => {
       warnings.push(`MDR tickets were last synced in ${uploadPeriod}; ticket counts for ${period} are drawn from that snapshot and may be incomplete.`);
     }
 
-    const weekly = coverageFromWeeklyIngest(tenantName, period, warnings);
-
     // Tiles Arctic Wolf owns. Cache-only — never block report generation on the
     // Reports API poll window.
     const aw = await arcticWolfMetricsAdapter
@@ -3244,14 +3204,11 @@ app.get('/api/reports/metrics', requireAuth, async (req, res) => {
       tenantName,
       period,
       tiles: {
-        coverageScore:     tile('coverageScore',     weekly.coverage,             'weekly-report'),
-        openTickets:       tile('openTickets',       tickets.open_tickets,        'mdr-tickets'),
-        observations:      tile('observations',      null,                        'unavailable'),
-        investigations:    tile('investigations',    weekly.alerts,               'weekly-report-alerts'),
-        ticketedIncidents: tile('ticketedIncidents', tickets.ticketed_incidents,  'mdr-tickets'),
-        // Derived on the awareness route from session/quiz/phishing rates; the
-        // Arctic Wolf figure supersedes it once the report mapping lands.
-        cultureScore:      tile('cultureScore',      null,                        'unavailable'),
+        openTickets:       tile('openTickets',       tickets.open_tickets,       'mdr-tickets'),
+        ticketedIncidents: tile('ticketedIncidents', tickets.ticketed_incidents, 'mdr-tickets'),
+        // Derived value is filled in client-side from /api/secure-score so the
+        // scoring engine lives in exactly one place; only the override is ours.
+        secureScore:       tile('secureScore',       null,                       'secure-score'),
       },
       warnings,
     });
@@ -3333,12 +3290,12 @@ app.post('/api/reports/metrics/sync', requireAdmin, async (req, res) => {
 
 /**
  * GET /api/reports/awareness-summary?tenantId
- * The "Last 3 Sessions" / "Last 3 Quizzes" tables plus a Secure Culture Score.
+ * The "Last 3 Sessions" / "Last 3 Quizzes" tables for the deck's awareness slide.
  * Only meaningful for tenants on a session-history upload — the summary format
  * genuinely cannot produce these tables.
  */
 app.get('/api/reports/awareness-summary', requireAuth, async (req, res) => {
-  const EMPTY = { sessions: [], quizzes: [], totals: null, culture: null, warnings: [] };
+  const EMPTY = { sessions: [], quizzes: [], totals: null, warnings: [] };
   try {
     const { tenantId, error } = resolveReportTenant(req, 'query');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3373,16 +3330,9 @@ app.get('/api/reports/awareness-summary', requireAuth, async (req, res) => {
        ORDER BY sent_date DESC, title
        LIMIT 3`;
 
-    const [sessRes, quizRes, phishRes] = await Promise.all([
+    const [sessRes, quizRes] = await Promise.all([
       pool.query(AGG, [upload.id, 'Awareness Session']),
       pool.query(AGG, [upload.id, 'Quiz']),
-      pool.query(
-        `SELECT COUNT(*)::int                                          AS sent,
-                COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)::int    AS clicked
-           FROM awareness_sessions
-          WHERE upload_id = $1 AND session_type = 'Phishing Simulation'`,
-        [upload.id]
-      ).catch(() => ({ rows: [{ sent: 0, clicked: 0 }] })),
     ]);
 
     const pct = (done, total) => (total > 0 ? Math.round((done / total) * 1000) / 10 : 0);
@@ -3404,24 +3354,11 @@ app.get('/api/reports/awareness-summary', requireAuth, async (req, res) => {
     const quizzes  = withPct(quizRes.rows);
     const totals   = { sessions: totalRow(sessions), quizzes: totalRow(quizzes) };
 
-    // NOTE: this weighting is a placeholder. The real Secure Culture Score is an
-    // Arctic Wolf figure; once the Reports API mapping lands in
-    // lib/integrations/arctic-wolf-metrics.js it should supersede this.
-    const phish         = phishRes.rows[0] || { sent: 0, clicked: 0 };
-    const phishClickPct = pct(phish.clicked, phish.sent);
-    const sessionPct    = totals.sessions.completionPct;
-    const quizPct       = totals.quizzes.completionPct;
-    const derivedScore  = Math.round(
-      0.5 * sessionPct + 0.3 * quizPct + 0.2 * (100 - phishClickPct)
-    );
-
-    res.json({
-      sessions,
-      quizzes,
-      totals,
-      culture: { sessionPct, quizPct, phishClickPct, derivedScore, source: 'derived' },
-      warnings: [],
-    });
+    // The deck's gauge shows the dashboard's Secure Score (/api/secure-score), so
+    // no awareness-only composite is computed here — there is no defensible
+    // weighting for one, and inventing a number for a client deck is worse than
+    // reusing the score the product already stands behind.
+    res.json({ sessions, quizzes, totals, warnings: [] });
   } catch (err) { return serverError(res, err); }
 });
 

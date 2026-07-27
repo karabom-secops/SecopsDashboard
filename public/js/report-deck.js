@@ -36,7 +36,7 @@ window.ReportDeck = (function () {
 '.sl-head{display:flex;justify-content:space-between;align-items:flex-start;flex:0 0 auto;gap:10mm}',
 '.sl-title{font-size:30pt;font-weight:800;color:' + P.DECK_BLUE + ';line-height:1.05;letter-spacing:-.4pt}',
 '.sl-rule{height:2.5pt;background:' + P.DECK_BLUE + ';margin-top:3.5mm}',
-'.sl-logo{height:11mm;width:auto;flex:0 0 auto}',
+'.sl-logo{height:13mm;width:auto;flex:0 0 auto;align-self:flex-start}',
 '.sl-body{flex:1 1 auto;padding-top:6mm;min-height:0;overflow:hidden}',
 
 /* footer */
@@ -56,7 +56,12 @@ window.ReportDeck = (function () {
 '  z-index:1;pointer-events:none}',
 '.cover-copy{position:absolute;right:18mm;bottom:19mm;font-size:8.5pt;',
 '  color:rgba(255,255,255,.85);z-index:3}',
-'.cover-logo{height:12mm;width:auto;filter:brightness(0) invert(1)}',
+/* align-self is load-bearing: .cover-inner is a column flex container, so the
+   default align-items:stretch would blow the logo out to the full slide width
+   and destroy its aspect ratio. reflex-logo.png is a stacked lockup (~1.27:1)
+   with an alpha channel, so brightness(0) invert(1) yields a clean white mark. */
+'.cover-logo{height:16mm;width:auto;flex:0 0 auto;align-self:flex-start;',
+'  filter:brightness(0) invert(1)}',
 '.cover-mid{margin-top:auto;margin-bottom:auto;padding-right:40mm}',
 '.cover-title{font-size:50pt;font-weight:800;line-height:1.03;color:#fff;letter-spacing:-1.1pt}',
 '.cover-sub{font-size:20pt;font-weight:700;color:' + P.DECK_NAVY + ';margin-top:6mm;line-height:1.15}',
@@ -72,6 +77,11 @@ window.ReportDeck = (function () {
 '.ov-row{display:grid;gap:6mm}',
 '.ov-row.top{grid-template-columns:repeat(2,1fr);margin-bottom:6mm}',
 '.ov-row.bot{grid-template-columns:repeat(3,1fr)}',
+/* Single row of three. The row is centred in the slide body and each card
+   centres its own content, so three tiles don't read as a top-heavy strip with
+   the values stranded at the bottom. */
+'.ov-row.three{grid-template-columns:repeat(3,1fr);height:100%;align-content:center}',
+'.ov-row.three .ov-card{min-height:82mm}',
 '.ov-card{background:' + P.DECK_CARD + ';border-radius:1.5mm;padding:6mm 6mm 5mm;',
 '  display:flex;flex-direction:column;min-height:0}',
 '.ov-ico{width:8.5mm;height:8.5mm;color:' + P.DECK_BLUE + ';margin-bottom:3mm;flex:0 0 auto}',
@@ -84,6 +94,8 @@ window.ReportDeck = (function () {
 '.ov-num{margin-top:4.5mm;font-size:30pt;font-weight:400;color:' + P.DECK_INK + ';line-height:1;',
 '  text-align:center}',
 '.ov-nodata{margin-top:4.5mm;font-size:13pt;font-style:italic;color:#A6A6A6;text-align:center}',
+'.ov-sub{margin-top:2.5mm;font-size:11pt;font-weight:600;color:' + P.DECK_MUTED + ';',
+'  text-transform:uppercase;letter-spacing:.6pt}',
 
 /* data tables */
 '.dt-cap{font-size:12pt;font-weight:600;color:' + P.DECK_INK + ';margin:0 0 2mm;text-align:center}',

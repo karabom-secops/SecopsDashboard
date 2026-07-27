@@ -80,28 +80,28 @@ window.ReportSections = (function () {
     return row && row.summary ? row.summary : null;
   }
 
-  var CULTURE_BANDS = [
-    { max: 60,       label: 'Vulnerable' },
-    { max: 70,       label: 'At Risk'    },
-    { max: 90,       label: 'Strong'     },
-    { max: Infinity, label: 'Excellent'  },
+  // Mirrors getScoreRating/getScoreColor in tab-secure-score.js:31-42 — the deck
+  // must not invent its own bands for a score the dashboard already rates.
+  var SCORE_BANDS = [
+    { min: 80, label: 'Excellent', color: '#27ae60' },
+    { min: 70, label: 'Good',      color: '#f39c12' },
+    { min: 50, label: 'Fair',      color: '#e67e22' },
+    { min: -1, label: 'Poor',      color: '#e74c3c' },
   ];
 
-  function cultureRating(score) {
-    for (var i = 0; i < CULTURE_BANDS.length; i++) {
-      if (score < CULTURE_BANDS[i].max) return CULTURE_BANDS[i].label;
+  function scoreBand(score) {
+    for (var i = 0; i < SCORE_BANDS.length; i++) {
+      if (score >= SCORE_BANDS[i].min) return SCORE_BANDS[i];
     }
-    return 'Excellent';
+    return SCORE_BANDS[SCORE_BANDS.length - 1];
   }
 
   // ── Slide 2: Managed Cybersecurity Overview ───────────────────────────────
 
   var ICONS = {
-    coverage:      '<svg class="ov-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3z"/><path d="M9 12l2 2 4-4"/></svg>',
-    tickets:       '<svg class="ov-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-    observations:  '<svg class="ov-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>',
-    investigations:'<svg class="ov-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.7" y2="16.7"/></svg>',
-    incidents:     '<svg class="ov-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="12" y1="13" x2="12" y2="16"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>',
+    secureScore: '<svg class="ov-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3z"/><path d="M9 12l2 2 4-4"/></svg>',
+    tickets:     '<svg class="ov-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    incidents:   '<svg class="ov-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="12" y1="13" x2="12" y2="16"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>',
   };
 
   function overviewCard(icon, title, desc, valueHtml) {
@@ -113,9 +113,12 @@ window.ReportSections = (function () {
       '</div>';
   }
 
+  /** Coloured value pill. `tone` may be a band class or an explicit hex. */
   function pill(value, tone) {
     if (value == null) return '<div class="ov-nodata">no data</div>';
-    return '<div class="ov-pill ' + tone + '">' + esc(value) + '</div>';
+    var isHex = /^#/.test(tone);
+    return '<div class="ov-pill' + (isHex ? '' : ' ' + tone) + '"' +
+           (isHex ? ' style="background:' + tone + '"' : '') + '>' + esc(value) + '</div>';
   }
 
   function bigNumber(value, compact) {
@@ -128,24 +131,22 @@ window.ReportSections = (function () {
     var tiles = (ctx.data.metrics || {}).tiles;
     if (!tiles) return null;
 
-    var coverage = tileValue(tiles, 'coverageScore');
-    if (coverage != null && /^\d+(\.\d+)?$/.test(coverage)) coverage = coverage + '%';
+    // Secure Score is a 0-100 rating, so the pill is coloured by its band
+    // rather than being permanently green.
+    var raw   = tileValue(tiles, 'secureScore');
+    var score = raw != null && /^\d+(\.\d+)?$/.test(raw) ? Math.round(Number(raw)) : null;
+    var band  = score != null ? scoreBand(score) : null;
+    // A Secure Score is out of 100, not a percentage — no '%' suffix.
+    var scoreLabel = score != null ? String(score) : raw;
 
-    return '<div class="ov-row top">' +
-        overviewCard(ICONS.coverage, 'Coverage Score',
-          'The Coverage Score represents your engagement with the MDR service.',
-          pill(coverage, 'green')) +
+    return '<div class="ov-row three">' +
+        overviewCard(ICONS.secureScore, 'Secure Score',
+          'Your overall security posture score across vulnerabilities, awareness and incident response.',
+          pill(scoreLabel, band ? band.color : 'green') +
+          (band ? '<div class="ov-sub">' + esc(band.label) + '</div>' : '')) +
         overviewCard(ICONS.tickets, 'Open Tickets',
           'The number of open tickets that still require action.',
           pill(tileValue(tiles, 'openTickets'), 'amber')) +
-      '</div>' +
-      '<div class="ov-row bot">' +
-        overviewCard(ICONS.observations, 'Observations',
-          'Number of data points we received from your environment.',
-          bigNumber(tileValue(tiles, 'observations'), true)) +
-        overviewCard(ICONS.investigations, 'Investigations',
-          'Potential incidents that were examined from your environment.',
-          bigNumber(tileValue(tiles, 'investigations'), false)) +
         overviewCard(ICONS.incidents, 'Ticketed Incidents',
           'Security incidents brought to your attention.',
           bigNumber(tileValue(tiles, 'ticketedIncidents'), false)) +
@@ -173,14 +174,14 @@ window.ReportSections = (function () {
     });
   }
 
-  function cultureLegend() {
+  function scoreLegend() {
     return '<div class="gauge-legend">' +
         '<div class="lg-h">Score</div>' +
         '<table>' +
-          '<tr><td>&lt; 60</td><td>Vulnerable</td></tr>' +
-          '<tr><td>&lt; 70</td><td>At Risk</td></tr>' +
-          '<tr><td>&lt; 90</td><td>Strong</td></tr>' +
-          '<tr><td>&gt; 90</td><td>Excellent</td></tr>' +
+          '<tr><td>&ge; 80</td><td>Excellent</td></tr>' +
+          '<tr><td>&ge; 70</td><td>Good</td></tr>' +
+          '<tr><td>&ge; 50</td><td>Fair</td></tr>' +
+          '<tr><td>&lt; 50</td><td>Poor</td></tr>' +
         '</table>' +
       '</div>';
   }
@@ -190,11 +191,10 @@ window.ReportSections = (function () {
     if (!a) return null;
     if (!(a.sessions || []).length && !(a.quizzes || []).length) return null;
 
-    // A manual override on the culture tile wins over the derived score.
-    var overrideScore = tileValue(((ctx.data.metrics || {}).tiles) || {}, 'cultureScore');
-    var score = overrideScore != null && /^\d+(\.\d+)?$/.test(overrideScore)
-      ? Number(overrideScore)
-      : (a.culture ? a.culture.derivedScore : null);
+    // The gauge shows the dashboard's own Secure Score (same figure as the
+    // Secure Score tab), not a metric invented for this deck.
+    var raw = tileValue(((ctx.data.metrics || {}).tiles) || {}, 'secureScore');
+    var score = raw != null && /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : null;
 
     // Height budget is tight: two 4-row tables plus the gauge must fit ~136mm of
     // body with overflow:hidden. Drop the gauge rather than crop it if both
@@ -209,10 +209,10 @@ window.ReportSections = (function () {
 
     if (score != null) {
       html +=
-        '<div class="dt-cap">Secure Culture Score</div>' +
+        '<div class="dt-cap">Secure Score</div>' +
         '<div class="gauge-wrap">' +
-          D.gaugeSemi(score, { rating: cultureRating(score), pxWidth: 49 }) +
-          cultureLegend() +
+          D.gaugeSemi(score, { rating: scoreBand(score).label, pxWidth: 49 }) +
+          scoreLegend() +
         '</div>';
     }
 
@@ -382,7 +382,7 @@ window.ReportSections = (function () {
     { id: 'overview',     label: 'Managed Cybersecurity Overview', group: 'Stats',
       requires: ['metrics'],                     render: renderOverview },
     // `metrics` is not required — it only supplies an optional override for the
-    // culture score, and the section must still render without it.
+    // Secure Score gauge, and the section must still render without it.
     { id: 'awareness',    label: 'Managed Security Awareness',     group: 'Awareness',
       requires: ['awarenessSummary'],            render: renderAwareness },
     { id: 'observations', label: 'Observations',                   group: 'MDR Tickets',
@@ -394,7 +394,7 @@ window.ReportSections = (function () {
   ];
 
   REGISTRY.draftObservations = draftObservations;
-  REGISTRY.cultureRating     = cultureRating;
+  REGISTRY.scoreBand         = scoreBand;
   REGISTRY.tileValue         = tileValue;
 
   return REGISTRY;

@@ -16,21 +16,16 @@ window.ReportsTab = (function () {
 
   // The tiles on the Overview slide, in slide order.
   var TILES = [
-    { id: 'coverageScore',     label: 'Coverage Score',     hint: '%'            },
-    { id: 'openTickets',       label: 'Open Tickets',       hint: 'count'        },
-    { id: 'observations',      label: 'Observations',       hint: 'e.g. 223 M'   },
-    { id: 'investigations',    label: 'Investigations',     hint: 'count'        },
-    { id: 'ticketedIncidents', label: 'Ticketed Incidents', hint: 'count'        },
-    { id: 'cultureScore',      label: 'Secure Culture Score', hint: '0–100'      },
+    { id: 'secureScore',       label: 'Secure Score',       hint: '0–100' },
+    { id: 'openTickets',       label: 'Open Tickets',       hint: 'count' },
+    { id: 'ticketedIncidents', label: 'Ticketed Incidents', hint: 'count' },
   ];
 
   var SOURCE_LABELS = {
-    'weekly-report':        'weekly report',
-    'weekly-report-alerts': 'weekly report (alerts)',
-    'mdr-tickets':          'MDR tickets',
-    'arctic-wolf':          'Arctic Wolf',
-    'derived-awareness':    'derived',
-    'unavailable':          'no source',
+    'mdr-tickets':  'MDR tickets',
+    'arctic-wolf':  'Arctic Wolf',
+    'secure-score': 'Secure Score tab',
+    'unavailable':  'no source',
   };
 
   // The only place that knows which endpoint backs which `requires` key.
@@ -38,11 +33,29 @@ window.ReportsTab = (function () {
     metrics: function (ctx) {
       return 'api/reports/metrics?period=' + encodeURIComponent(ctx.period) + tenantParam('&');
     },
+    secureScore:      function () { return 'api/secure-score' + tenantParam('?'); },
     awarenessSummary: function () { return 'api/reports/awareness-summary' + tenantParam('?'); },
     mdr:              function () { return 'api/mdr' + tenantParam('?'); },
     vulnSummary:      function () { return 'api/vulns/latest-summary' + tenantParam('?'); },
     vulnFindings:     function () { return 'api/remediation-tracker' + tenantParam('?'); },
   };
+
+  /**
+   * Fold the live Secure Score into the metrics payload's tile triple. The
+   * scoring engine stays in one place (/api/secure-score, same as the Secure
+   * Score tab); this only supplies the tile's `derived` half.
+   */
+  function mergeSecureScore(metrics, secureScore) {
+    if (!metrics || !metrics.tiles) return metrics;
+    var t = metrics.tiles.secureScore;
+    if (!t) return metrics;
+    var s = secureScore && secureScore.score != null ? Math.round(secureScore.score) : null;
+    if (s == null) return metrics;
+    t.derived = s;
+    t.source  = 'secure-score';
+    if (secureScore.rating) t.rating = secureScore.rating;
+    return metrics;
+  }
 
   var _tenants   = [];
   var _metrics   = null;   // last /api/reports/metrics payload
@@ -239,9 +252,15 @@ window.ReportsTab = (function () {
         if (keys.indexOf(k) === -1) keys.push(k);
       });
     });
-    // The Observations draft and the culture override both read metrics, so pull
-    // it whenever anything is selected.
-    if (selectedIds.length && keys.indexOf('metrics') === -1) keys.push('metrics');
+    // The Observations draft, the Overview tiles and the awareness gauge all read
+    // metrics, so pull it (and the Secure Score that feeds it) whenever anything
+    // is selected. Neither is in `requires`: a missing Secure Score must not
+    // disable the whole Overview slide, it just leaves one tile empty.
+    if (selectedIds.length) {
+      ['metrics', 'secureScore'].forEach(function (k) {
+        if (keys.indexOf(k) === -1) keys.push(k);
+      });
+    }
 
     var pairs = await Promise.all(keys.map(async function (k) {
       return [k, await fetchJson(DATA_SOURCES[k](ctx))];
@@ -249,15 +268,24 @@ window.ReportsTab = (function () {
 
     var out = {};
     pairs.forEach(function (p) { out[p[0]] = p[1]; });
+    out.metrics = mergeSecureScore(out.metrics, out.secureScore);
     return out;
   }
 
   /** Refresh the derived tile values for the currently selected client/period. */
   async function refreshMetrics() {
     var period = (document.getElementById('rpt-period') || {}).value || '';
-    _metrics = await fetchJson(DATA_SOURCES.metrics({ period: period }));
+    var pair = await Promise.all([
+      fetchJson(DATA_SOURCES.metrics({ period: period })),
+      fetchJson(DATA_SOURCES.secureScore()),
+    ]);
+    _metrics = mergeSecureScore(pair[0], pair[1]);
     renderTiles(loadPrefs());
+
     var warns = (_metrics && _metrics.warnings) || [];
+    if (!pair[1] || pair[1].score == null) {
+      warns = warns.concat('No Secure Score available yet — it needs vulnerability, awareness or MDR data.');
+    }
     notice(warns.length ? warns.join(' ') : '');
   }
 
