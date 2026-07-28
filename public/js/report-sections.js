@@ -254,6 +254,36 @@ window.ReportSections = (function () {
       });
   }
 
+  /**
+   * Totals across the client's entire session history for one type, not just the
+   * three sessions shown. /api/awareness returns the full history (the Arctic
+   * Wolf sync pulls ALL_TIME), so no period filtering is involved either way —
+   * this simply widens the denominator from 3 sessions to the whole programme.
+   */
+  function allTimeTotals(sessions, sessionType) {
+    var t = { assigned: 0, completed: 0, inProgress: 0, notStarted: 0, campaigns: 0 };
+    var seen = {};
+
+    (sessions || []).forEach(function (s) {
+      if (s.session_type !== sessionType) return;
+      if (s.status === 'N/A') return;
+      // Same exclusions as groupSessions — both rows in a table must count the
+      // same population, or the Total and All time rows quietly disagree.
+      if (!s.sent_date) return;
+
+      var key = String(s.sent_date).slice(0, 10) + '||' + (s.title || '');
+      if (!seen[key]) { seen[key] = true; t.campaigns++; }
+
+      t.assigned++;
+      if (s.status === 'Complete') t.completed++;
+      else if ((s.elapsed_seconds || 0) > 0) t.inProgress++;
+      else t.notStarted++;
+    });
+
+    t.completionPct = completionPct(t.completed, t.assigned);
+    return t;
+  }
+
   function totalsFor(rows) {
     var t = rows.reduce(function (a, r) {
       return {
@@ -267,7 +297,7 @@ window.ReportSections = (function () {
     return t;
   }
 
-  function awarenessTable(caption, rows, totals) {
+  function awarenessTable(caption, rows, shownTotals, allTime) {
     var cols = [
       { label: 'Date',         key: 'sentDate',      width: '19%', raw: function (r) { return esc(fmtLongDate(r.sentDate)); } },
       { label: 'Title',        key: 'title',         width: '33%' },
@@ -278,11 +308,25 @@ window.ReportSections = (function () {
       { label: 'Completion %', key: 'completionPct', width: '12%', cls: 'num',
         raw: function (r) { return esc(Number(r.completionPct).toFixed(2)) + ' %'; } },
     ];
+    // Two summary rows: the visible three (so the arithmetic on the slide adds
+    // up) and the whole programme to date. Only show the second when it actually
+    // covers more than what is listed above.
+    var totalRows = [];
+    if (rows.length) {
+      totalRows.push(Object.assign({ _label: 'Total' }, shownTotals));
+      if (allTime && allTime.campaigns > rows.length) {
+        totalRows.push(Object.assign(
+          { _label: 'All time (' + allTime.campaigns + ')' },
+          allTime
+        ));
+      }
+    }
+
     return D.dataTable({
-      caption:  caption,
-      cols:     cols,
-      rows:     rows.slice(0, MAX_AWARENESS_ROWS),
-      totalRow: rows.length ? totals : null,
+      caption:   caption,
+      cols:      cols,
+      rows:      rows.slice(0, MAX_AWARENESS_ROWS),
+      totalRows: totalRows,
     });
   }
 
@@ -312,6 +356,10 @@ window.ReportSections = (function () {
     if (!sessions.length && !quizzes.length) return null;
 
     var totals = { sessions: totalsFor(sessions), quizzes: totalsFor(quizzes) };
+    var allTime = {
+      sessions: allTimeTotals(sessionRows, 'Awareness Session'),
+      quizzes:  allTimeTotals(sessionRows, 'Quiz'),
+    };
 
     // The gauge shows the dashboard's own Secure Score (same figure as the
     // Secure Score tab), not a metric invented for this deck.
@@ -322,18 +370,18 @@ window.ReportSections = (function () {
     // body with overflow:hidden. Drop the gauge rather than crop it if both
     // tables are full.
     var html =
-      '<div style="margin-bottom:4mm">' +
-        awarenessTable('Last 3 Sessions', sessions, totals.sessions) +
+      '<div style="margin-bottom:3mm">' +
+        awarenessTable('Last 3 Sessions', sessions, totals.sessions, allTime.sessions) +
       '</div>' +
-      '<div style="margin-bottom:3.5mm">' +
-        awarenessTable('Last 3 Quizzes', quizzes, totals.quizzes) +
+      '<div style="margin-bottom:2.5mm">' +
+        awarenessTable('Last 3 Quizzes', quizzes, totals.quizzes, allTime.quizzes) +
       '</div>';
 
     if (score != null) {
       html +=
         '<div class="dt-cap">Secure Score</div>' +
         '<div class="gauge-wrap">' +
-          D.gaugeSemi(score, { rating: scoreBand(score).label, pxWidth: 49 }) +
+          D.gaugeSemi(score, { rating: scoreBand(score).label, pxWidth: 43 }) +
           scoreLegend() +
         '</div>';
     }
@@ -377,9 +425,12 @@ window.ReportSections = (function () {
 
     var a = ctx.data.awareness;
     if (a && (a.sessions || []).length) {
-      var t = totalsFor(groupSessions(a.sessions, 'Awareness Session'));
+      // All-time, so the figure reflects the whole training programme rather than
+      // whichever three campaigns happen to be the most recent.
+      var t = allTimeTotals(a.sessions, 'Awareness Session');
       if (t.assigned) {
-        lines.push('Security awareness session completion stands at ' + t.completionPct + '%' +
+        lines.push('Security awareness completion stands at ' + t.completionPct +
+          '% across ' + t.campaigns + ' session' + (t.campaigns === 1 ? '' : 's') + ' to date' +
           (t.completionPct < 70 ? ', which remains below the 70% target — manager follow-up is recommended.' : '.'));
       }
     }

@@ -110,11 +110,11 @@ window.ReportDeck = (function () {
 '  text-transform:uppercase;letter-spacing:.6pt}',
 
 /* data tables */
-'.dt-cap{font-size:12pt;font-weight:600;color:' + P.DECK_INK + ';margin:0 0 2mm;text-align:center}',
-'.dt{width:100%;border-collapse:collapse;font-size:8.5pt;table-layout:fixed}',
+'.dt-cap{font-size:11.5pt;font-weight:600;color:' + P.DECK_INK + ';margin:0 0 1.6mm;text-align:center}',
+'.dt{width:100%;border-collapse:collapse;font-size:8.5pt;table-layout:fixed;line-height:1.25}',
 '.dt thead th{background:' + P.DECK_TABLE_HEAD + ';color:#fff;font-weight:600;text-align:left;',
-'  padding:1.8mm 2.4mm;font-size:8pt;vertical-align:bottom}',
-'.dt tbody td{padding:1.7mm 2.4mm;border-bottom:.5pt solid #E6E6E6;vertical-align:top;',
+'  padding:1.5mm 2.4mm;font-size:8pt;vertical-align:bottom}',
+'.dt tbody td{padding:1.35mm 2.4mm;border-bottom:.5pt solid #E6E6E6;vertical-align:top;',
 '  word-wrap:break-word;overflow-wrap:break-word}',
 '.dt tbody tr:nth-child(even){background:#F2F5F9}',
 '.dt tr.total td{font-weight:700;background:#E4EAF2;border-bottom:none}',
@@ -236,14 +236,18 @@ window.ReportDeck = (function () {
 
   /**
    * A blue-header, zebra-striped table.
-   * cols:     [{ label, key, cls?, width? }]
-   * rows:     array of objects
-   * totalRow: optional object rendered as a bold Total row
+   * cols:      [{ label, key, cls?, width? }]
+   * rows:      array of objects
+   * totalRow:  optional object rendered as a bold "Total" row
+   * totalRows: optional [{ _label, ...values }] for several summary rows
    */
   function dataTable(opts) {
-    var cols     = opts.cols || [];
-    var rows     = opts.rows || [];
-    var totalRow = opts.totalRow;
+    var cols = opts.cols || [];
+    var rows = opts.rows || [];
+
+    var totals = opts.totalRows
+      ? opts.totalRows.slice()
+      : (opts.totalRow ? [Object.assign({ _label: 'Total' }, opts.totalRow)] : []);
 
     if (!rows.length) {
       return (opts.caption ? '<div class="dt-cap">' + esc(opts.caption) + '</div>' : '') +
@@ -273,13 +277,13 @@ window.ReportDeck = (function () {
           rows.map(function (r) {
             return '<tr>' + cols.map(function (c) { return cell(c, r, 'td'); }).join('') + '</tr>';
           }).join('') +
-          (totalRow
-            ? '<tr class="total">' + cols.map(function (c, i) {
-                if (i === 0) return '<td>Total</td>';
-                if (!(c.key in totalRow)) return '<td></td>';
-                return cell(c, totalRow, 'td');
-              }).join('') + '</tr>'
-            : '') +
+          totals.map(function (t) {
+            return '<tr class="total">' + cols.map(function (c, i) {
+              if (i === 0) return '<td>' + esc(t._label) + '</td>';
+              if (!(c.key in t)) return '<td></td>';
+              return cell(c, t, 'td');
+            }).join('') + '</tr>';
+          }).join('') +
         '</tbody>' +
       '</table>';
   }
