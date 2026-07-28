@@ -129,6 +129,18 @@ window.ReportDeck = (function () {
 '.tk-desc{color:' + P.DECK_MAROON + '}',
 '.tk-when{color:' + P.DECK_MUTED + ';white-space:nowrap;font-size:8.5pt}',
 
+/* recommendations */
+'.rec-list{display:flex;flex-direction:column;gap:4.5mm}',
+'.rec-item{display:flex;gap:4mm;background:#F7F9FB;border-radius:1.5mm;',
+'  border-left:1.6mm solid #BFBFBF;padding:4.5mm 5mm}',
+'.rec-body{flex:1 1 auto;min-width:0}',
+'.rec-area{font-size:12.5pt;font-weight:700;color:' + P.DECK_INK + ';margin-bottom:1.5mm}',
+'.rec-text{font-size:10.5pt;color:' + P.DECK_MUTED + ';line-height:1.45}',
+'.rec-meta{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:2mm}',
+'.rec-chip{font-size:8pt;font-weight:700;letter-spacing:.5pt;text-transform:uppercase;',
+'  color:#fff;border-radius:1mm;padding:1.2mm 3mm;white-space:nowrap}',
+'.rec-impact{font-size:8.5pt;color:' + P.DECK_MUTED + ';white-space:nowrap}',
+
 /* bullets */
 '.bl{list-style:none;padding:0;margin:0}',
 '.bl li{position:relative;padding-left:7mm;margin-bottom:4.5mm;font-size:13pt;line-height:1.45;',

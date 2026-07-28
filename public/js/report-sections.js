@@ -362,6 +362,51 @@ window.ReportSections = (function () {
     return html;
   }
 
+  // ── Recommendations ───────────────────────────────────────────────────────
+  // Straight from /api/secure-score — the same list the Secure Score tab shows.
+  // Nothing is authored here; generateRecommendations() in lib/secure-score.js
+  // remains the single place that decides what to advise.
+
+  var MAX_RECOMMENDATIONS = 5;
+
+  var PRIORITY_TONES = {
+    high:   '#e74c3c',
+    medium: '#f39c12',
+    low:    '#2E9E5B',
+    info:   '#1077C7',
+  };
+
+  function renderRecommendations(ctx) {
+    var recs = (ctx.data.secureScore || {}).recommendations;
+    if (!Array.isArray(recs) || !recs.length) return null;
+
+    // Most urgent first, so a truncated list never drops the important items.
+    var RANK = { high: 0, medium: 1, low: 2, info: 3 };
+    var sorted = recs.slice().sort(function (a, b) {
+      var ra = RANK[a.priority] === undefined ? 9 : RANK[a.priority];
+      var rb = RANK[b.priority] === undefined ? 9 : RANK[b.priority];
+      return ra - rb;
+    });
+
+    return '<div class="rec-list">' +
+      sorted.slice(0, MAX_RECOMMENDATIONS).map(function (r) {
+        var tone = PRIORITY_TONES[r.priority] || '#BFBFBF';
+        return '<div class="rec-item" style="border-left-color:' + tone + '">' +
+            '<div class="rec-body">' +
+              '<div class="rec-area">' + esc(r.area || 'General') + '</div>' +
+              '<div class="rec-text">' + esc(truncate(r.suggestion, 190)) + '</div>' +
+            '</div>' +
+            '<div class="rec-meta">' +
+              '<span class="rec-chip" style="background:' + tone + '">' +
+                esc(r.priority || 'info') +
+              '</span>' +
+              (r.impact ? '<span class="rec-impact">' + esc(r.impact) + ' impact</span>' : '') +
+            '</div>' +
+          '</div>';
+      }).join('') +
+    '</div>';
+  }
+
   // ── Slide 4: Observations ─────────────────────────────────────────────────
 
   /**
@@ -539,6 +584,8 @@ window.ReportSections = (function () {
       requires: ['mdr'],                         render: renderTickets },
     { id: 'vulns',        label: 'Vulnerabilities',                group: 'Vulnerabilities',
       requires: ['vulnSummary', 'vulnFindings'], render: renderVulns },
+    { id: 'recommendations', label: 'Recommendations',             group: 'Stats',
+      requires: ['secureScore'],                 render: renderRecommendations },
   ];
 
   REGISTRY.draftObservations = draftObservations;
