@@ -330,18 +330,6 @@ window.ReportSections = (function () {
     });
   }
 
-  function scoreLegend() {
-    return '<div class="gauge-legend">' +
-        '<div class="lg-h">Score</div>' +
-        '<table>' +
-          '<tr><td>&ge; 80</td><td>Excellent</td></tr>' +
-          '<tr><td>&ge; 70</td><td>Good</td></tr>' +
-          '<tr><td>&ge; 50</td><td>Fair</td></tr>' +
-          '<tr><td>&lt; 50</td><td>Poor</td></tr>' +
-        '</table>' +
-      '</div>';
-  }
-
   function renderAwareness(ctx) {
     var a = ctx.data.awareness;
     if (!a) return null;
@@ -361,30 +349,15 @@ window.ReportSections = (function () {
       quizzes:  allTimeTotals(sessionRows, 'Quiz'),
     };
 
-    // The gauge shows the dashboard's own Secure Score (same figure as the
-    // Secure Score tab), not a metric invented for this deck.
-    var raw = tileValue(((ctx.data.metrics || {}).tiles) || {}, 'secureScore');
-    var score = raw != null && /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : null;
-
-    // Height budget is tight: two 4-row tables plus the gauge must fit ~136mm of
-    // body with overflow:hidden. Drop the gauge rather than crop it if both
-    // tables are full.
+    // The Secure Score is not repeated here — it has its own tile and weighted
+    // breakdown on the Overview slide.
     var html =
-      '<div style="margin-bottom:3mm">' +
+      '<div style="margin-bottom:7mm">' +
         awarenessTable('Last 3 Sessions', sessions, totals.sessions, allTime.sessions) +
       '</div>' +
-      '<div style="margin-bottom:2.5mm">' +
+      '<div>' +
         awarenessTable('Last 3 Quizzes', quizzes, totals.quizzes, allTime.quizzes) +
       '</div>';
-
-    if (score != null) {
-      html +=
-        '<div class="dt-cap">Secure Score</div>' +
-        '<div class="gauge-wrap">' +
-          D.gaugeSemi(score, { rating: scoreBand(score).label, pxWidth: 43 }) +
-          scoreLegend() +
-        '</div>';
-    }
 
     return html;
   }

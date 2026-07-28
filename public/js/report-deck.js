@@ -110,11 +110,11 @@ window.ReportDeck = (function () {
 '  text-transform:uppercase;letter-spacing:.6pt}',
 
 /* data tables */
-'.dt-cap{font-size:11.5pt;font-weight:600;color:' + P.DECK_INK + ';margin:0 0 1.6mm;text-align:center}',
-'.dt{width:100%;border-collapse:collapse;font-size:8.5pt;table-layout:fixed;line-height:1.25}',
+'.dt-cap{font-size:12pt;font-weight:600;color:' + P.DECK_INK + ';margin:0 0 2.2mm;text-align:center}',
+'.dt{width:100%;border-collapse:collapse;font-size:9pt;table-layout:fixed;line-height:1.3}',
 '.dt thead th{background:' + P.DECK_TABLE_HEAD + ';color:#fff;font-weight:600;text-align:left;',
-'  padding:1.5mm 2.4mm;font-size:8pt;vertical-align:bottom}',
-'.dt tbody td{padding:1.35mm 2.4mm;border-bottom:.5pt solid #E6E6E6;vertical-align:top;',
+'  padding:2mm 2.6mm;font-size:8.5pt;vertical-align:bottom}',
+'.dt tbody td{padding:1.9mm 2.6mm;border-bottom:.5pt solid #E6E6E6;vertical-align:top;',
 '  word-wrap:break-word;overflow-wrap:break-word}',
 '.dt tbody tr:nth-child(even){background:#F2F5F9}',
 '.dt tr.total td{font-weight:700;background:#E4EAF2;border-bottom:none}',
@@ -128,13 +128,6 @@ window.ReportDeck = (function () {
 '.tk-id{color:' + P.DECK_MAROON + ';font-weight:600;white-space:nowrap;text-align:right}',
 '.tk-desc{color:' + P.DECK_MAROON + '}',
 '.tk-when{color:' + P.DECK_MUTED + ';white-space:nowrap;font-size:8.5pt}',
-
-/* gauge + legend */
-'.gauge-wrap{display:flex;align-items:center;justify-content:center;gap:12mm;margin-top:1mm}',
-'.gauge-legend{font-size:9pt;color:' + P.DECK_INK + '}',
-'.gauge-legend .lg-h{font-weight:700;margin-bottom:1mm}',
-'.gauge-legend table{border-collapse:collapse}',
-'.gauge-legend td{padding:.5mm 3mm .5mm 0}',
 
 /* bullets */
 '.bl{list-style:none;padding:0;margin:0}',
@@ -288,43 +281,6 @@ window.ReportDeck = (function () {
       '</table>';
   }
 
-  /**
-   * Semicircular gauge: blue arc on a light track, big value in the centre,
-   * 0 / 100 end labels, and a rating word beneath.
-   */
-  function gaugeSemi(value, opts) {
-    var o = opts || {};
-    var v = Math.max(0, Math.min(100, Number(value) || 0));
-    var cx = 150, cy = 150, r = 112, sw = 26;
-    // viewBox starts below the empty space above the arc (arc top = cy - r - sw/2)
-    // so the rendered box is only as tall as the drawing. Slide height is tight.
-    var vbTop = cy - r - sw / 2 - 4;
-    var vbH   = 190 - vbTop;
-    var arcLen = Math.PI * r;
-    var offset = arcLen * (1 - v / 100);
-
-    return '<svg width="' + (o.pxWidth || 78) + 'mm" viewBox="0 ' + vbTop + ' 300 ' + vbH + '" ' +
-             'style="display:block;overflow:visible">' +
-        '<path d="M ' + (cx - r) + ' ' + cy + ' A ' + r + ' ' + r + ' 0 0 1 ' + (cx + r) + ' ' + cy + '" ' +
-              'fill="none" stroke="' + P.DECK_TRACK + '" stroke-width="' + sw + '"/>' +
-        '<path d="M ' + (cx - r) + ' ' + cy + ' A ' + r + ' ' + r + ' 0 0 1 ' + (cx + r) + ' ' + cy + '" ' +
-              'fill="none" stroke="' + P.DECK_BLUE + '" stroke-width="' + sw + '" ' +
-              'stroke-dasharray="' + arcLen + '" stroke-dashoffset="' + offset + '"/>' +
-        '<text x="' + cx + '" y="' + (cy - 12) + '" text-anchor="middle" font-size="52" ' +
-              'font-weight="400" fill="' + P.DECK_INK + '" ' +
-              'font-family="Segoe UI,Arial,sans-serif">' + Math.round(v) + '</text>' +
-        '<text x="' + (cx - r) + '" y="' + (cy + 22) + '" text-anchor="middle" font-size="15" ' +
-              'fill="' + P.DECK_MUTED + '" font-family="Segoe UI,Arial,sans-serif">0</text>' +
-        '<text x="' + (cx + r) + '" y="' + (cy + 22) + '" text-anchor="middle" font-size="15" ' +
-              'fill="' + P.DECK_MUTED + '" font-family="Segoe UI,Arial,sans-serif">100</text>' +
-        (o.rating
-          ? '<text x="' + cx + '" y="' + (cy + 34) + '" text-anchor="middle" font-size="17" ' +
-                  'fill="' + P.DECK_MUTED + '" letter-spacing="1.2" ' +
-                  'font-family="Segoe UI,Arial,sans-serif">' + esc(o.rating.toUpperCase()) + '</text>'
-          : '') +
-      '</svg>';
-  }
-
   /** Assemble a complete printable document from pre-rendered slide HTML. */
   function renderDeck(slidesHtml, ctx) {
     return '<!DOCTYPE html>\n<html lang="en">\n<head>\n' +
@@ -335,8 +291,12 @@ window.ReportDeck = (function () {
       // Must precede the slides: it is position:fixed, and anything after the
       // final .slide reintroduces a trailing blank page.
       '<div class="print-btn-bar">' +
-        '<span class="print-hint">In the print dialog set <b>Margins: None</b>, ' +
-        '<b>Paper size: default</b> and enable <b>Background graphics</b>.</span>' +
+        // "Headers and footers" is the setting that prints "about:blank" and a
+        // date across the top of every page — it is a browser setting, so the
+        // document itself cannot switch it off.
+        '<span class="print-hint">In the print dialog: <b>Margins: None</b>, ' +
+        '<b>Headers and footers: off</b>, <b>Background graphics: on</b>, ' +
+        '<b>Paper size: default</b>.</span>' +
         '<button class="print-btn" onclick="window.print()">Print / Save as PDF</button>' +
         '<button class="print-btn close-btn" onclick="window.close()">Close</button>' +
       '</div>\n' +
@@ -352,7 +312,6 @@ window.ReportDeck = (function () {
     slide:        slide,
     coverSlide:   coverSlide,
     dataTable:    dataTable,
-    gaugeSemi:    gaugeSemi,
     renderDeck:   renderDeck,
   };
 })();
