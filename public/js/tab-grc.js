@@ -19,7 +19,7 @@ const GrcTab = (() => {
   }
 
   function isReadonly() {
-    return window.currentUser && window.currentUser.role === 'readonly';
+    return !window.canWrite('grc');
   }
 
   function getScoreColor(score) {

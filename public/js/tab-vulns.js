@@ -111,7 +111,7 @@
     _renderUploadedAt(currentItem ? currentItem.uploadedAt : null);
 
     // Show delete button only when a scan is selected AND user is admin/superadmin
-    const isAdmin = window.currentUser && (window.currentUser.role === 'admin' || window.currentUser.role === 'superadmin');
+    const isAdmin = window.canWrite('vulns');
     if (delBtn) delBtn.hidden = !current || !isAdmin;
 
     // Wire change handler once
@@ -119,7 +119,7 @@
       sel.dataset.handlerSet = '1';
       sel.addEventListener('change', () => {
         if (delBtn) {
-          const _isAdmin = window.currentUser && (window.currentUser.role === 'admin' || window.currentUser.role === 'superadmin');
+          const _isAdmin = window.canWrite('vulns');
           delBtn.hidden = !sel.value || !_isAdmin;
         }
         if (sel.value) renderVulns(sel.value);
@@ -657,7 +657,7 @@
     document.body.classList.add('modal-open');
 
     // Role gating — readonly users can view but not edit
-    const isAdmin = window.currentUser && window.currentUser.role !== 'readonly';
+    const isAdmin = window.canWrite('vulns');
     const statusSel   = document.getElementById('modal-status-select');
     const notesField  = document.getElementById('modal-notes');
     const saveButton  = document.getElementById('modal-save-btn');

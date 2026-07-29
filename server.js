@@ -14,7 +14,8 @@ const speakeasy = require('speakeasy');
 const QRCode    = require('qrcode');
 
 const pool = require('./lib/db');
-const { requireAuth, requireAdmin, requireSuperAdmin, requireManager, requireRiskWrite } = require('./lib/auth-middleware');
+const { requireAuth, requireSuperAdmin, pageGate, loadPageAccess } = require('./lib/auth-middleware');
+const { ROLES, ROLE_LABELS, PAGES, PAGE_KEYS, LEVELS, LEVEL_RANK, resolveAccess } = require('./lib/pages');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
 const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
@@ -304,9 +305,17 @@ app.post('/api/auth/logout', (req, res) => {
   });
 });
 
-app.get('/api/auth/me', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
   if (!req.session || !req.session.userId) {
     return res.status(401).json({ error: 'Not authenticated.' });
+  }
+  // pageAccess + the page catalog drive all client-side gating (nav filtering,
+  // switchTab, per-tab edit controls) so the browser never hardcodes roles.
+  let pageAccess;
+  try {
+    pageAccess = await loadPageAccess(req);
+  } catch (err) {
+    return serverError(res, err);
   }
   res.json({
     id:          req.session.userId,
@@ -315,6 +324,9 @@ app.get('/api/auth/me', (req, res) => {
     tenantId:    req.session.tenantId   || null,
     tenantIds:   req.session.tenantIds  || [],
     totpEnabled: req.session.totpEnabled || false,
+    pageAccess,
+    pages:       PAGES,
+    roles:       ROLES.map(r => ({ value: r, label: ROLE_LABELS[r] })),
   });
 });
 
@@ -348,7 +360,6 @@ app.post('/api/auth/saml/callback', async (req, res) => {
     return res.status(404).json({ error: 'SSO is not enabled.' });
   }
   try {
-    require("fs").writeFileSync("/tmp/saml_response.txt", req.body.SAMLResponse || "");
     const { profile } = await validateSamlResponse(req.body);
     if (!profile || !profile.nameID) {
       return res.status(401).send('SSO failed: no identity returned.');
@@ -440,6 +451,16 @@ app.get('/api/auth/saml/metadata', (req, res) => {
 // ── All remaining /api/* routes require a valid session ───────────────────
 
 app.use('/api', requireAuth);
+
+// ── …and must pass the per-page access check (see lib/pages.js) ───────────
+// Maps each /api prefix to a page and requires read access for GETs, write
+// access for mutations. This replaces the old per-route requireAdmin /
+// requireRiskWrite guards on every mapped prefix: the role defaults grant
+// exactly what those guards used to allow, but an admin can now widen or
+// narrow it per user. Unmapped prefixes (e.g. /api/tenants, still
+// requireSuperAdmin) keep their own guard.
+
+app.use('/api', pageGate);
 
 // ── TOTP management routes (requireAuth + superadmin only) ───────────────
 
@@ -629,48 +650,100 @@ app.delete('/api/tenants/:id', requireSuperAdmin, async (req, res) => {
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$|^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-app.get('/api/users', requireAdmin, async (req, res) => {
-  try {
-    const isSA = req.session.role === 'superadmin';
-    let result;
-    if (isSA) {
-      result = await pool.query(
-        `SELECT u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name AS tenant_name,
-                u.created_at, u.last_login,
-                COALESCE(
-                  ARRAY_AGG(DISTINCT ut.tenant_id) FILTER (WHERE ut.tenant_id IS NOT NULL),
-                  ARRAY[]::int[]
-                ) AS "tenantIds"
-         FROM users u
-         LEFT JOIN tenants t  ON t.id  = u.tenant_id
-         LEFT JOIN user_tenants ut ON ut.user_id = u.id
-         GROUP BY u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name, u.created_at, u.last_login
-         ORDER BY u.created_at ASC`
+/** Roles the acting user is allowed to assign. */
+function assignableRoles(req) {
+  return req.session.role === 'superadmin'
+    ? ROLES
+    : ROLES.filter(r => r !== 'superadmin');
+}
+
+/**
+ * validatePageAccess — check a { pageKey: level } payload from the admin UI.
+ *
+ * Levels must be valid and the page keys known. An admin may only grant what
+ * they hold themselves, so a tenant admin cannot mint a user with more reach
+ * than they have. Returns { error } or { entries } where entries is a list of
+ * [pageKey, level|null] pairs — null meaning "delete the override, inherit
+ * from the role".
+ */
+async function validatePageAccess(req, pageAccess) {
+  const entries = [];
+  const actorAccess = await loadPageAccess(req);
+
+  for (const [key, rawLevel] of Object.entries(pageAccess)) {
+    if (!PAGE_KEYS.includes(key)) {
+      return { error: `Unknown page: ${key}.` };
+    }
+    // '' / null / 'inherit' all mean "no override".
+    if (rawLevel === '' || rawLevel === null || rawLevel === 'inherit') {
+      entries.push([key, null]);
+      continue;
+    }
+    const level = String(rawLevel);
+    if (!LEVELS.includes(level)) {
+      return { error: `Access for ${key} must be one of: ${LEVELS.join(', ')}.` };
+    }
+    if (LEVEL_RANK[level] > LEVEL_RANK[actorAccess[key] || 'none']) {
+      return { error: `You cannot grant ${level} access to ${key} because you do not have it yourself.` };
+    }
+    entries.push([key, level]);
+  }
+
+  return { entries };
+}
+
+/** Write validated overrides for a user. */
+async function applyPageAccess(userId, entries) {
+  for (const [key, level] of entries) {
+    if (level === null) {
+      await pool.query(
+        'DELETE FROM user_page_access WHERE user_id = $1 AND page_key = $2',
+        [userId, key]
       );
     } else {
-      result = await pool.query(
-        `SELECT u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name AS tenant_name,
-                u.created_at, u.last_login,
-                COALESCE(
-                  ARRAY_AGG(DISTINCT ut.tenant_id) FILTER (WHERE ut.tenant_id IS NOT NULL),
-                  ARRAY[]::int[]
-                ) AS "tenantIds"
-         FROM users u
-         LEFT JOIN tenants t  ON t.id  = u.tenant_id
-         LEFT JOIN user_tenants ut ON ut.user_id = u.id
-         WHERE u.tenant_id = $1
-         GROUP BY u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name, u.created_at, u.last_login
-         ORDER BY u.created_at ASC`,
-        [req.session.tenantId]
+      await pool.query(
+        `INSERT INTO user_page_access (user_id, page_key, access)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, page_key) DO UPDATE SET access = EXCLUDED.access`,
+        [userId, key, level]
       );
     }
+  }
+}
+
+app.get('/api/users', async (req, res) => {
+  try {
+    const isSA = req.session.role === 'superadmin';
+    const baseSelect = `
+      SELECT u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name AS tenant_name,
+             u.created_at, u.last_login,
+             COALESCE(
+               ARRAY_AGG(DISTINCT ut.tenant_id) FILTER (WHERE ut.tenant_id IS NOT NULL),
+               ARRAY[]::int[]
+             ) AS "tenantIds",
+             COALESCE(
+               JSONB_OBJECT_AGG(pa.page_key, pa.access) FILTER (WHERE pa.page_key IS NOT NULL),
+               '{}'::jsonb
+             ) AS "pageAccess"
+      FROM users u
+      LEFT JOIN tenants t          ON t.id       = u.tenant_id
+      LEFT JOIN user_tenants ut    ON ut.user_id = u.id
+      LEFT JOIN user_page_access pa ON pa.user_id = u.id`;
+    const groupBy = `
+      GROUP BY u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name, u.created_at, u.last_login
+      ORDER BY u.created_at ASC`;
+
+    const result = isSA
+      ? await pool.query(baseSelect + groupBy)
+      : await pool.query(`${baseSelect} WHERE u.tenant_id = $1 ${groupBy}`, [req.session.tenantId]);
+
     res.json(result.rows);
   } catch (err) {
     return serverError(res, err);
   }
 });
 
-app.post('/api/users', requireAdmin, async (req, res) => {
+app.post('/api/users', async (req, res) => {
   try {
     const username = (req.body.username || '').trim();
     const password = (req.body.password || '').trim();
@@ -700,10 +773,18 @@ app.post('/api/users', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     }
 
-    // Superadmin can create any role; tenant admin can only create admin/readonly.
-    const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly', 'manager', 'sales'] : ['admin', 'readonly', 'manager', 'sales'];
+    // Superadmin can create any role; tenant admin cannot create superadmins.
+    const allowedRoles = assignableRoles(req);
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}.` });
+    }
+
+    // Optional per-page overrides on top of the new user's role defaults.
+    let accessEntries = [];
+    if (req.body.pageAccess && typeof req.body.pageAccess === 'object') {
+      const check = await validatePageAccess(req, req.body.pageAccess);
+      if (check.error) return res.status(400).json({ error: check.error });
+      accessEntries = check.entries;
     }
 
     // Non-superadmin roles must belong to at least one tenant.
@@ -732,6 +813,8 @@ app.post('/api/users', requireAdmin, async (req, res) => {
       );
     }
 
+    await applyPageAccess(newUser.id, accessEntries);
+
     res.status(201).json(newUser);
   } catch (err) {
     if (err.code === '23505') {
@@ -741,7 +824,7 @@ app.post('/api/users', requireAdmin, async (req, res) => {
   }
 });
 
-app.put('/api/users/:id', requireAdmin, async (req, res) => {
+app.put('/api/users/:id', async (req, res) => {
   try {
     const targetId = parseInt(req.params.id, 10);
     if (isNaN(targetId)) return res.status(400).json({ error: 'Invalid user id.' });
@@ -762,12 +845,23 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
       if (check.rows.length > 0) targetAuthType = check.rows[0].auth_type || 'local';
     }
 
-    const { role, password, tenantIds } = req.body;
+    const { role, password, tenantIds, pageAccess } = req.body;
     const updates = [];
     const values  = [];
 
+    // Per-page overrides can be updated on their own, without a role change.
+    let accessEntries = null;
+    if (pageAccess !== undefined) {
+      if (!pageAccess || typeof pageAccess !== 'object' || Array.isArray(pageAccess)) {
+        return res.status(400).json({ error: 'pageAccess must be an object.' });
+      }
+      const check = await validatePageAccess(req, pageAccess);
+      if (check.error) return res.status(400).json({ error: check.error });
+      accessEntries = check.entries;
+    }
+
     if (role !== undefined) {
-      const allowedRoles = isSA ? ['superadmin', 'admin', 'readonly', 'manager', 'sales'] : ['admin', 'readonly', 'manager', 'sales'];
+      const allowedRoles = assignableRoles(req);
       if (!allowedRoles.includes(role)) {
         return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}.` });
       }
@@ -802,17 +896,30 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
       values.push(primary);
     }
 
-    if (updates.length === 0) {
-      return res.status(400).json({ error: 'Nothing to update. Provide role, password, or tenantIds.' });
+    if (updates.length === 0 && accessEntries === null) {
+      return res.status(400).json({ error: 'Nothing to update. Provide role, password, tenantIds, or pageAccess.' });
     }
 
-    values.push(targetId);
-    const result = await pool.query(
-      `UPDATE users SET ${updates.join(', ')} WHERE id = $${values.length}
-       RETURNING id, username, role, tenant_id, created_at, last_login`,
-      values
-    );
+    let result;
+    if (updates.length > 0) {
+      values.push(targetId);
+      result = await pool.query(
+        `UPDATE users SET ${updates.join(', ')} WHERE id = $${values.length}
+         RETURNING id, username, role, tenant_id, created_at, last_login`,
+        values
+      );
+    } else {
+      // pageAccess-only edit — nothing to change on the users row itself.
+      result = await pool.query(
+        `SELECT id, username, role, tenant_id, created_at, last_login FROM users WHERE id = $1`,
+        [targetId]
+      );
+    }
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
+
+    if (accessEntries !== null) {
+      await applyPageAccess(targetId, accessEntries);
+    }
 
     // Replace junction table entries if tenantIds were supplied
     if (tenantIdsUpdate !== null) {
@@ -831,7 +938,7 @@ app.put('/api/users/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/api/users/:id', requireAdmin, async (req, res) => {
+app.delete('/api/users/:id', async (req, res) => {
   try {
     const targetId = parseInt(req.params.id, 10);
     if (isNaN(targetId)) return res.status(400).json({ error: 'Invalid user id.' });
@@ -978,7 +1085,7 @@ function resolveVulnTenant(req, source = 'query') {
 
 // ── Vuln routes — backed by PostgreSQL ───────────────────────────────────
 
-app.post('/api/vulns/upload', requireAdmin, vulnUpload.single('vulnFile'), async (req, res) => {
+app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) => {
   const client = await pool.connect();
   try {
     const monthKey = (req.body.monthKey || '').trim();
@@ -1203,7 +1310,7 @@ app.get('/api/vulns/:monthKey', async (req, res) => {
   }
 });
 
-app.delete('/api/vulns/:monthKey', requireAdmin, async (req, res) => {
+app.delete('/api/vulns/:monthKey', async (req, res) => {
   try {
     const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'query');
     if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
@@ -1221,7 +1328,7 @@ app.delete('/api/vulns/:monthKey', requireAdmin, async (req, res) => {
 });
 
 // ── Bulk status update ────────────────────────────────────────────────────
-app.patch('/api/vulns/:monthKey/findings/bulk-status', requireAdmin, async (req, res) => {
+app.patch('/api/vulns/:monthKey/findings/bulk-status', async (req, res) => {
   try {
     const { monthKey } = req.params;
     const { status, indices } = req.body;
@@ -1292,7 +1399,7 @@ app.get('/api/vulns/latest-summary', async (req, res) => {
 });
 
 // ── Bulk status update ──────────────────────────────────────────────────────
-app.patch('/api/vulns/:monthKey/findings/bulk-status', requireAdmin, async (req, res) => {
+app.patch('/api/vulns/:monthKey/findings/bulk-status', async (req, res) => {
   try {
     const { monthKey } = req.params;
     const { status, indices } = req.body;
@@ -1362,7 +1469,7 @@ app.get('/api/vulns/latest-summary', async (req, res) => {
   }
 });
 
-app.patch('/api/vulns/:monthKey/finding/:index', requireAdmin, async (req, res) => {
+app.patch('/api/vulns/:monthKey/finding/:index', async (req, res) => {
   try {
     const { monthKey, index } = req.params;
     const { status, notes }   = req.body;
@@ -1494,7 +1601,7 @@ async function writeAwarenessHistory(client, tenantId, uploadedBy, rows, stats) 
   return { uploadId, uploadedAt, notStartedCount };
 }
 
-app.post('/api/awareness/upload', requireAdmin, awarenessUpload.single('awarenessFile'), async (req, res) => {
+app.post('/api/awareness/upload', awarenessUpload.single('awarenessFile'), async (req, res) => {
   const client = await pool.connect();
   try {
     if (!req.file) {
@@ -1626,7 +1733,7 @@ app.get('/api/awareness', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/awareness', requireAdmin, async (req, res) => {
+app.delete('/api/awareness', async (req, res) => {
   try {
     const { tenantId, error: tenantErr } = resolveAwarenessTenant(req, 'query');
     if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
@@ -1721,7 +1828,7 @@ app.get('/api/mdr/trends', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/mdr', requireAdmin, async (req, res) => {
+app.delete('/api/mdr', async (req, res) => {
   try {
     const { tenantId, error } = resolveMdrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -1817,7 +1924,7 @@ app.get('/api/integrations', requireAuth, async (req, res) => {
 });
 
 /** POST /api/integrations/:provider — save/update config */
-app.post('/api/integrations/:provider', requireAdmin, async (req, res) => {
+app.post('/api/integrations/:provider', async (req, res) => {
   try {
     const provider = req.params.provider;
     if (!KNOWN_PROVIDERS.has(provider)) {
@@ -1852,7 +1959,7 @@ app.post('/api/integrations/:provider', requireAdmin, async (req, res) => {
 });
 
 /** DELETE /api/integrations/:provider — remove integration */
-app.delete('/api/integrations/:provider', requireAdmin, async (req, res) => {
+app.delete('/api/integrations/:provider', async (req, res) => {
   try {
     const { tenantId, error } = resolveIntegrationTenant(req, 'query');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -1866,7 +1973,7 @@ app.delete('/api/integrations/:provider', requireAdmin, async (req, res) => {
 });
 
 /** POST /api/integrations/:provider/test — fetch 1 record to verify credentials */
-app.post('/api/integrations/:provider/test', requireAdmin, async (req, res) => {
+app.post('/api/integrations/:provider/test', async (req, res) => {
   try {
     const provider = req.params.provider;
     if (!KNOWN_PROVIDERS.has(provider)) return res.status(400).json({ error: `Unknown provider: ${provider}` });
@@ -2206,7 +2313,7 @@ async function runSentinelOneSync(tenantId) {
 }
 
 /** POST /api/integrations/:provider/sync — fetch fresh data from the provider and store it */
-app.post('/api/integrations/:provider/sync', requireAdmin, async (req, res) => {
+app.post('/api/integrations/:provider/sync', async (req, res) => {
   const provider = req.params.provider;
   const { tenantId, error } = resolveIntegrationTenant(req, 'body');
   if (error) return res.status(error.status).json({ error: error.message });
@@ -2604,7 +2711,7 @@ app.get('/api/grc/assessment', requireAuth, async (req, res) => {
 });
 
 /** POST /api/grc/assessment — upsert assessment + all answers, recalculate score */
-app.post('/api/grc/assessment', requireAdmin, async (req, res) => {
+app.post('/api/grc/assessment', async (req, res) => {
   try {
     const { tenantId, error } = resolveGrcTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -2705,7 +2812,7 @@ app.get('/api/redteam/projects', requireAuth, async (req, res) => {
 });
 
 /** POST /api/redteam/projects */
-app.post('/api/redteam/projects', requireAdmin, async (req, res) => {
+app.post('/api/redteam/projects', async (req, res) => {
   try {
     const { title, client, scope, status, start_date, end_date, tenant_id } = req.body;
     if (!title || !client || !start_date || !end_date)
@@ -2721,7 +2828,7 @@ app.post('/api/redteam/projects', requireAdmin, async (req, res) => {
 });
 
 /** PUT /api/redteam/projects/:id */
-app.put('/api/redteam/projects/:id', requireAdmin, async (req, res) => {
+app.put('/api/redteam/projects/:id', async (req, res) => {
   try {
     const { title, client, scope, status, start_date, end_date, tenant_id } = req.body;
     const result = await pool.query(
@@ -2736,7 +2843,7 @@ app.put('/api/redteam/projects/:id', requireAdmin, async (req, res) => {
 });
 
 /** DELETE /api/redteam/projects/:id */
-app.delete('/api/redteam/projects/:id', requireAdmin, async (req, res) => {
+app.delete('/api/redteam/projects/:id', async (req, res) => {
   try {
     const result = await pool.query(
       'DELETE FROM redteam_projects WHERE id=$1 RETURNING id',
@@ -2759,7 +2866,7 @@ app.get('/api/redteam/projects/:id/tasks', requireAuth, async (req, res) => {
 });
 
 /** POST /api/redteam/tasks */
-app.post('/api/redteam/tasks', requireAdmin, async (req, res) => {
+app.post('/api/redteam/tasks', async (req, res) => {
   try {
     const { project_id, title, assignee, due_date, status, notes } = req.body;
     if (!project_id || !title)
@@ -2775,7 +2882,7 @@ app.post('/api/redteam/tasks', requireAdmin, async (req, res) => {
 });
 
 /** PUT /api/redteam/tasks/:id */
-app.put('/api/redteam/tasks/:id', requireAdmin, async (req, res) => {
+app.put('/api/redteam/tasks/:id', async (req, res) => {
   try {
     const { title, assignee, due_date, status, notes } = req.body;
     const result = await pool.query(
@@ -2790,7 +2897,7 @@ app.put('/api/redteam/tasks/:id', requireAdmin, async (req, res) => {
 });
 
 /** DELETE /api/redteam/tasks/:id */
-app.delete('/api/redteam/tasks/:id', requireAdmin, async (req, res) => {
+app.delete('/api/redteam/tasks/:id', async (req, res) => {
   try {
     const result = await pool.query(
       'DELETE FROM redteam_tasks WHERE id=$1 RETURNING id',
@@ -2833,7 +2940,7 @@ app.get('/api/redteam/projects/:id/findings', requireAuth, async (req, res) => {
 });
 
 /** POST /api/redteam/projects/:id/findings — tenant is derived from the project's linked tenant */
-app.post('/api/redteam/projects/:id/findings', requireAdmin, async (req, res) => {
+app.post('/api/redteam/projects/:id/findings', async (req, res) => {
   try {
     const { project, error } = await resolveProjectForTenantAccess(req);
     if (error) return res.status(error.status).json({ error: error.message });
@@ -2920,7 +3027,7 @@ const IR_VALID_TYPES = ['phishing', 'malware_ransomware', 'data_breach', 'inside
 const IR_VALID_STATUSES = ['open', 'contained', 'remediating', 'resolved', 'closed'];
 
 /** POST /api/ir/incidents */
-app.post('/api/ir/incidents', requireAdmin, async (req, res) => {
+app.post('/api/ir/incidents', async (req, res) => {
   try {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -2955,7 +3062,7 @@ app.post('/api/ir/incidents', requireAdmin, async (req, res) => {
 });
 
 /** PUT /api/ir/incidents/:id */
-app.put('/api/ir/incidents/:id', requireAdmin, async (req, res) => {
+app.put('/api/ir/incidents/:id', async (req, res) => {
   try {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -2977,7 +3084,7 @@ app.put('/api/ir/incidents/:id', requireAdmin, async (req, res) => {
 });
 
 /** PATCH /api/ir/incidents/:id/phase — quick-set the IR lifecycle phase */
-app.patch('/api/ir/incidents/:id/phase', requireAdmin, async (req, res) => {
+app.patch('/api/ir/incidents/:id/phase', async (req, res) => {
   try {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -2995,7 +3102,7 @@ app.patch('/api/ir/incidents/:id/phase', requireAdmin, async (req, res) => {
 });
 
 /** PATCH /api/ir/incidents/:id/status — quick-set the incident status (used by the Remediation Tracker) */
-app.patch('/api/ir/incidents/:id/status', requireAdmin, async (req, res) => {
+app.patch('/api/ir/incidents/:id/status', async (req, res) => {
   try {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3017,7 +3124,7 @@ app.patch('/api/ir/incidents/:id/status', requireAdmin, async (req, res) => {
 });
 
 /** DELETE /api/ir/incidents/:id */
-app.delete('/api/ir/incidents/:id', requireAdmin, async (req, res) => {
+app.delete('/api/ir/incidents/:id', async (req, res) => {
   try {
     const { tenantId, error } = resolveIrTenant(req, 'query');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3050,7 +3157,7 @@ app.get('/api/ir/incidents/:id/activities', requireAuth, async (req, res) => {
 });
 
 /** POST /api/ir/activities */
-app.post('/api/ir/activities', requireAdmin, async (req, res) => {
+app.post('/api/ir/activities', async (req, res) => {
   try {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3071,7 +3178,7 @@ app.post('/api/ir/activities', requireAdmin, async (req, res) => {
 });
 
 /** PUT /api/ir/activities/:id */
-app.put('/api/ir/activities/:id', requireAdmin, async (req, res) => {
+app.put('/api/ir/activities/:id', async (req, res) => {
   try {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3093,7 +3200,7 @@ app.put('/api/ir/activities/:id', requireAdmin, async (req, res) => {
 });
 
 /** PATCH /api/ir/activities/:id/phase — progress a playbook task tile to a new phase */
-app.patch('/api/ir/activities/:id/phase', requireAdmin, async (req, res) => {
+app.patch('/api/ir/activities/:id/phase', async (req, res) => {
   try {
     const { tenantId, error } = resolveIrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3114,7 +3221,7 @@ app.patch('/api/ir/activities/:id/phase', requireAdmin, async (req, res) => {
 });
 
 /** DELETE /api/ir/activities/:id */
-app.delete('/api/ir/activities/:id', requireAdmin, async (req, res) => {
+app.delete('/api/ir/activities/:id', async (req, res) => {
   try {
     const { tenantId, error } = resolveIrTenant(req, 'query');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3192,7 +3299,7 @@ app.get('/api/risks', requireAuth, async (req, res) => {
 });
 
 /** POST /api/risks */
-app.post('/api/risks', requireRiskWrite, async (req, res) => {
+app.post('/api/risks', async (req, res) => {
   try {
     const { tenantId, error } = resolveRiskTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3218,7 +3325,7 @@ app.post('/api/risks', requireRiskWrite, async (req, res) => {
 });
 
 /** PUT /api/risks/:id */
-app.put('/api/risks/:id', requireRiskWrite, async (req, res) => {
+app.put('/api/risks/:id', async (req, res) => {
   try {
     const { tenantId, error } = resolveRiskTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3250,7 +3357,7 @@ app.put('/api/risks/:id', requireRiskWrite, async (req, res) => {
 });
 
 /** PATCH /api/risks/:id/stage — used by kanban drag-and-drop */
-app.patch('/api/risks/:id/stage', requireRiskWrite, async (req, res) => {
+app.patch('/api/risks/:id/stage', async (req, res) => {
   try {
     const { tenantId, error } = resolveRiskTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3273,7 +3380,7 @@ app.patch('/api/risks/:id/stage', requireRiskWrite, async (req, res) => {
 });
 
 /** DELETE /api/risks/:id */
-app.delete('/api/risks/:id', requireRiskWrite, async (req, res) => {
+app.delete('/api/risks/:id', async (req, res) => {
   try {
     const { tenantId, error } = resolveRiskTenant(req, 'query');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3326,7 +3433,7 @@ app.get('/api/pentest-findings', requireAuth, async (req, res) => {
 });
 
 /** POST /api/pentest-findings */
-app.post('/api/pentest-findings', requireRiskWrite, async (req, res) => {
+app.post('/api/pentest-findings', async (req, res) => {
   try {
     const { tenantId, error } = resolvePentestTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3346,7 +3453,7 @@ app.post('/api/pentest-findings', requireRiskWrite, async (req, res) => {
 });
 
 /** PUT /api/pentest-findings/:id */
-app.put('/api/pentest-findings/:id', requireRiskWrite, async (req, res) => {
+app.put('/api/pentest-findings/:id', async (req, res) => {
   try {
     const { tenantId, error } = resolvePentestTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3370,7 +3477,7 @@ app.put('/api/pentest-findings/:id', requireRiskWrite, async (req, res) => {
 });
 
 /** PATCH /api/pentest-findings/:id/status */
-app.patch('/api/pentest-findings/:id/status', requireRiskWrite, async (req, res) => {
+app.patch('/api/pentest-findings/:id/status', async (req, res) => {
   try {
     const { tenantId, error } = resolvePentestTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3390,7 +3497,7 @@ app.patch('/api/pentest-findings/:id/status', requireRiskWrite, async (req, res)
 });
 
 /** DELETE /api/pentest-findings/:id */
-app.delete('/api/pentest-findings/:id', requireRiskWrite, async (req, res) => {
+app.delete('/api/pentest-findings/:id', async (req, res) => {
   try {
     const { tenantId, error } = resolvePentestTenant(req, 'query');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3557,7 +3664,7 @@ app.get('/api/reports/metrics', requireAuth, async (req, res) => {
  * Body: { tenantId?, period, overrides: { metricId: value|null } }
  * Manual tile overrides. Null / empty clears the override.
  */
-app.put('/api/reports/metrics', requireAdmin, async (req, res) => {
+app.put('/api/reports/metrics', async (req, res) => {
   try {
     const { tenantId, error } = resolveReportTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -3599,7 +3706,7 @@ app.put('/api/reports/metrics', requireAdmin, async (req, res) => {
  * from report generation because each report can take up to two minutes to
  * generate on Arctic Wolf's side.
  */
-app.post('/api/reports/metrics/sync', requireAdmin, async (req, res) => {
+app.post('/api/reports/metrics/sync', async (req, res) => {
   try {
     const { tenantId, error } = resolveReportTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });

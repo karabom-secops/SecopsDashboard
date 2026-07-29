@@ -2475,6 +2475,62 @@ body.login-page {
   font-weight: 400;
 }
 
+/* ── Per-page access editor (Admin tab) ─────────────────────────────────── */
+
+.page-access-details {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.page-access-summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.page-access-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0.4rem 0 0.75rem;
+}
+
+.page-access-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.5rem 1rem;
+}
+
+.page-access-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.page-access-label {
+  font-size: 0.85rem;
+}
+
+.page-access-select {
+  flex: 0 0 auto;
+  max-width: 11rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  color: inherit;
+}
+
+@media (max-width: 480px) {
+  .page-access-row { flex-direction: column; align-items: stretch; }
+  .page-access-select { max-width: none; }
+}
+
 @media (max-width: 768px) {
   .admin-add-form .admin-form-row { grid-template-columns: 1fr; }
   .header-user-info { gap: 0.3rem; }

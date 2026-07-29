@@ -220,6 +220,7 @@
   <!-- Error state -->
   <div class="mgr-state" id="mgrError" hidden></div>
 
+  <script src="js/auth.js"></script>
   <script src="js/report-shell.js"></script>
   <script src="js/tab-awareness.js"></script>
   <script>
@@ -324,17 +325,15 @@
       }
 
       async function init() {
-        var res;
-        try {
-          res = await fetch(BASE + 'api/auth/me', { credentials: 'same-origin' });
-        } catch (_) { location.replace(BASE + 'login.html'); return; }
-        if (!res.ok) { location.replace(BASE + 'login.html'); return; }
-
-        var user = await res.json();
-        if (!['manager', 'admin', 'superadmin'].includes(user.role)) {
-          location.replace(BASE + 'login.html');
-          return;
+        // auth.js handles the session check, the access map, and redirecting
+        // anyone without 'manager' access away from this page.
+        if (!window.currentUser) {
+          await new Promise(function (resolve) {
+            document.addEventListener('authReady', resolve, { once: true });
+          });
         }
+        var user = window.currentUser;
+        if (!window.canView('manager')) return;
 
         document.getElementById('mgrUsername').textContent    = user.username;
         document.getElementById('mgrDisplayName').textContent = user.username;

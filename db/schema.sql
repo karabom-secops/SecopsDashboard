@@ -47,6 +47,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_saml_nameid_unique
   ON users(saml_nameid)
   WHERE saml_nameid IS NOT NULL;
 
+-- ── User ↔ Tenant assignments ─────────────────────────────────────────────
+-- A user can be assigned to several tenants; users.tenant_id is the primary one.
+
+CREATE TABLE IF NOT EXISTS user_tenants (
+  user_id   INT NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+  tenant_id INT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, tenant_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_tenants_user ON user_tenants (user_id);
+
+-- ── Per-user page access overrides ────────────────────────────────────────
+-- Overrides the role default from lib/pages.js for a single page.
+-- No row means "inherit from role".
+
+CREATE TABLE IF NOT EXISTS user_page_access (
+  user_id  INT         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  page_key VARCHAR(40) NOT NULL,
+  access   VARCHAR(10) NOT NULL
+             CONSTRAINT user_page_access_level_chk CHECK (access IN ('none', 'read', 'write')),
+  PRIMARY KEY (user_id, page_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_page_access_user ON user_page_access (user_id);
+
 -- ── Vulnerability Scans ───────────────────────────────────────────────────
 -- month_key is unique per tenant, not globally unique.
 

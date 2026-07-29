@@ -45,6 +45,12 @@
 
   // ── Tab switching ──────────────────────────────────────────────────────────
   function switchTab(target) {
+    // Access check first — switchTab is exposed on window, so this is the only
+    // thing stopping someone navigating to a tab they have no access to.
+    if (typeof window.canView === 'function' && !window.canView(target)) {
+      return;
+    }
+
     // Update side nav active state
     sideNavItems.forEach(item => {
       item.classList.toggle('active', item.dataset.tab === target);
@@ -117,12 +123,10 @@
   }
 
   // ── Manager Dashboard button ─────────────────────────────────────────────
-  const MANAGER_DASHBOARD_ROLES = ['manager', 'sales', 'admin', 'superadmin'];
   const managerDashboardBtn = document.getElementById('managerDashboardBtn');
   if (managerDashboardBtn) {
     managerDashboardBtn.addEventListener('click', () => {
-      const role = window.currentUser && window.currentUser.role;
-      if (!MANAGER_DASHBOARD_ROLES.includes(role)) {
+      if (!window.canView('manager')) {
         alert('You do not have permission to access the Manager Dashboard.');
         return;
       }
@@ -239,7 +243,37 @@
   };
 
   // ── Init ───────────────────────────────────────────────────────────────────
+
+  // auth.js resolves GET /api/auth/me asynchronously; nothing here may run
+  // until window.canView is answering from the real access map.
+  function whenAuthReady() {
+    if (window.currentUser) return Promise.resolve();
+    return new Promise(resolve => {
+      document.addEventListener('authReady', () => resolve(), { once: true });
+    });
+  }
+
+  // index.html marks Operations active by default. If the user has no access
+  // to it, fall back to the first tab in the side nav they can view.
+  function selectDefaultTab() {
+    if (window.canView('operations')) return 'operations';
+
+    const firstAllowed = Array.from(sideNavItems)
+      .map(item => item.dataset.tab)
+      .find(key => key && window.canView(key));
+
+    // Drop the pre-set active state and hide the Operations panel.
+    sideNavItems.forEach(item => item.classList.remove('active'));
+    Object.values(tabPanels).forEach(panel => { if (panel) panel.hidden = true; });
+
+    if (firstAllowed) switchTab(firstAllowed);
+    return firstAllowed || null;
+  }
+
   document.addEventListener('DOMContentLoaded', async () => {
+    await whenAuthReady();
+    selectDefaultTab();
+
     const weeks = await populateWeeks();
 
     // Check if redirected from upload page with a specific week/tab

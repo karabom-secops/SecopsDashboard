@@ -18,8 +18,7 @@ const RiskRegisterTab = (() => {
   }
 
   function canWrite() {
-    const r = window.currentUser && window.currentUser.role;
-    return r === 'sales' || r === 'admin' || r === 'superadmin';
+    return window.canWrite('risk-register');
   }
 
   function tenantParam(sep) {

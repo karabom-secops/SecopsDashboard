@@ -31,7 +31,7 @@
           <option value="">&#8212; Select tenant &#8212;</option>
         </select>
       </div>
-      <button id="managerDashboardBtn" class="btn btn-secondary btn-sm">Manager Dashboard</button>
+      <button id="managerDashboardBtn" class="btn btn-secondary btn-sm" hidden>Manager Dashboard</button>
     </div>
   </header>
 
@@ -46,55 +46,55 @@
       <button id="logoutBtn" class="btn btn-secondary btn-sm side-logout-btn">Sign out</button>
     </div>
     <nav class="side-nav">
-      <button class="side-nav-item active" data-tab="operations">
+      <button class="side-nav-item active" data-tab="operations" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         Operations
       </button>
-      <button class="side-nav-item" data-tab="metrics">
+      <button class="side-nav-item" data-tab="metrics" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Metrics &amp; Trends
       </button>
-      <button class="side-nav-item" data-tab="redteam">
+      <button class="side-nav-item" data-tab="redteam" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="12" y1="9" x2="12" y2="15"/></svg>
         Red Team
       </button>
-      <button class="side-nav-item" data-tab="vulns">
+      <button class="side-nav-item" data-tab="vulns" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         Vulnerabilities
       </button>
-      <button class="side-nav-item" data-tab="awareness">
+      <button class="side-nav-item" data-tab="awareness" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
         Awareness
       </button>
-      <button class="side-nav-item" data-tab="incident-response">
+      <button class="side-nav-item" data-tab="incident-response" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><circle cx="12" cy="16.5" r="0.5" fill="currentColor"/></svg>
         Incident Response
       </button>
-      <button class="side-nav-item" data-tab="grc">
+      <button class="side-nav-item" data-tab="grc" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
         GRC
       </button>
-      <button class="side-nav-item" data-tab="risk-register">
+      <button class="side-nav-item" data-tab="risk-register" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         Risk Register
       </button>
-      <button class="side-nav-item" data-tab="remediation-tracker">
+      <button class="side-nav-item" data-tab="remediation-tracker" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         Remediation Tracker
       </button>
-      <button class="side-nav-item" data-tab="secure-score">
+      <button class="side-nav-item" data-tab="secure-score" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         Secure Score
       </button>
-      <button class="side-nav-item" data-tab="edr">
+      <button class="side-nav-item" data-tab="edr" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 10.5l2.5 2.5L15 8"/></svg>
         Managed EDR
       </button>
-      <button class="side-nav-item" data-tab="mdr-pricing">
+      <button class="side-nav-item" data-tab="mdr-pricing" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
         MDR Pricing
       </button>
-      <button class="side-nav-item" data-tab="reports">
+      <button class="side-nav-item" data-tab="reports" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
         Reports
       </button>
@@ -104,7 +104,7 @@
       </button>
     </nav>
     <div class="side-nav-footer">
-      <a href="upload.html" class="side-upload-btn" data-admin-only>
+      <a href="upload.html" class="side-upload-btn" data-admin-only hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         Upload Report
       </a>
@@ -1494,6 +1494,12 @@
             <button id="addUserBtn" type="submit" class="btn btn-primary">Add User</button>
           </div>
         </div>
+        <!-- Per-page access overrides — populated by tab-admin.js -->
+        <details class="page-access-details">
+          <summary class="page-access-summary">Page access (optional)</summary>
+          <p class="page-access-hint">Leave every page on <em>Inherit from role</em> to give this user exactly what their role allows. Change a page to grant or revoke it individually.</p>
+          <div id="newUserPageAccess" class="page-access-grid"></div>
+        </details>
       </form>
     </div>
 
@@ -1591,6 +1597,11 @@
           <label class="modal-label" for="editUserTenants">Assigned Tenants</label>
           <select id="editUserTenants" multiple size="4" class="modal-status-select tenant-multi-select"></select>
           <span class="modal-optional">Hold Ctrl / Cmd to select multiple</span>
+        </div>
+        <div class="form-group modal-form-group">
+          <label class="modal-label">Page Access</label>
+          <p class="page-access-hint">Overrides this user's role for individual pages.</p>
+          <div id="editUserPageAccess" class="page-access-grid"></div>
         </div>
         <p id="editUserError" class="admin-form-error" hidden></p>
       </div>

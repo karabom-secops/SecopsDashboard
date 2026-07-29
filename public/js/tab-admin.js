@@ -239,6 +239,8 @@
             <button class="btn btn-secondary btn-sm" data-action="edit-user"
               data-id="${u.id}" data-username="${escapeHtml(u.username)}" data-role="${u.role}"
               data-auth-type="${u.auth_type || 'local'}"
+              data-tenant-ids="${escapeHtml(JSON.stringify(u.tenantIds || []))}"
+              data-page-access="${escapeHtml(JSON.stringify(u.pageAccess || {}))}"
               ${isSelf ? 'disabled title="Cannot change your own role"' : ''}>
               Edit
             </button>
@@ -251,6 +253,48 @@
     }
   }
 
+  // ── Per-page access editor ────────────────────────────────────────────────
+  // One row per page, each a 4-way select. "Inherit" (the empty value) means
+  // no override row — the user simply gets whatever their role grants. Only
+  // pages the acting admin can write are offered, matching the server-side
+  // rule that you cannot grant access you do not hold yourself.
+
+  function assignablePages() {
+    return (window.pageCatalog || []).filter(p => window.canWrite(p.key));
+  }
+
+  function renderPageAccessEditor(containerId, current) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const overrides = current || {};
+    container.innerHTML = assignablePages().map(p => {
+      const val = overrides[p.key] || '';
+      const opt = (v, label) =>
+        `<option value="${v}"${val === v ? ' selected' : ''}>${label}</option>`;
+      return `<label class="page-access-row">
+        <span class="page-access-label">${escapeHtml(p.label)}</span>
+        <select class="page-access-select" data-page-key="${p.key}">
+          ${opt('',      'Inherit from role')}
+          ${opt('none',  'No access')}
+          ${opt('read',  'View only')}
+          ${opt('write', 'View & edit')}
+        </select>
+      </label>`;
+    }).join('');
+  }
+
+  /** Collect the editor's selections into the { pageKey: level } request body. */
+  function collectPageAccess(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return {};
+    const out = {};
+    container.querySelectorAll('.page-access-select').forEach(sel => {
+      out[sel.dataset.pageKey] = sel.value; // '' means "clear the override"
+    });
+    return out;
+  }
+
   // ── Add user form ─────────────────────────────────────────────────────────
 
   async function handleAddUser(e) {
@@ -261,7 +305,7 @@
     const username = document.getElementById('newUsername').value.trim();
     const password = document.getElementById('newPassword').value;
     const role     = document.getElementById('newRole').value;
-    const body     = { username, password, role };
+    const body     = { username, password, role, pageAccess: collectPageAccess('newUserPageAccess') };
 
     if (isSuperAdmin()) {
       const multiSel = document.getElementById('newUserTenants');
@@ -293,6 +337,7 @@
         showAdminError(data.error || 'Failed to create user.');
       } else {
         document.getElementById('addUserForm').reset();
+        renderPageAccessEditor('newUserPageAccess', {});
         showAdminSuccess(`User "${data.username}" created successfully.`);
         await renderUsers();
       }
@@ -305,7 +350,7 @@
 
   // ── Edit user modal ───────────────────────────────────────────────────────
 
-  function openEditModal(userId, username, currentRole, currentTenantIds, authType) {
+  function openEditModal(userId, username, currentRole, currentTenantIds, authType, currentPageAccess) {
     const modal = document.getElementById('editUserModal');
     if (!modal) return;
 
@@ -320,12 +365,13 @@
     if (pwdGroup) pwdGroup.hidden = (authType === 'saml');
 
     const roleSelect  = document.getElementById('editUserRole');
-    const allowedRoles = isSuperAdmin()
-      ? [['superadmin', 'Super Admin'], ['admin', 'Admin'], ['manager', 'Manager'], ['sales', 'Sales'], ['readonly', 'Read-only']]
-      : [['admin', 'Admin'], ['manager', 'Manager'], ['sales', 'Sales'], ['readonly', 'Read-only']];
+    const allowedRoles = (window.roleCatalog || [])
+      .filter(r => isSuperAdmin() || r.value !== 'superadmin');
     roleSelect.innerHTML = allowedRoles
-      .map(([val, label]) => `<option value="${val}"${currentRole === val ? ' selected' : ''}>${label}</option>`)
+      .map(r => `<option value="${r.value}"${currentRole === r.value ? ' selected' : ''}>${escapeHtml(r.label)}</option>`)
       .join('');
+
+    renderPageAccessEditor('editUserPageAccess', currentPageAccess);
 
     // Tenant assignment (superadmin only)
     const tenantsRow = document.getElementById('editUserTenantsRow');
@@ -357,7 +403,7 @@
     const errEl  = document.getElementById('editUserError');
     errEl.hidden = true;
 
-    const body = { role };
+    const body = { role, pageAccess: collectPageAccess('editUserPageAccess') };
     if (pass) body.password = pass;
 
     // Include tenant assignments if superadmin
@@ -428,15 +474,17 @@
     const tenantRow     = document.getElementById('newUserTenantRow');
     if (tenantRow)     tenantRow.hidden = !isSuperAdmin();
 
-    // Remove superadmin role option from Add User form if not superadmin
-    if (!isSuperAdmin()) {
-      const newRoleSelect = document.getElementById('newRole');
-      if (newRoleSelect) {
-        Array.from(newRoleSelect.options).forEach(opt => {
-          if (opt.value === 'superadmin') opt.remove();
-        });
-      }
+    // Build the Add User role list from the server's catalog; only a
+    // superadmin may create another superadmin.
+    const newRoleSelect = document.getElementById('newRole');
+    if (newRoleSelect && (window.roleCatalog || []).length) {
+      newRoleSelect.innerHTML = window.roleCatalog
+        .filter(r => isSuperAdmin() || r.value !== 'superadmin')
+        .map(r => `<option value="${r.value}"${r.value === 'readonly' ? ' selected' : ''}>${escapeHtml(r.label)}</option>`)
+        .join('');
     }
+
+    renderPageAccessEditor('newUserPageAccess', {});
   }
 
   function bindNewUserRoleChange() {
@@ -503,9 +551,10 @@
         const userId     = parseInt(btn.dataset.id, 10);
         const username   = btn.dataset.username || '';
         const tenantIds  = JSON.parse(btn.dataset.tenantIds || '[]');
+        const pageAccess = JSON.parse(btn.dataset.pageAccess || '{}');
         const authType   = btn.dataset.authType || 'local';
         if (action === 'delete-user') handleDeleteUser(userId, username);
-        else if (action === 'edit-user') openEditModal(userId, username, btn.dataset.role, tenantIds, authType);
+        else if (action === 'edit-user') openEditModal(userId, username, btn.dataset.role, tenantIds, authType, pageAccess);
       });
     }
 
@@ -775,9 +824,8 @@
     const container = document.getElementById('integrations-list');
     if (!container) return;
 
-    // Only show for admin/superadmin
-    const role = window.currentUser && window.currentUser.role;
-    if (role === 'readonly') {
+    // Integrations are an Admin-page write surface
+    if (!window.canWrite('admin')) {
       document.getElementById('integrationsSection').hidden = true;
       return;
     }

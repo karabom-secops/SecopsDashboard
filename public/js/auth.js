@@ -8,9 +8,25 @@
    * - Calls GET /api/auth/me on page load.
    * - If not authenticated, redirects to login.html.
    * - If authenticated, exposes window.currentUser = { id, username, role }.
+   * - Exposes window.canView(pageKey) / window.canWrite(pageKey), which every
+   *   other script uses instead of comparing role strings. The access map and
+   *   page catalog both come from the server (lib/pages.js) so page keys are
+   *   never duplicated here.
    * - Wires the logout button (#logoutBtn).
-   * - Shows/hides admin-only UI elements based on role.
+   * - Hides nav items and edit controls the user has no access to.
    */
+
+  var LEVEL_RANK = { none: 0, read: 1, write: 2 };
+
+  // Defined up front so scripts loaded before init() resolves can call them.
+  window.pageAccess = {};
+  window.pageCatalog = [];
+
+  function level(pageKey) {
+    return (window.pageAccess && window.pageAccess[pageKey]) || 'none';
+  }
+  window.canView  = function (pageKey) { return LEVEL_RANK[level(pageKey)] >= 1; };
+  window.canWrite = function (pageKey) { return LEVEL_RANK[level(pageKey)] >= 2; };
 
   const BASE = (function () {
     // Derive base URL from <base href> so this works under /secops/ prefix.
@@ -36,9 +52,30 @@
       return;
     }
 
-    // Managers have their own minimal page — send them there if they land here
-    if (user.role === 'manager') {
+    window.pageAccess  = user.pageAccess || {};
+    window.pageCatalog = user.pages || [];
+    window.roleCatalog = user.roles || [];
+
+    // Users whose only page is the manager dashboard get sent there — unless
+    // that is already where we are, which would loop.
+    var onManagerPage = /manager\.html$/.test(location.pathname);
+    var viewableTabs = window.pageCatalog
+      .filter(function (p) { return p.type === 'tab' && window.canView(p.key); });
+    if (!onManagerPage && viewableTabs.length === 0 && window.canView('manager')) {
       location.replace(BASE + 'manager.html');
+      return;
+    }
+
+    // Conversely, someone with no access to the manager dashboard should not
+    // be sitting on it.
+    if (onManagerPage && !window.canView('manager')) {
+      location.replace(BASE + (viewableTabs.length ? '' : 'login.html'));
+      return;
+    }
+
+    // The upload page only makes sense with write access to it.
+    if (/upload\.html$/.test(location.pathname) && !window.canWrite('upload')) {
+      location.replace(BASE + (viewableTabs.length ? '' : 'login.html'));
       return;
     }
 
@@ -159,14 +196,39 @@
       }
     }
 
-    // ── Show Admin item in side menu for admin or superadmin ────────────
-    const sideAdminBtn = document.getElementById('sideAdminBtn');
-    if (sideAdminBtn) {
-      sideAdminBtn.hidden = (user.role === 'readonly');
+    // ── Hide side-nav items for pages the user cannot view ───────────────
+    document.querySelectorAll('.side-nav-item[data-tab]').forEach(el => {
+      el.hidden = !window.canView(el.dataset.tab);
+    });
+
+    // Overrides can leave someone with nothing at all — say so rather than
+    // showing an empty dashboard shell.
+    if (viewableTabs.length === 0 && !onManagerPage) {
+      const dash = document.getElementById('dashboard');
+      if (dash) {
+        dash.hidden = false;
+        dash.innerHTML = '<div class="admin-table-empty" style="padding:3rem;text-align:center">' +
+          'You do not currently have access to any pages. Please contact your administrator.</div>';
+      }
     }
 
-    // ── Hide admin-only action elements for readonly users ───────────────
-    if (user.role === 'readonly') {
+    // Standalone pages have their own entry points rather than a data-tab.
+    const managerBtn = document.getElementById('managerDashboardBtn');
+    if (managerBtn) managerBtn.hidden = !window.canView('manager');
+
+    document.querySelectorAll('.side-upload-btn').forEach(el => {
+      el.hidden = !window.canWrite('upload');
+    });
+
+    // ── Hide write controls the user has no permission for ───────────────
+    // [data-page-write="<key>"] gates on a specific page; [data-admin-only]
+    // is the older global marker, kept working for existing markup.
+    document.querySelectorAll('[data-page-write]').forEach(el => {
+      el.hidden = !window.canWrite(el.dataset.pageWrite);
+    });
+
+    const canWriteAnything = window.pageCatalog.some(p => window.canWrite(p.key));
+    if (!canWriteAnything) {
       document.querySelectorAll('[data-admin-only]').forEach(el => {
         el.hidden = true;
       });

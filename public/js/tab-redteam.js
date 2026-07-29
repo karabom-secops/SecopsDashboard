@@ -14,8 +14,7 @@ const RedteamTab = (() => {
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function isAdmin() {
-    const r = window.currentUser && window.currentUser.role;
-    return r === 'admin' || r === 'superadmin';
+    return window.canWrite('redteam');
   }
 
   function esc(s) {

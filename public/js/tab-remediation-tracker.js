@@ -49,8 +49,7 @@ const RemediationTrackerTab = (() => {
   }
 
   function canWrite() {
-    const r = window.currentUser && window.currentUser.role;
-    return r === 'sales' || r === 'admin' || r === 'superadmin';
+    return window.canWrite('remediation-tracker');
   }
 
   function tenantParam(sep) {

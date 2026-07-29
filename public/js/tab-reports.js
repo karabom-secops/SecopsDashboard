@@ -70,8 +70,7 @@ window.ReportsTab = (function () {
 
   /** Whether this user may write report_metrics / trigger an Arctic Wolf sync. */
   function canPersist() {
-    var r = window.currentUser && window.currentUser.role;
-    return r === 'admin' || r === 'superadmin';
+    return window.canWrite('reports');
   }
 
   function tenantParam(sep) {

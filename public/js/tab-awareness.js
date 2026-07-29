@@ -66,8 +66,7 @@
     }
 
     if (delBtn) {
-      var isAdmin = window.currentUser &&
-        (window.currentUser.role === 'admin' || window.currentUser.role === 'superadmin');
+      var isAdmin = window.canWrite('awareness');
       delBtn.hidden = !hasData || !isAdmin;
       if (!delBtn.dataset.handlerSet) {
         delBtn.dataset.handlerSet = '1';

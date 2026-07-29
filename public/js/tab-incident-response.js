@@ -22,8 +22,7 @@ const IrTab = (() => {
   }
 
   function isAdmin() {
-    const r = window.currentUser && window.currentUser.role;
-    return r === 'admin' || r === 'superadmin';
+    return window.canWrite('incident-response');
   }
 
   function tenantParam(sep) {
