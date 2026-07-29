@@ -86,6 +86,10 @@
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         Secure Score
       </button>
+      <button class="side-nav-item" data-tab="edr">
+        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 10.5l2.5 2.5L15 8"/></svg>
+        Managed EDR
+      </button>
       <button class="side-nav-item" data-tab="mdr-pricing">
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
         MDR Pricing
@@ -1200,6 +1204,110 @@
     </form>
   </section>
 
+  <!-- ── Managed EDR Tab Panel ───────────────────────────────────────────── -->
+  <section id="tab-edr" class="tab-panel" role="tabpanel" hidden>
+    <div class="section-header">
+      <h2 class="section-title">Managed EDR</h2>
+      <p class="section-subtitle">SentinelOne endpoint detection &amp; response — threats, endpoint fleet health and console activity</p>
+    </div>
+
+    <div class="edr-toolbar">
+      <label class="edr-field">
+        <span>Reporting period</span>
+        <select id="edr-range" class="form-input">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="180">Last 6 months</option>
+        </select>
+      </label>
+      <div class="edr-toolbar-spacer"></div>
+      <span id="edr-sync-meta" class="edr-sync-meta"></span>
+      <button type="button" class="btn btn-sm" id="edr-refresh-btn">Refresh</button>
+      <button type="button" class="btn btn-sm btn-primary" id="edr-sync-btn" data-admin-only>Sync Now</button>
+    </div>
+
+    <div id="edr-empty" class="edr-empty" hidden>
+      <p><strong>No EDR data yet.</strong></p>
+      <p>Configure the SentinelOne integration under <a href="#" id="edr-goto-admin">Admin → Integrations</a>. Data refreshes automatically every 30 minutes.</p>
+    </div>
+
+    <div id="edr-content" hidden>
+      <div id="edr-stats" class="stat-grid"></div>
+
+      <div class="edr-grid-2">
+        <div class="admin-card">
+          <h3 class="secure-score-section-title">Detections Over Time</h3>
+          <div class="edr-chart-wrap"><canvas id="edr-trend-chart"></canvas></div>
+        </div>
+        <div class="admin-card">
+          <h3 class="secure-score-section-title">Threat Classification</h3>
+          <div class="edr-chart-wrap"><canvas id="edr-class-chart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="edr-grid-2">
+        <div class="admin-card">
+          <h3 class="secure-score-section-title">Incident Status</h3>
+          <div class="edr-chart-wrap"><canvas id="edr-status-chart"></canvas></div>
+        </div>
+        <div class="admin-card">
+          <h3 class="secure-score-section-title">Endpoint Fleet</h3>
+          <div id="edr-fleet" class="edr-fleet"></div>
+        </div>
+      </div>
+
+      <div class="edr-grid-2">
+        <div class="admin-card">
+          <h3 class="secure-score-section-title">Most Affected Endpoints</h3>
+          <table class="data-table" id="edr-top-endpoints"><thead><tr><th>Endpoint</th><th>Detections</th><th>Unresolved</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="admin-card">
+          <h3 class="secure-score-section-title">Top Threats</h3>
+          <table class="data-table" id="edr-top-threats"><thead><tr><th>Threat</th><th>Classification</th><th>Count</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+
+      <div class="admin-card">
+        <div class="edr-card-header">
+          <h3 class="secure-score-section-title">Threats</h3>
+          <div class="edr-filters">
+            <select id="edr-filter-status" class="form-input">
+              <option value="">All statuses</option>
+              <option value="unresolved">Unresolved</option>
+              <option value="in_progress">In progress</option>
+              <option value="resolved">Resolved</option>
+            </select>
+            <select id="edr-filter-confidence" class="form-input">
+              <option value="">All confidence</option>
+              <option value="malicious">Malicious</option>
+              <option value="suspicious">Suspicious</option>
+            </select>
+          </div>
+        </div>
+        <div class="edr-table-scroll">
+          <table class="data-table" id="edr-threats-table">
+            <thead><tr>
+              <th>Detected</th><th>Threat</th><th>Classification</th><th>Endpoint</th>
+              <th>Confidence</th><th>Mitigation</th><th>Status</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="admin-card">
+        <h3 class="secure-score-section-title">Recent Activity</h3>
+        <div class="edr-table-scroll">
+          <table class="data-table" id="edr-activity-table">
+            <thead><tr><th>When</th><th>Activity</th><th>Endpoint</th><th>User</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Reports Tab Panel ───────────────────────────────────────────────── -->
   <section id="tab-reports" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
@@ -1512,6 +1620,7 @@
   <script src="js/tab-risk-register.js"></script>
   <script src="js/tab-remediation-tracker.js"></script>
   <script src="js/tab-mdr-pricing.js"></script>
+  <script src="js/tab-edr.js"></script>
   <script src="js/report-deck.js"></script>
   <script src="js/report-sections.js"></script>
   <script src="js/tab-reports.js"></script>

@@ -3134,3 +3134,91 @@ body.login-page {
   flex-wrap: wrap;
   margin-top: 0.9rem;
 }
+
+/* ── Managed EDR tab ───────────────────────────────────────────────────────── */
+.edr-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.1rem;
+}
+.edr-toolbar-spacer { flex: 1 1 auto; }
+.edr-field { display: flex; flex-direction: column; gap: 0.3rem; }
+.edr-field > span {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.edr-field .form-input { min-width: 170px; }
+
+.edr-sync-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
+  padding-bottom: 0.4rem;
+}
+
+.edr-empty {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 2.2rem 1.6rem;
+  text-align: center;
+  color: var(--muted);
+}
+.edr-empty p + p { margin-top: 0.5rem; font-size: 0.9rem; }
+.edr-empty a { color: var(--logo-blue); font-weight: 600; }
+
+.edr-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 1.1rem;
+  margin-top: 1.1rem;
+}
+.edr-grid-2 > .admin-card { margin: 0; }
+
+.edr-chart-wrap { position: relative; height: 260px; margin-top: 0.6rem; }
+
+.edr-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.edr-filters { display: flex; gap: 0.6rem; }
+.edr-filters .form-input { min-width: 150px; font-size: 0.85rem; }
+
+.edr-table-scroll { max-height: 460px; overflow-y: auto; margin-top: 0.7rem; }
+
+.edr-fleet { margin-top: 0.6rem; }
+.edr-fleet-coverage {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.6rem 0 1rem;
+}
+.edr-fleet-coverage-value {
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: var(--logo-blue);
+  line-height: 1;
+}
+.edr-fleet-coverage-label { font-size: 0.85rem; color: var(--muted); }
+.edr-fleet-table td:last-child { text-align: right; font-weight: 700; }
+
+.edr-tone-red   { color: var(--red); }
+.edr-tone-amber { color: var(--amber); }
+.edr-tone-green { color: var(--green); }
+.edr-muted      { color: var(--muted); font-style: italic; }
+.edr-mono {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.82rem;
+  word-break: break-word;
+}
+
+.int-optional { font-weight: 400; color: var(--muted); text-transform: none; }

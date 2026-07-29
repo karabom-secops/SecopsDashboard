@@ -742,6 +742,15 @@
       desc: 'Security-awareness session history — automatically syncs training/phishing session data.',
       awRegions: true,
     },
+    {
+      id:       'sentinelone',
+      name:     'SentinelOne',
+      icon:     '🛡️',
+      desc:     'Managed EDR — syncs threats, console activity and endpoint fleet health every 30 minutes.',
+      urlLabel: 'Management Console URL',
+      urlHint:  'e.g. https://euce1-101.sentinelone.net',
+      scopeFields: true, // optional site / account scoping
+    },
   ];
 
   function tenantQS() {
@@ -822,7 +831,20 @@
               <label class="modal-label">${escHtmlInt(p.urlLabel || 'Base URL')}</label>
               <input type="url" class="int-url-input form-input" data-provider="${p.id}"
                      placeholder="${escHtmlInt(p.urlHint || '')}" value="${cfg ? escHtmlInt(cfg.base_url) : ''}">
-            </div>`}
+            </div>
+            ${p.scopeFields ? `
+            <div class="form-group">
+              <label class="modal-label">Site IDs <span class="int-optional">(optional)</span></label>
+              <input type="text" class="int-site-ids form-input" data-provider="${p.id}"
+                     placeholder="Comma-separated — leave blank for all sites"
+                     value="${escHtmlInt(cfg && cfg.config_json && cfg.config_json.siteIds ? cfg.config_json.siteIds : '')}">
+            </div>
+            <div class="form-group">
+              <label class="modal-label">Account IDs <span class="int-optional">(optional)</span></label>
+              <input type="text" class="int-account-ids form-input" data-provider="${p.id}"
+                     placeholder="Comma-separated — leave blank for all accounts"
+                     value="${escHtmlInt(cfg && cfg.config_json && cfg.config_json.accountIds ? cfg.config_json.accountIds : '')}">
+            </div>` : ''}`}
             <div class="form-group">
               <label class="modal-label">API Key / Token</label>
               <div class="int-key-row">
@@ -909,6 +931,17 @@
       body.configJson = { organizationUuid: orgUuid };
     }
 
+    if (providerId === 'sentinelone') {
+      const siteInput    = container.querySelector(`.int-site-ids[data-provider="${providerId}"]`);
+      const accountInput = container.querySelector(`.int-account-ids[data-provider="${providerId}"]`);
+      const siteIds      = siteInput ? siteInput.value.trim() : '';
+      const accountIds   = accountInput ? accountInput.value.trim() : '';
+      // Both are optional — omitted means "everything this API token can see".
+      body.configJson = {};
+      if (siteIds)    body.configJson.siteIds    = siteIds;
+      if (accountIds) body.configJson.accountIds = accountIds;
+    }
+
     try {
       const res = await fetch(`api/integrations/${providerId}`, {
         method: 'POST',
@@ -959,6 +992,9 @@
         if (typeof window.renderAwareness === 'function') {
           window.renderAwareness().catch(() => {});
         }
+        setTimeout(() => renderIntegrations(), 1500);
+      } else if (data.ok && providerId === 'sentinelone') {
+        setIntFeedback(providerId, `✓ Synced ${data.threats} threats, ${data.activities} activities, ${data.agents} agents.`, false);
         setTimeout(() => renderIntegrations(), 1500);
       } else if (data.ok) {
         setIntFeedback(providerId, `✓ Synced ${data.synced} tickets. Refreshing incidents…`, false);

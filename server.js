@@ -28,6 +28,8 @@ const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
 const irisDfirAdapter   = require('./lib/integrations/iris-dfir');
 const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports');
 const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
+const sentinelOneAdapter = require('./lib/integrations/sentinelone');
+const { computeEdrSummary } = require('./lib/edr-metrics');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -1740,7 +1742,12 @@ const INTEGRATION_ADAPTERS = {
 // Arctic Wolf Reports (security-awareness session history) isn't ticket-shaped,
 // so it isn't in INTEGRATION_ADAPTERS — it's special-cased in the test/sync routes.
 const REPORTS_PROVIDER = 'arctic_wolf_reports';
-const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER]);
+
+// SentinelOne isn't ticket-shaped either — it syncs threats, activities and the
+// agent fleet into their own tables for the Managed EDR tab.
+const EDR_PROVIDER = 'sentinelone';
+
+const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER]);
 
 function resolveIntegrationTenant(req, source) {
   if (req.session.role === 'superadmin') {
@@ -1862,8 +1869,8 @@ app.delete('/api/integrations/:provider', requireAdmin, async (req, res) => {
 app.post('/api/integrations/:provider/test', requireAdmin, async (req, res) => {
   try {
     const provider = req.params.provider;
-    const adapter  = provider === REPORTS_PROVIDER ? arcticWolfReportsAdapter : INTEGRATION_ADAPTERS[provider];
-    if (!adapter) return res.status(400).json({ error: `Unknown provider: ${provider}` });
+    if (!KNOWN_PROVIDERS.has(provider)) return res.status(400).json({ error: `Unknown provider: ${provider}` });
+    const adapter = INTEGRATION_ADAPTERS[provider];
 
     const { tenantId, error } = resolveIntegrationTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
@@ -1879,6 +1886,8 @@ app.post('/api/integrations/:provider/test', requireAdmin, async (req, res) => {
 
     if (provider === REPORTS_PROVIDER) {
       await arcticWolfReportsAdapter.testConnection({ base_url, api_key, ...(config_json || {}) });
+    } else if (provider === EDR_PROVIDER) {
+      await sentinelOneAdapter.testConnection({ base_url, api_key, ...(config_json || {}) });
     } else {
       await adapter.fetchTickets({ base_url, api_key, ...(config_json || {}) }, true);
     }
@@ -2027,6 +2036,175 @@ async function runTicketIntegrationSync(provider, tenantId, userId) {
   }
 }
 
+/** Core sync logic for SentinelOne (Managed EDR).
+ *  Pulls threats + activities incrementally (by the newest row already stored)
+ *  and refreshes the agent fleet snapshot in full.
+ *  Throws on failure; thrown errors carry `.httpStatus` for the HTTP route. */
+async function runSentinelOneSync(tenantId) {
+  const provider = EDR_PROVIDER;
+
+  const intRow = await pool.query(
+    'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE',
+    [tenantId, provider]
+  );
+  if (!intRow.rows.length) {
+    const err = new Error('Integration not configured or disabled.');
+    err.httpStatus = 404;
+    throw err;
+  }
+
+  const { base_url, api_key_enc, api_key_iv, config_json } = intRow.rows[0];
+  const config = { base_url, api_key: decryptKey(api_key_enc, api_key_iv), ...(config_json || {}) };
+
+  // Resume from the newest row we already hold. A threat that changed verdict or
+  // mitigation state comes back on updatedAt and overwrites its stored row.
+  const watermarks = await pool.query(
+    `SELECT (SELECT MAX(updated_at) FROM edr_threats    WHERE tenant_id = $1) AS threat_since,
+            (SELECT MAX(created_at) FROM edr_activities WHERE tenant_id = $1) AS activity_since`,
+    [tenantId]
+  );
+  const threatSince   = watermarks.rows[0].threat_since   ? new Date(watermarks.rows[0].threat_since).toISOString()   : null;
+  const activitySince = watermarks.rows[0].activity_since ? new Date(watermarks.rows[0].activity_since).toISOString() : null;
+
+  let threats, activities, agents;
+  try {
+    [threats, activities, agents] = await Promise.all([
+      sentinelOneAdapter.fetchThreats(config,    { since: threatSince }),
+      sentinelOneAdapter.fetchActivities(config, { since: activitySince }),
+      sentinelOneAdapter.fetchAgents(config),
+    ]);
+  } catch (fetchErr) {
+    await pool.query(
+      `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
+       WHERE tenant_id = $2 AND provider = $3`,
+      [fetchErr.message, tenantId, provider]
+    );
+    fetchErr.httpStatus = 502;
+    throw fetchErr;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    for (const t of threats) {
+      await client.query(
+        `INSERT INTO edr_threats (
+           tenant_id, threat_id, threat_name, classification, classification_source,
+           confidence_level, analyst_verdict, incident_status, mitigation_status,
+           detection_type, detection_engines, endpoint_name, endpoint_id, os_name,
+           agent_version, site_name, group_name, file_path, file_hash, initiated_by,
+           detected_at, mitigated_at, resolved_at, updated_at, raw_json, synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,NOW())
+         ON CONFLICT (tenant_id, threat_id) DO UPDATE SET
+           threat_name = EXCLUDED.threat_name,
+           classification = EXCLUDED.classification,
+           classification_source = EXCLUDED.classification_source,
+           confidence_level = EXCLUDED.confidence_level,
+           analyst_verdict = EXCLUDED.analyst_verdict,
+           incident_status = EXCLUDED.incident_status,
+           mitigation_status = EXCLUDED.mitigation_status,
+           detection_type = EXCLUDED.detection_type,
+           detection_engines = EXCLUDED.detection_engines,
+           endpoint_name = EXCLUDED.endpoint_name,
+           endpoint_id = EXCLUDED.endpoint_id,
+           os_name = EXCLUDED.os_name,
+           agent_version = EXCLUDED.agent_version,
+           site_name = EXCLUDED.site_name,
+           group_name = EXCLUDED.group_name,
+           file_path = EXCLUDED.file_path,
+           file_hash = EXCLUDED.file_hash,
+           initiated_by = EXCLUDED.initiated_by,
+           detected_at = EXCLUDED.detected_at,
+           mitigated_at = EXCLUDED.mitigated_at,
+           resolved_at = EXCLUDED.resolved_at,
+           updated_at = EXCLUDED.updated_at,
+           raw_json = EXCLUDED.raw_json,
+           synced_at = NOW()`,
+        [tenantId, t.threatId, t.threatName, t.classification, t.classificationSource,
+         t.confidenceLevel, t.analystVerdict, t.incidentStatus, t.mitigationStatus,
+         t.detectionType, t.detectionEngines, t.endpointName, t.endpointId, t.osName,
+         t.agentVersion, t.siteName, t.groupName, t.filePath, t.fileHash, t.initiatedBy,
+         t.detectedAt, t.mitigatedAt, t.resolvedAt, t.updatedAt, JSON.stringify(t.raw)]
+      );
+    }
+
+    for (const a of activities) {
+      await client.query(
+        `INSERT INTO edr_activities (
+           tenant_id, activity_id, activity_type, activity_type_name, primary_description,
+           secondary_description, endpoint_name, endpoint_id, site_name, group_name,
+           user_name, threat_id, created_at, raw_json, synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+         ON CONFLICT (tenant_id, activity_id) DO NOTHING`,
+        [tenantId, a.activityId, a.activityType, a.activityTypeName, a.primaryDescription,
+         a.secondaryDescription, a.endpointName, a.endpointId, a.siteName, a.groupName,
+         a.userName, a.threatId, a.createdAt, JSON.stringify(a.raw)]
+      );
+    }
+
+    for (const g of agents) {
+      await client.query(
+        `INSERT INTO edr_agents (
+           tenant_id, agent_id, computer_name, os_name, os_type, agent_version,
+           machine_type, domain, site_name, group_name, is_active, is_infected,
+           is_up_to_date, network_status, scan_status, active_threats,
+           last_active_at, registered_at, synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW())
+         ON CONFLICT (tenant_id, agent_id) DO UPDATE SET
+           computer_name = EXCLUDED.computer_name,
+           os_name = EXCLUDED.os_name,
+           os_type = EXCLUDED.os_type,
+           agent_version = EXCLUDED.agent_version,
+           machine_type = EXCLUDED.machine_type,
+           domain = EXCLUDED.domain,
+           site_name = EXCLUDED.site_name,
+           group_name = EXCLUDED.group_name,
+           is_active = EXCLUDED.is_active,
+           is_infected = EXCLUDED.is_infected,
+           is_up_to_date = EXCLUDED.is_up_to_date,
+           network_status = EXCLUDED.network_status,
+           scan_status = EXCLUDED.scan_status,
+           active_threats = EXCLUDED.active_threats,
+           last_active_at = EXCLUDED.last_active_at,
+           registered_at = EXCLUDED.registered_at,
+           synced_at = NOW()`,
+        [tenantId, g.agentId, g.computerName, g.osName, g.osType, g.agentVersion,
+         g.machineType, g.domain, g.siteName, g.groupName, g.isActive, g.isInfected,
+         g.isUpToDate, g.networkStatus, g.scanStatus, g.activeThreats,
+         g.lastActiveAt, g.registeredAt]
+      );
+    }
+
+    // Agents is always a full pull, so anything not touched by this run has been
+    // decommissioned in the console and should drop out of the fleet metrics.
+    if (agents.length > 0) {
+      await client.query(
+        `DELETE FROM edr_agents WHERE tenant_id = $1 AND synced_at < NOW() - INTERVAL '1 minute'`,
+        [tenantId]
+      );
+    }
+
+    const message = `Synced ${threats.length} threat${threats.length !== 1 ? 's' : ''}, `
+      + `${activities.length} activit${activities.length !== 1 ? 'ies' : 'y'}, ${agents.length} agent${agents.length !== 1 ? 's' : ''}`;
+
+    await client.query(
+      `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'ok', last_sync_message = $1
+       WHERE tenant_id = $2 AND provider = $3`,
+      [message, tenantId, provider]
+    );
+
+    await client.query('COMMIT');
+    console.log(`[integrations] ${provider} sync: ${message} for tenant ${tenantId}`);
+    return { ok: true, synced: threats.length, threats: threats.length, activities: activities.length, agents: agents.length };
+  } catch (dbErr) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw dbErr;
+  } finally {
+    client.release();
+  }
+}
+
 /** POST /api/integrations/:provider/sync — fetch fresh data from the provider and store it */
 app.post('/api/integrations/:provider/sync', requireAdmin, async (req, res) => {
   const provider = req.params.provider;
@@ -2034,9 +2212,10 @@ app.post('/api/integrations/:provider/sync', requireAdmin, async (req, res) => {
   if (error) return res.status(error.status).json({ error: error.message });
 
   try {
-    const result = provider === REPORTS_PROVIDER
-      ? await runArcticWolfReportsSync(tenantId, req.session.userId)
-      : await runTicketIntegrationSync(provider, tenantId, req.session.userId);
+    let result;
+    if (provider === REPORTS_PROVIDER)   result = await runArcticWolfReportsSync(tenantId, req.session.userId);
+    else if (provider === EDR_PROVIDER)  result = await runSentinelOneSync(tenantId);
+    else                                 result = await runTicketIntegrationSync(provider, tenantId, req.session.userId);
     return res.json(result);
   } catch (err) {
     if (err.stillGenerating) {
@@ -2056,7 +2235,11 @@ const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 async function runScheduledSyncs() {
   let rows;
   try {
-    rows = (await pool.query('SELECT tenant_id, provider FROM integrations WHERE is_enabled = TRUE')).rows;
+    // SentinelOne is excluded — it runs on its own 30-minute cadence below.
+    rows = (await pool.query(
+      'SELECT tenant_id, provider FROM integrations WHERE is_enabled = TRUE AND provider <> $1',
+      [EDR_PROVIDER]
+    )).rows;
   } catch (err) {
     console.error('[integrations] scheduled sync: failed to load integrations —', err.message);
     return;
@@ -2099,6 +2282,159 @@ async function runScheduledSyncs() {
 // day for their first sync), then every 24 hours thereafter.
 setTimeout(() => { runScheduledSyncs().catch(err => console.error('[integrations] scheduled sync crashed —', err.message)); }, 60 * 1000);
 setInterval(() => { runScheduledSyncs().catch(err => console.error('[integrations] scheduled sync crashed —', err.message)); }, SYNC_INTERVAL_MS);
+
+// ── Managed EDR sync (every 30 min) ────────────────────────────────────────
+// SentinelOne threat/activity data is operational rather than reporting-cadence,
+// so it polls far more often than the other integrations.
+
+const EDR_SYNC_INTERVAL_MS = 30 * 60 * 1000;
+let edrSyncRunning = false;
+
+async function runEdrSyncs() {
+  // A slow console (large fleets, first full backfill) must not stack up runs.
+  if (edrSyncRunning) {
+    console.log('[integrations] sentinelone sync still running — skipping this tick');
+    return;
+  }
+  edrSyncRunning = true;
+
+  try {
+    let rows;
+    try {
+      rows = (await pool.query(
+        'SELECT tenant_id FROM integrations WHERE is_enabled = TRUE AND provider = $1',
+        [EDR_PROVIDER]
+      )).rows;
+    } catch (err) {
+      console.error('[integrations] sentinelone sync: failed to load integrations —', err.message);
+      return;
+    }
+
+    for (const row of rows) {
+      try {
+        const result = await runSentinelOneSync(row.tenant_id);
+        console.log(`[integrations] sentinelone sync ok: tenant ${row.tenant_id} (${result.threats} threats, ${result.activities} activities, ${result.agents} agents)`);
+      } catch (err) {
+        console.error(`[integrations] sentinelone sync failed: tenant ${row.tenant_id} — ${err.message}`);
+      }
+    }
+  } finally {
+    edrSyncRunning = false;
+  }
+}
+
+setTimeout(() => { runEdrSyncs().catch(err => console.error('[integrations] sentinelone sync crashed —', err.message)); }, 45 * 1000);
+setInterval(() => { runEdrSyncs().catch(err => console.error('[integrations] sentinelone sync crashed —', err.message)); }, EDR_SYNC_INTERVAL_MS);
+
+// ── Managed EDR (SentinelOne) data routes ──────────────────────────────────
+
+function resolveEdrTenant(req) {
+  if (req.session.role === 'superadmin') {
+    const tid = parseInt(req.query.tenantId, 10);
+    if (isNaN(tid) || tid < 1) return { tenantId: null };
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+/** GET /api/edr/summary?days=30 — headline metrics, breakdowns and trends */
+app.get('/api/edr/summary', requireAuth, async (req, res) => {
+  try {
+    const { tenantId } = resolveEdrTenant(req);
+    if (tenantId === null) return res.json(null);
+    res.json(await computeEdrSummary(pool, tenantId, req.query.days));
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/edr/threats — filterable threat list backing the tab's table */
+app.get('/api/edr/threats', requireAuth, async (req, res) => {
+  try {
+    const { tenantId } = resolveEdrTenant(req);
+    if (tenantId === null) return res.json([]);
+
+    const days   = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
+    const limit  = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 200));
+    const params = [tenantId, days];
+    const where  = [`tenant_id = $1`, `detected_at >= NOW() - ($2::int * INTERVAL '1 day')`];
+
+    if (req.query.status) {
+      params.push(req.query.status);
+      where.push(`incident_status = $${params.length}`);
+    }
+    if (req.query.confidence) {
+      params.push(req.query.confidence);
+      where.push(`confidence_level = $${params.length}`);
+    }
+    if (req.query.mitigation) {
+      params.push(req.query.mitigation);
+      where.push(`mitigation_status = $${params.length}`);
+    }
+    params.push(limit);
+
+    const result = await pool.query(
+      `SELECT threat_id AS "threatId", threat_name AS "threatName", classification,
+              confidence_level AS "confidenceLevel", analyst_verdict AS "analystVerdict",
+              incident_status AS "incidentStatus", mitigation_status AS "mitigationStatus",
+              detection_type AS "detectionType", detection_engines AS "detectionEngines",
+              endpoint_name AS "endpointName", os_name AS "osName", site_name AS "siteName",
+              group_name AS "groupName", file_path AS "filePath", file_hash AS "fileHash",
+              initiated_by AS "initiatedBy", detected_at AS "detectedAt",
+              mitigated_at AS "mitigatedAt", resolved_at AS "resolvedAt"
+       FROM edr_threats
+       WHERE ${where.join(' AND ')}
+       ORDER BY detected_at DESC NULLS LAST
+       LIMIT $${params.length}`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/edr/activities — most recent console activity */
+app.get('/api/edr/activities', requireAuth, async (req, res) => {
+  try {
+    const { tenantId } = resolveEdrTenant(req);
+    if (tenantId === null) return res.json([]);
+
+    const days  = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 100));
+
+    const result = await pool.query(
+      `SELECT activity_id AS "activityId", activity_type AS "activityType",
+              activity_type_name AS "activityTypeName", primary_description AS "primaryDescription",
+              secondary_description AS "secondaryDescription", endpoint_name AS "endpointName",
+              site_name AS "siteName", group_name AS "groupName", user_name AS "userName",
+              threat_id AS "threatId", created_at AS "createdAt"
+       FROM edr_activities
+       WHERE tenant_id = $1 AND created_at >= NOW() - ($2::int * INTERVAL '1 day')
+       ORDER BY created_at DESC NULLS LAST
+       LIMIT $3`,
+      [tenantId, days, limit]
+    );
+    res.json(result.rows);
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/edr/agents — endpoint fleet snapshot */
+app.get('/api/edr/agents', requireAuth, async (req, res) => {
+  try {
+    const { tenantId } = resolveEdrTenant(req);
+    if (tenantId === null) return res.json([]);
+
+    const result = await pool.query(
+      `SELECT agent_id AS "agentId", computer_name AS "computerName", os_name AS "osName",
+              os_type AS "osType", agent_version AS "agentVersion", machine_type AS "machineType",
+              domain, site_name AS "siteName", group_name AS "groupName",
+              is_active AS "isActive", is_infected AS "isInfected", is_up_to_date AS "isUpToDate",
+              network_status AS "networkStatus", scan_status AS "scanStatus",
+              active_threats AS "activeThreats", last_active_at AS "lastActiveAt"
+       FROM edr_agents WHERE tenant_id = $1
+       ORDER BY is_infected DESC, active_threats DESC, computer_name ASC`,
+      [tenantId]
+    );
+    res.json(result.rows);
+  } catch (err) { return serverError(res, err); }
+});
 
 // ── GRC & Insurability routes ──────────────────────────────────────────────
 

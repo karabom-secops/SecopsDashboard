@@ -19,6 +19,7 @@
     'risk-register': document.getElementById('tab-risk-register'),
     'remediation-tracker': document.getElementById('tab-remediation-tracker'),
     'secure-score': document.getElementById('tab-secure-score'),
+    edr:          document.getElementById('tab-edr'),
     'mdr-pricing': document.getElementById('tab-mdr-pricing'),
     reports:      document.getElementById('tab-reports'),
     admin:        document.getElementById('tab-admin'),
@@ -36,6 +37,7 @@
     'risk-register': 'Risk Register',
     'remediation-tracker': 'Remediation Tracker',
     'secure-score': 'Secure Score',
+    edr:        'Managed EDR',
     'mdr-pricing': 'MDR Pricing',
     reports:    'Reports',
     admin:      'Admin',
@@ -99,6 +101,9 @@
     }
     if (target === 'remediation-tracker' && typeof window.RemediationTrackerTab !== 'undefined') {
       window.RemediationTrackerTab.loadAndRender();
+    }
+    if (target === 'edr' && typeof window.EdrTab !== 'undefined') {
+      window.EdrTab.loadAndRender();
     }
     if (target === 'mdr-pricing' && typeof window.MdrPricingTab !== 'undefined') {
       window.MdrPricingTab.loadAndRender();
