@@ -18,7 +18,7 @@ const { requireAuth, requireSuperAdmin, pageGate, loadPageAccess } = require('./
 const { ROLES, ROLE_LABELS, PAGES, PAGE_KEYS, LEVELS, LEVEL_RANK, resolveAccess } = require('./lib/pages');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
-const { parseNessusCSV, parseNessusXML, parseArcticWolfCSV, isArcticWolfCSV, computeVulnSummary } = require('./lib/vuln-parser');
+const { parseVulnFile, computeVulnSummary } = require('./lib/vuln-parser');
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
 const XLSX = require('xlsx');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
@@ -1100,19 +1100,17 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) =>
     if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
 
     const fileText = req.file.buffer.toString('utf8');
-    const origName = (req.file.originalname || '').toLowerCase();
-    const mimeType = (req.file.mimetype     || '').toLowerCase();
 
-    let findings;
-    if (origName.endsWith('.nessus') || mimeType.includes('xml')) {
-      findings = parseNessusXML(fileText);
-    } else if (isArcticWolfCSV(fileText)) {
-      findings = parseArcticWolfCSV(fileText);
-    } else {
-      findings = parseNessusCSV(fileText);
-    }
+    let { findings, format: usedFormat } = parseVulnFile(fileText, {
+      format:   (req.body.fileFormat || 'auto').trim(),
+      fileName: req.file.originalname || '',
+      mimeType: req.file.mimetype     || '',
+    });
+
     if (findings.length === 0) {
-      return res.status(400).json({ error: 'No findings parsed. Check it is a valid Nessus CSV, .nessus XML, or Arctic Wolf Managed Risk CSV export.' });
+      return res.status(400).json({
+        error: `No findings parsed (read as ${usedFormat}). Check it is a valid Nessus CSV, .nessus XML, or Arctic Wolf Managed Risk CSV export — or pick the matching format explicitly.`,
+      });
     }
 
     const prevScan = await client.query(
@@ -1230,8 +1228,8 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) =>
     });
 
     const autoClosedCount = autoClosedFindings.length;
-    console.log(`[vulns] Upload ${monthKey} (tenant ${tenantId}): ${findings.length} findings, ${carried} carried over, ${autoClosedCount} auto-closed`);
-    return res.json({ monthKey, tenantId, summary, carriedCounts, autoClosedCount });
+    console.log(`[vulns] Upload ${monthKey} (tenant ${tenantId}, ${usedFormat}): ${findings.length} findings, ${carried} carried over, ${autoClosedCount} auto-closed`);
+    return res.json({ monthKey, tenantId, summary, carriedCounts, autoClosedCount, format: usedFormat });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     return serverError(res, err);

@@ -104,6 +104,7 @@
     const vulnForm      = document.getElementById('vulnUploadForm');
     const vulnMonthInput = document.getElementById('vulnMonthKey');
     const vulnFileInput = document.getElementById('vulnFile');
+    const vulnFormatSel = document.getElementById('vulnFileFormat');
     const vulnErrorDiv  = document.getElementById('vulnUploadError');
     const btnVuln       = document.getElementById('btnVulnUpload');
     const vulnBtnLabel  = document.getElementById('vulnBtnLabel');
@@ -158,7 +159,7 @@
 
     function setVulnLoading(loading) {
       btnVuln.disabled = loading;
-      vulnBtnLabel.textContent = loading ? 'Uploading…' : 'Upload Nessus Scan';
+      vulnBtnLabel.textContent = loading ? 'Uploading…' : 'Upload Scan';
       vulnSpinner.hidden = !loading;
     }
 
@@ -174,7 +175,7 @@
 
       const file = vulnFileInput.files[0];
       if (!file) {
-        showVulnError('Please select a Nessus CSV or .nessus file.');
+        showVulnError('Please select a Nessus CSV, .nessus XML, or Arctic Wolf Managed Risk CSV file.');
         return;
       }
 
@@ -191,6 +192,7 @@
       const fd = new FormData();
       fd.append('monthKey', monthKey);
       fd.append('vulnFile', file);
+      fd.append('fileFormat', vulnFormatSel ? (vulnFormatSel.value || 'auto') : 'auto');
       if (isSA && tenantSel && tenantSel.value) {
         fd.append('tenantId', tenantSel.value);
       }

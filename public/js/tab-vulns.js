@@ -221,8 +221,8 @@
       const uploadHref = 'upload.html' + (isSA && tenantId ? '?tenantId=' + encodeURIComponent(tenantId) : '');
       emptyEl.innerHTML = `
         <div class="vuln-empty-card">
-          <p>No Nessus scan uploaded yet.</p>
-          <a href="${uploadHref}" class="btn btn-primary">Upload Nessus Scan</a>
+          <p>No vulnerability scan uploaded yet.</p>
+          <a href="${uploadHref}" class="btn btn-primary">Upload Vulnerability Scan</a>
         </div>`;
       emptyEl.hidden   = false;
       contentEl.hidden = true;
