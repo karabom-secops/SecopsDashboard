@@ -31,6 +31,7 @@ const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports
 const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
 const sentinelOneAdapter = require('./lib/integrations/sentinelone');
 const { computeEdrSummary } = require('./lib/edr-metrics');
+const { buildPentestReport, imageDimensions, DEFAULT_OWASP } = require('./lib/report-docx');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -96,6 +97,16 @@ const upload     = multer({ storage: multer.memoryStorage() });
 const vulnUpload = multer({
   storage: multer.memoryStorage(),
   limits:  { fileSize: 100 * 1024 * 1024 },
+});
+// Pentest finding evidence screenshots — images only, kept small enough to embed
+// comfortably in a Word document.
+const evidenceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: 4 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^image\/(png|jpeg)$/.test(file.mimetype)) return cb(null, true);
+    cb(new Error('Only PNG and JPEG images are accepted.'));
+  },
 });
 
 const rateLimit = require('express-rate-limit');
@@ -2951,12 +2962,326 @@ app.post('/api/redteam/projects/:id/findings', async (req, res) => {
     if (severity !== undefined && !PENTEST_SEVERITIES.includes(severity)) return res.status(400).json({ error: 'invalid severity.' });
     if (status !== undefined && !PENTEST_STATUSES.includes(status)) return res.status(400).json({ error: 'invalid status.' });
 
+    const rep = parseReportFields(req.body);
+    if (rep.error) return res.status(400).json({ error: rep.error });
+
     const result = await pool.query(
-      `INSERT INTO pentest_findings (tenant_id, project_id, title, severity, description, recommendation, owner, due_date, status, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [project.tenant_id, project.id, title, severity || 'medium', description || '', recommendation || '', owner || '', due_date || null, status || 'open', notes || '', req.session.userId]
+      `INSERT INTO pentest_findings (tenant_id, project_id, title, severity, description, recommendation, owner, due_date, status, notes, created_by,
+                                     cvss_vector, cvss_score, classification, affected_endpoints, business_impact, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+      [project.tenant_id, project.id, title, severity || 'medium', description || '', recommendation || '', owner || '', due_date || null, status || 'open', notes || '', req.session.userId,
+       rep.cvss_vector, rep.cvss_score, rep.classification, rep.affected_endpoints, rep.business_impact, rep.sort_order]
     );
     res.json({ finding: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+// ── Red Team report generation ─────────────────────────────────────────────
+
+const CVSS_VECTOR_RE = /^CVSS:[234]\.\d\/[A-Z]{1,3}:[A-Z](\/[A-Z]{1,3}:[A-Z])*$/i;
+
+/**
+ * Validates and normalises the report-only fields shared by every pentest
+ * finding write path. Returns { error } or the coerced column values.
+ */
+function parseReportFields(b) {
+  const vector = String(b.cvss_vector || '').trim();
+  if (vector && !CVSS_VECTOR_RE.test(vector)) {
+    return { error: 'invalid CVSS vector — expected e.g. CVSS:4.0/AV:N/AC:L/...' };
+  }
+
+  let score = null;
+  if (b.cvss_score !== undefined && b.cvss_score !== null && String(b.cvss_score).trim() !== '') {
+    score = Number(b.cvss_score);
+    if (isNaN(score) || score < 0 || score > 10) {
+      return { error: 'cvss_score must be a number between 0 and 10.' };
+    }
+    score = Math.round(score * 10) / 10;
+  }
+
+  const order = parseInt(b.sort_order, 10);
+
+  return {
+    cvss_vector:        vector.slice(0, 160),
+    cvss_score:         score,
+    classification:     String(b.classification || '').trim().slice(0, 200),
+    affected_endpoints: String(b.affected_endpoints || ''),
+    business_impact:    String(b.business_impact || ''),
+    sort_order:         isNaN(order) ? 0 : order,
+  };
+}
+
+/** Default narrative, used when an engagement has no saved report meta yet. */
+function defaultReportMeta(project) {
+  const name = project.title || 'the application';
+  return {
+    project_id:       project.id,
+    report_title:     project.title || '',
+    report_subtitle:  'Web Application Penetration Test Report',
+    report_version:   'v1.0',
+    report_date:      null,
+    exec_summary:
+      `Reflex conducted a black-box, unauthenticated web application penetration test of ${name} to `
+      + 'assess its externally observable security posture and identify exploitable vulnerabilities from '
+      + 'the perspective of an unauthenticated attacker.\n\n'
+      + 'The assessment focused on vulnerabilities that could be identified and exploited without valid '
+      + 'user credentials, including weaknesses in exposed functionality, access controls, input handling, '
+      + 'and application security configuration.\n\n'
+      + 'Exploitation could result in sensitive data exposure, disruption to critical systems, regulatory '
+      + 'non-compliance, and reputational harm.',
+    key_risk_themes: '',
+    approach:
+      `Reflex performed a black-box web application penetration test of ${name}. The assessment focused on `
+      + 'identifying critical, high, and medium-risk vulnerabilities that could be discovered from an '
+      + 'external, unauthenticated perspective within the agreed timeframe.\n\n'
+      + 'This report summarises the scope, key findings, business risks, and recommended remediation actions.',
+    scope_objectives:
+      `The assessment simulated an external black-box web application penetration test of ${name} to identify `
+      + "weaknesses that could be discovered and exploited without prior knowledge of the application's "
+      + 'internal design or architecture. The objective was to identify exploitable vulnerabilities and '
+      + 'misconfigurations that could lead to unauthorised access, data exposure, or disruption.\n\n'
+      + 'Testing prioritised commonly exploited web application vulnerabilities and attack techniques '
+      + 'relevant to unauthenticated external users. The detailed scope of the assessment is contained '
+      + 'within Appendix A.',
+    findings_summary:
+      "Overall, the external-facing infrastructure and application security posture were assessed as "
+      + 'adequate, with several opportunities for improvement to better align with leading cybersecurity '
+      + 'practices. Remediation of the high and medium-risk findings should be prioritised.',
+    mitigating_factors: '',
+    attack_paths_intro:
+      'The diagrams below present hypothetical scenarios. The leftmost node represents the target asset or '
+      + 'objective, with nodes to the right representing identified or theoretical weaknesses.',
+    attack_paths_narrative: '',
+    next_steps:
+      'Regular assessments help validate hardening standards, detect control drift over time, and identify '
+      + 'new vulnerabilities. Reflex recommends conducting penetration testing at least bi-annually.\n\n'
+      + 'Additional testing should be performed following deployment of new software or major feature '
+      + 'updates to ensure the security posture is maintained.',
+    scope_endpoints: project.scope || '',
+    methodology:     'The assessment was conducted using a black-box methodology.',
+    timeline_note:   '',
+    delivery_team:   [],
+    owasp_results:   DEFAULT_OWASP,
+    updated_at:      null,
+  };
+}
+
+const REPORT_META_TEXT_FIELDS = [
+  'report_title', 'report_subtitle', 'report_version', 'exec_summary', 'key_risk_themes',
+  'approach', 'scope_objectives', 'findings_summary', 'mitigating_factors',
+  'attack_paths_intro', 'attack_paths_narrative', 'next_steps', 'scope_endpoints',
+  'methodology', 'timeline_note',
+];
+
+/** GET /api/redteam/projects/:id/report-meta — saved narrative, or pre-filled defaults */
+app.get('/api/redteam/projects/:id/report-meta', requireAuth, async (req, res) => {
+  try {
+    const { project, error } = await resolveProjectForTenantAccess(req);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query('SELECT * FROM redteam_report_meta WHERE project_id=$1', [project.id]);
+    if (result.rows.length === 0) {
+      return res.json({ meta: defaultReportMeta(project), isDefault: true });
+    }
+    res.json({ meta: result.rows[0], isDefault: false });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PUT /api/redteam/projects/:id/report-meta — upsert the narrative */
+app.put('/api/redteam/projects/:id/report-meta', async (req, res) => {
+  try {
+    const { project, error } = await resolveProjectForTenantAccess(req);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const b = req.body || {};
+    const text = REPORT_META_TEXT_FIELDS.map((f) => String(b[f] == null ? '' : b[f]));
+    const team = Array.isArray(b.delivery_team)
+      ? b.delivery_team
+          .filter((t) => t && (t.name || t.role))
+          .map((t) => ({ name: String(t.name || '').slice(0, 200), role: String(t.role || '').slice(0, 200) }))
+      : [];
+    const owasp = Array.isArray(b.owasp_results) && b.owasp_results.length
+      ? b.owasp_results.map((o) => ({
+          id:     String(o.id || ''),
+          title:  String(o.title || ''),
+          result: String(o.result || 'Pass') === 'Pass' ? 'Pass' : 'Issues Identified',
+        }))
+      : DEFAULT_OWASP;
+
+    const result = await pool.query(
+      `INSERT INTO redteam_report_meta
+         (project_id, tenant_id, report_title, report_subtitle, report_version, exec_summary,
+          key_risk_themes, approach, scope_objectives, findings_summary, mitigating_factors,
+          attack_paths_intro, attack_paths_narrative, next_steps, scope_endpoints, methodology,
+          timeline_note, report_date, delivery_team, owasp_results, updated_by, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,NOW())
+       ON CONFLICT (project_id) DO UPDATE SET
+         tenant_id=EXCLUDED.tenant_id, report_title=EXCLUDED.report_title,
+         report_subtitle=EXCLUDED.report_subtitle, report_version=EXCLUDED.report_version,
+         exec_summary=EXCLUDED.exec_summary, key_risk_themes=EXCLUDED.key_risk_themes,
+         approach=EXCLUDED.approach, scope_objectives=EXCLUDED.scope_objectives,
+         findings_summary=EXCLUDED.findings_summary, mitigating_factors=EXCLUDED.mitigating_factors,
+         attack_paths_intro=EXCLUDED.attack_paths_intro,
+         attack_paths_narrative=EXCLUDED.attack_paths_narrative, next_steps=EXCLUDED.next_steps,
+         scope_endpoints=EXCLUDED.scope_endpoints, methodology=EXCLUDED.methodology,
+         timeline_note=EXCLUDED.timeline_note, report_date=EXCLUDED.report_date,
+         delivery_team=EXCLUDED.delivery_team, owasp_results=EXCLUDED.owasp_results,
+         updated_by=EXCLUDED.updated_by, updated_at=NOW()
+       RETURNING *`,
+      [project.id, project.tenant_id, ...text, b.report_date || null,
+       JSON.stringify(team), JSON.stringify(owasp), req.session.userId]
+    );
+    res.json({ meta: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * Resolves a finding via its parent engagement so evidence inherits the same
+ * tenant check as everything else hanging off a project.
+ */
+async function resolveFindingForTenantAccess(req, findingId) {
+  const found = await pool.query('SELECT * FROM pentest_findings WHERE id=$1', [findingId]);
+  if (found.rows.length === 0) return { error: { status: 404, message: 'Finding not found.' } };
+  const finding = found.rows[0];
+
+  if (req.session.role !== 'superadmin' && finding.tenant_id !== req.session.tenantId) {
+    return { error: { status: 403, message: 'You do not have access to this finding.' } };
+  }
+  return { finding };
+}
+
+/** GET /api/redteam/findings/:id/evidence — metadata only, never the bytes */
+app.get('/api/redteam/findings/:id/evidence', requireAuth, async (req, res) => {
+  try {
+    const { error } = await resolveFindingForTenantAccess(req, req.params.id);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      `SELECT id, finding_id, mime, filename, caption, sort_order, width_px, height_px, created_at
+         FROM pentest_finding_evidence WHERE finding_id=$1 ORDER BY sort_order, id`,
+      [req.params.id]
+    );
+    res.json({ evidence: result.rows });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/redteam/findings/:id/evidence — upload a screenshot */
+app.post('/api/redteam/findings/:id/evidence', (req, res) => {
+  evidenceUpload.single('file')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      const tooBig = uploadErr.code === 'LIMIT_FILE_SIZE';
+      return res.status(400).json({ error: tooBig ? 'Image must be 4 MB or smaller.' : uploadErr.message });
+    }
+    try {
+      const { error } = await resolveFindingForTenantAccess(req, req.params.id);
+      if (error) return res.status(error.status).json({ error: error.message });
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+
+      const dims = imageDimensions(req.file.buffer, req.file.mimetype);
+      const next = await pool.query(
+        'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM pentest_finding_evidence WHERE finding_id=$1',
+        [req.params.id]
+      );
+
+      const result = await pool.query(
+        `INSERT INTO pentest_finding_evidence (finding_id, mime, filename, caption, sort_order, width_px, height_px, data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         RETURNING id, finding_id, mime, filename, caption, sort_order, width_px, height_px, created_at`,
+        [req.params.id, req.file.mimetype, String(req.file.originalname || '').slice(0, 255),
+         String(req.body.caption || '').slice(0, 300), next.rows[0].n, dims.width, dims.height, req.file.buffer]
+      );
+      res.json({ evidence: result.rows[0] });
+    } catch (err) { return serverError(res, err); }
+  });
+});
+
+/** GET /api/redteam/evidence/:eid — the image bytes, for modal previews */
+app.get('/api/redteam/evidence/:eid', requireAuth, async (req, res) => {
+  try {
+    const row = await pool.query('SELECT * FROM pentest_finding_evidence WHERE id=$1', [req.params.eid]);
+    if (row.rows.length === 0) return res.status(404).json({ error: 'Evidence not found.' });
+
+    const { error } = await resolveFindingForTenantAccess(req, row.rows[0].finding_id);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    res.set('Content-Type', row.rows[0].mime);
+    res.set('Cache-Control', 'private, max-age=300');
+    res.send(row.rows[0].data);
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PUT /api/redteam/evidence/:eid — caption only; the bytes are immutable */
+app.put('/api/redteam/evidence/:eid', async (req, res) => {
+  try {
+    const row = await pool.query('SELECT finding_id FROM pentest_finding_evidence WHERE id=$1', [req.params.eid]);
+    if (row.rows.length === 0) return res.status(404).json({ error: 'Evidence not found.' });
+
+    const { error } = await resolveFindingForTenantAccess(req, row.rows[0].finding_id);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      `UPDATE pentest_finding_evidence SET caption=$1 WHERE id=$2
+       RETURNING id, finding_id, mime, filename, caption, sort_order, width_px, height_px, created_at`,
+      [String(req.body.caption || '').slice(0, 300), req.params.eid]
+    );
+    res.json({ evidence: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/redteam/evidence/:eid */
+app.delete('/api/redteam/evidence/:eid', async (req, res) => {
+  try {
+    const row = await pool.query('SELECT finding_id FROM pentest_finding_evidence WHERE id=$1', [req.params.eid]);
+    if (row.rows.length === 0) return res.status(404).json({ error: 'Evidence not found.' });
+
+    const { error } = await resolveFindingForTenantAccess(req, row.rows[0].finding_id);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    await pool.query('DELETE FROM pentest_finding_evidence WHERE id=$1', [req.params.eid]);
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/redteam/projects/:id/report.docx — the client deliverable */
+app.get('/api/redteam/projects/:id/report.docx', requireAuth, async (req, res) => {
+  try {
+    const { project, error } = await resolveProjectForTenantAccess(req);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const metaRow = await pool.query('SELECT * FROM redteam_report_meta WHERE project_id=$1', [project.id]);
+    const meta = metaRow.rows[0] || defaultReportMeta(project);
+
+    const findingsRow = await pool.query(
+      `SELECT * FROM pentest_findings WHERE project_id=$1
+       ORDER BY sort_order, cvss_score DESC NULLS LAST, id`,
+      [project.id]
+    );
+    const findings = findingsRow.rows;
+
+    const evidenceByFinding = {};
+    if (findings.length) {
+      const evRows = await pool.query(
+        `SELECT * FROM pentest_finding_evidence WHERE finding_id = ANY($1::int[]) ORDER BY sort_order, id`,
+        [findings.map((f) => f.id)]
+      );
+      for (const ev of evRows.rows) {
+        (evidenceByFinding[ev.finding_id] = evidenceByFinding[ev.finding_id] || []).push(ev);
+      }
+    }
+
+    let logoBuffer = null;
+    try { logoBuffer = fs.readFileSync(path.join(PUBLIC, 'img', 'reflex-logo.png')); } catch (_) { /* optional */ }
+
+    const buffer = await buildPentestReport({ project, meta, findings, evidenceByFinding, logoBuffer });
+
+    const safe = String(meta.report_title || project.title || 'Penetration-Test')
+      .replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'Penetration-Test';
+    const filename = `${safe}-Penetration-Test-Report-${meta.report_version || 'v1.0'}.docx`;
+
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.set('Content-Disposition', `attachment; filename="${filename}"`);
+    res.set('Content-Length', buffer.length);
+    res.send(buffer);
   } catch (err) { return serverError(res, err); }
 });
 
@@ -3441,10 +3766,15 @@ app.post('/api/pentest-findings', async (req, res) => {
     if (severity !== undefined && !PENTEST_SEVERITIES.includes(severity)) return res.status(400).json({ error: 'invalid severity.' });
     if (status !== undefined && !PENTEST_STATUSES.includes(status)) return res.status(400).json({ error: 'invalid status.' });
 
+    const rep = parseReportFields(req.body);
+    if (rep.error) return res.status(400).json({ error: rep.error });
+
     const result = await pool.query(
-      `INSERT INTO pentest_findings (tenant_id, project_id, title, severity, description, recommendation, owner, due_date, status, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [tenantId, project_id || null, title, severity || 'medium', description || '', recommendation || '', owner || '', due_date || null, status || 'open', notes || '', req.session.userId]
+      `INSERT INTO pentest_findings (tenant_id, project_id, title, severity, description, recommendation, owner, due_date, status, notes, created_by,
+                                     cvss_vector, cvss_score, classification, affected_endpoints, business_impact, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+      [tenantId, project_id || null, title, severity || 'medium', description || '', recommendation || '', owner || '', due_date || null, status || 'open', notes || '', req.session.userId,
+       rep.cvss_vector, rep.cvss_score, rep.classification, rep.affected_endpoints, rep.business_impact, rep.sort_order]
     );
     res.json({ finding: result.rows[0] });
   } catch (err) { return serverError(res, err); }
@@ -3461,13 +3791,28 @@ app.put('/api/pentest-findings/:id', async (req, res) => {
     if (severity !== undefined && !PENTEST_SEVERITIES.includes(severity)) return res.status(400).json({ error: 'invalid severity.' });
     if (status !== undefined && !PENTEST_STATUSES.includes(status)) return res.status(400).json({ error: 'invalid status.' });
 
+    const rep = parseReportFields(req.body);
+    if (rep.error) return res.status(400).json({ error: rep.error });
+
+    // Callers that know nothing about the report fields (e.g. the Remediation
+    // Tracker) must not blank them out, so only write them when they were sent.
+    const REPORT_KEYS = ['cvss_vector', 'cvss_score', 'classification', 'affected_endpoints', 'business_impact', 'sort_order'];
+    const sendsReportFields = REPORT_KEYS.some((k) => req.body[k] !== undefined);
+    const params = [title, severity || 'medium', description || '', recommendation || '', owner || '', due_date || null, status || 'open', notes || '', project_id || null, req.params.id, tenantId];
+    let reportSet = '';
+    if (sendsReportFields) {
+      reportSet = `, cvss_vector=$12, cvss_score=$13, classification=$14, affected_endpoints=$15,
+                     business_impact=$16, sort_order=$17`;
+      params.push(rep.cvss_vector, rep.cvss_score, rep.classification, rep.affected_endpoints, rep.business_impact, rep.sort_order);
+    }
+
     const result = await pool.query(
       `UPDATE pentest_findings
        SET title=$1, severity=$2, description=$3, recommendation=$4, owner=$5, due_date=$6, status=$7, notes=$8,
-           project_id=$9, updated_at=NOW(),
+           project_id=$9, updated_at=NOW()${reportSet},
            status_updated_at = CASE WHEN $7::varchar IS DISTINCT FROM status THEN NOW() ELSE status_updated_at END
        WHERE id=$10 AND tenant_id=$11 RETURNING *`,
-      [title, severity || 'medium', description || '', recommendation || '', owner || '', due_date || null, status || 'open', notes || '', project_id || null, req.params.id, tenantId]
+      params
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Finding not found.' });
     res.json({ finding: result.rows[0] });

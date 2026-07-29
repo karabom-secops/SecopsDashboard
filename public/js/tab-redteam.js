@@ -257,6 +257,7 @@ const RedteamTab = (() => {
   async function selectProject(id) {
     _selectedId = id;
     renderProjects();
+    updateReportControls();
     await loadTasks(id);
     await loadFindings(id);
   }
@@ -344,28 +345,43 @@ const RedteamTab = (() => {
     try {
       const res  = await fetch(`api/redteam/projects/${projectId}/findings`, { credentials: 'same-origin' });
       const data = await res.json();
-      _findings = data.findings || [];
+      // Sorted the same way the report numbers them, so the Ref column matches.
+      _findings = (data.findings || []).sort(compareForReport);
       renderFindings();
     } catch (_) {
       _findings = [];
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Failed to load findings.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Failed to load findings.</td></tr>';
     }
+  }
+
+  /** Mirrors the ORDER BY on GET /api/redteam/projects/:id/report.docx. */
+  function compareForReport(a, b) {
+    const ao = parseInt(a.sort_order, 10) || 0;
+    const bo = parseInt(b.sort_order, 10) || 0;
+    if (ao !== bo) return ao - bo;
+    const as = a.cvss_score == null ? -1 : Number(a.cvss_score);
+    const bs = b.cvss_score == null ? -1 : Number(b.cvss_score);
+    if (as !== bs) return bs - as;
+    return a.id - b.id;
   }
 
   function renderFindings() {
     const tbody = document.getElementById('redteam-findings-tbody');
     if (!tbody) return;
     if (_findings.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No findings for this engagement.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No findings for this engagement.</td></tr>';
       return;
     }
-    tbody.innerHTML = _findings.map(f => {
+    tbody.innerHTML = _findings.map((f, i) => {
       const adminBtns = isAdmin() ? `
         <button class="btn btn-sm btn-secondary rt-edit-finding" data-id="${f.id}">Edit</button>
         <button class="btn btn-sm btn-danger rt-del-finding"  data-id="${f.id}">Delete</button>` : '';
+      const score = f.cvss_score == null || f.cvss_score === '' ? '—' : Number(f.cvss_score).toFixed(1);
       return `<tr>
+        <td>${String(i + 1).padStart(3, '0')}</td>
         <td>${esc(f.title)}</td>
         <td>${esc(f.severity)}</td>
+        <td>${score}</td>
         <td>${esc(f.owner) || '—'}</td>
         <td>${fmt(f.due_date)}</td>
         <td><span class="role-badge ${FINDING_STATUS_BADGE[f.status]||''}">${esc(f.status)}</span></td>
@@ -420,9 +436,99 @@ const RedteamTab = (() => {
     form.querySelector('#rt-finding-status').value          = finding ? finding.status : 'open';
     form.querySelector('#rt-finding-notes').value           = finding ? finding.notes : '';
 
+    form.querySelector('#rt-finding-classification').value  = finding ? (finding.classification || '') : '';
+    form.querySelector('#rt-finding-cvss-vector').value     = finding ? (finding.cvss_vector || '') : '';
+    form.querySelector('#rt-finding-cvss-score').value      = finding && finding.cvss_score != null ? finding.cvss_score : '';
+    form.querySelector('#rt-finding-endpoints').value       = finding ? (finding.affected_endpoints || '') : '';
+    form.querySelector('#rt-finding-business-impact').value = finding ? (finding.business_impact || '') : '';
+    form.querySelector('#rt-finding-sort').value            = finding ? (finding.sort_order || 0) : _findings.length;
+
+    // Evidence needs a finding row to hang off, so it only appears when editing.
+    document.getElementById('rt-finding-evidence-new').hidden  = !!editId;
+    document.getElementById('rt-finding-evidence-wrap').hidden = !editId;
+    document.getElementById('rt-finding-evidence-file').value  = '';
+    if (editId) loadEvidence(editId);
+
     document.getElementById('rt-finding-modal-title').textContent = editId ? 'Edit Finding' : 'New Finding';
     document.getElementById('rt-finding-modal-delete').hidden = !editId;
     modal.hidden = false;
+  }
+
+  // ── Finding evidence ───────────────────────────────────────────────────────
+
+  async function loadEvidence(findingId) {
+    const list = document.getElementById('rt-finding-evidence-list');
+    if (!list) return;
+    list.innerHTML = '<p class="section-subtitle">Loading…</p>';
+    try {
+      const res  = await fetch(`api/redteam/findings/${findingId}/evidence`, { credentials: 'same-origin' });
+      const data = await res.json();
+      renderEvidence(data.evidence || []);
+    } catch (_) {
+      list.innerHTML = '<p class="section-subtitle">Failed to load evidence.</p>';
+    }
+  }
+
+  function renderEvidence(items) {
+    const list = document.getElementById('rt-finding-evidence-list');
+    if (!list) return;
+    if (items.length === 0) {
+      list.innerHTML = '<p class="section-subtitle">No evidence attached.</p>';
+      return;
+    }
+    list.innerHTML = items.map(ev => `
+      <div style="display:flex;gap:.75rem;align-items:flex-start;margin-bottom:.75rem">
+        <img src="api/redteam/evidence/${ev.id}" alt="${esc(ev.filename)}"
+             style="width:120px;border:1px solid var(--border);border-radius:6px">
+        <div style="flex:1;min-width:0">
+          <div class="section-subtitle" style="margin:0 0 .25rem;word-break:break-all">${esc(ev.filename)}</div>
+          <input class="form-input rt-ev-caption" data-id="${ev.id}" type="text"
+                 placeholder="Caption" value="${esc(ev.caption)}">
+        </div>
+        <button class="btn btn-sm btn-danger rt-ev-del" type="button" data-id="${ev.id}">Remove</button>
+      </div>`).join('');
+
+    list.querySelectorAll('.rt-ev-del').forEach(btn => {
+      btn.addEventListener('click', () => deleteEvidence(parseInt(btn.dataset.id, 10)));
+    });
+    // Captions save on blur so they survive closing the modal via Cancel.
+    list.querySelectorAll('.rt-ev-caption').forEach(input => {
+      input.addEventListener('blur', () => saveEvidenceCaption(parseInt(input.dataset.id, 10), input.value.trim()));
+    });
+  }
+
+  async function saveEvidenceCaption(id, caption) {
+    try {
+      await fetch(`api/redteam/evidence/${id}`, {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caption }),
+      });
+    } catch (_) { /* non-fatal — the image is still attached */ }
+  }
+
+  async function uploadEvidence(file) {
+    const findingId = document.getElementById('rt-finding-id').value;
+    if (!findingId || !file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await fetch(`api/redteam/findings/${findingId}/evidence`, {
+        method: 'POST', credentials: 'same-origin', body: fd,
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      document.getElementById('rt-finding-evidence-file').value = '';
+      await loadEvidence(findingId);
+    } catch (err) { alert('Upload failed: ' + err.message); }
+  }
+
+  async function deleteEvidence(id) {
+    if (!confirm('Remove this evidence image?')) return;
+    try {
+      const res = await fetch(`api/redteam/evidence/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+      if (!res.ok) throw new Error((await res.json()).error);
+      await loadEvidence(document.getElementById('rt-finding-id').value);
+    } catch (err) { alert('Delete failed: ' + err.message); }
   }
 
   async function saveFinding() {
@@ -437,6 +543,13 @@ const RedteamTab = (() => {
       due_date:       form.querySelector('#rt-finding-due').value || null,
       status:         form.querySelector('#rt-finding-status').value,
       notes:          form.querySelector('#rt-finding-notes').value.trim(),
+
+      classification:     form.querySelector('#rt-finding-classification').value.trim(),
+      cvss_vector:        form.querySelector('#rt-finding-cvss-vector').value.trim(),
+      cvss_score:         form.querySelector('#rt-finding-cvss-score').value,
+      affected_endpoints: form.querySelector('#rt-finding-endpoints').value.trim(),
+      business_impact:    form.querySelector('#rt-finding-business-impact').value.trim(),
+      sort_order:         form.querySelector('#rt-finding-sort').value,
     };
     if (!body.title) { alert('Title is required.'); return; }
 
@@ -455,6 +568,136 @@ const RedteamTab = (() => {
       document.getElementById('redteam-finding-modal').hidden = true;
       await loadFindings(_selectedId);
     } catch (err) { alert('Save failed: ' + err.message); }
+  }
+
+  // ── Client report ──────────────────────────────────────────────────────────
+
+  // Maps a report_meta text column to its input in #redteam-report-modal.
+  const REPORT_FIELDS = [
+    ['report_title',           'rt-report-title'],
+    ['report_subtitle',        'rt-report-subtitle'],
+    ['report_version',         'rt-report-version'],
+    ['exec_summary',           'rt-report-exec-summary'],
+    ['key_risk_themes',        'rt-report-key-risk-themes'],
+    ['approach',               'rt-report-approach'],
+    ['scope_objectives',       'rt-report-scope-objectives'],
+    ['findings_summary',       'rt-report-findings-summary'],
+    ['mitigating_factors',     'rt-report-mitigating-factors'],
+    ['attack_paths_intro',     'rt-report-attack-paths-intro'],
+    ['attack_paths_narrative', 'rt-report-attack-paths-narrative'],
+    ['next_steps',             'rt-report-next-steps'],
+    ['scope_endpoints',        'rt-report-scope-endpoints'],
+    ['methodology',            'rt-report-methodology'],
+    ['timeline_note',          'rt-report-timeline'],
+  ];
+
+  function updateReportControls() {
+    const proj    = _projects.find(p => p.id === _selectedId);
+    const heading = document.getElementById('redteam-report-heading');
+    const hint    = document.getElementById('redteam-report-hint');
+    const btnGen  = document.getElementById('rt-btn-generate-report');
+    const btnMeta = document.getElementById('rt-btn-report-details');
+
+    if (heading) heading.textContent = proj ? `Client Report — ${proj.title}` : 'Client Report';
+    if (hint) {
+      hint.hidden = !!proj;
+      hint.textContent = 'Select an engagement to generate its penetration test report.';
+    }
+    if (btnGen)  btnGen.disabled  = !proj;
+    if (btnMeta) btnMeta.disabled = !proj;
+  }
+
+  async function openReportModal() {
+    if (!_selectedId) { alert('Select an engagement first.'); return; }
+    const modal = document.getElementById('redteam-report-modal');
+    if (!modal) return;
+
+    let meta = {};
+    try {
+      const res  = await fetch(`api/redteam/projects/${_selectedId}/report-meta`, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error((await res.json()).error);
+      meta = (await res.json()).meta || {};
+    } catch (err) { alert('Failed to load report details: ' + err.message); return; }
+
+    REPORT_FIELDS.forEach(([key, id]) => {
+      const el = document.getElementById(id);
+      if (el) el.value = meta[key] || '';
+    });
+    const dateEl = document.getElementById('rt-report-date');
+    if (dateEl) dateEl.value = meta.report_date ? String(meta.report_date).slice(0, 10) : '';
+
+    renderOwaspRows(meta.owasp_results || []);
+    renderTeamRows(meta.delivery_team || []);
+    modal.hidden = false;
+  }
+
+  function renderOwaspRows(results) {
+    const wrap = document.getElementById('rt-report-owasp');
+    if (!wrap) return;
+    wrap.innerHTML = results.map((r, i) => `
+      <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem">
+        <span style="flex:1;font-size:.85rem">${esc(r.id)} – ${esc(r.title)}</span>
+        <select class="form-select rt-owasp-result" data-i="${i}" style="width:170px">
+          <option value="Pass"${r.result === 'Pass' ? ' selected' : ''}>Pass</option>
+          <option value="Issues Identified"${r.result !== 'Pass' ? ' selected' : ''}>Issues Identified</option>
+        </select>
+      </div>`).join('');
+    // Ids/titles are fixed by the framework — stash them for the save payload.
+    wrap.dataset.rows = JSON.stringify(results.map(r => ({ id: r.id, title: r.title })));
+  }
+
+  function renderTeamRows(team) {
+    const wrap = document.getElementById('rt-report-team');
+    if (!wrap) return;
+    const rows = team.length ? team : [{ name: '', role: '' }];
+    wrap.innerHTML = rows.map(t => `
+      <div class="rt-team-row" style="display:flex;gap:.5rem;margin-bottom:.4rem">
+        <input class="form-input rt-team-name" type="text" placeholder="Name" value="${esc(t.name)}">
+        <input class="form-input rt-team-role" type="text" placeholder="Role" value="${esc(t.role)}">
+        <button class="btn btn-sm btn-danger rt-team-del" type="button">&times;</button>
+      </div>`).join('');
+    wrap.querySelectorAll('.rt-team-del').forEach(btn => {
+      btn.addEventListener('click', () => btn.closest('.rt-team-row').remove());
+    });
+  }
+
+  async function saveReportMeta() {
+    const body = {};
+    REPORT_FIELDS.forEach(([key, id]) => {
+      const el = document.getElementById(id);
+      body[key] = el ? el.value : '';
+    });
+    body.report_date = document.getElementById('rt-report-date').value || null;
+
+    const owaspWrap = document.getElementById('rt-report-owasp');
+    const base = JSON.parse(owaspWrap.dataset.rows || '[]');
+    body.owasp_results = Array.from(owaspWrap.querySelectorAll('.rt-owasp-result')).map((sel, i) => ({
+      id:     base[i] ? base[i].id : '',
+      title:  base[i] ? base[i].title : '',
+      result: sel.value,
+    }));
+
+    body.delivery_team = Array.from(document.querySelectorAll('.rt-team-row')).map(row => ({
+      name: row.querySelector('.rt-team-name').value.trim(),
+      role: row.querySelector('.rt-team-role').value.trim(),
+    })).filter(t => t.name || t.role);
+
+    try {
+      const res = await fetch(`api/redteam/projects/${_selectedId}/report-meta`, {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      document.getElementById('redteam-report-modal').hidden = true;
+    } catch (err) { alert('Save failed: ' + err.message); }
+  }
+
+  function generateReport() {
+    if (!_selectedId) { alert('Select an engagement first.'); return; }
+    // A plain navigation lets the browser honour Content-Disposition and carries
+    // the session cookie, same as the CSV exports elsewhere in the dashboard.
+    window.location.href = `api/redteam/projects/${_selectedId}/report.docx`;
   }
 
   // ── Tenants (for project → tenant linking) ─────────────────────────────────
@@ -631,6 +874,36 @@ const RedteamTab = (() => {
       document.getElementById('redteam-finding-modal').hidden = true;
     });
 
+    document.getElementById('rt-finding-evidence-file')?.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) uploadEvidence(e.target.files[0]);
+    });
+
+    // Report controls — generating is a read action, editing the narrative is not.
+    document.getElementById('rt-btn-generate-report')?.addEventListener('click', generateReport);
+
+    const btnReportMeta = document.getElementById('rt-btn-report-details');
+    if (btnReportMeta) {
+      if (!isAdmin()) btnReportMeta.hidden = true;
+      else btnReportMeta.addEventListener('click', openReportModal);
+    }
+
+    document.getElementById('rt-report-modal-close')?.addEventListener('click', () => {
+      document.getElementById('redteam-report-modal').hidden = true;
+    });
+    document.getElementById('rt-report-modal-close-2')?.addEventListener('click', () => {
+      document.getElementById('redteam-report-modal').hidden = true;
+    });
+    document.getElementById('rt-report-modal-save')?.addEventListener('click', saveReportMeta);
+    document.getElementById('rt-report-team-add')?.addEventListener('click', () => {
+      const wrap = document.getElementById('rt-report-team');
+      const rows = Array.from(wrap.querySelectorAll('.rt-team-row')).map(r => ({
+        name: r.querySelector('.rt-team-name').value,
+        role: r.querySelector('.rt-team-role').value,
+      }));
+      rows.push({ name: '', role: '' });
+      renderTeamRows(rows);
+    });
+
     document.getElementById('rt-proj-client')?.addEventListener('blur', (e) => {
       autoMatchTenantByClient(e.target.value);
     });
@@ -655,6 +928,7 @@ const RedteamTab = (() => {
     await renderStats();
     renderCalendar();
     renderProjects();
+    updateReportControls();
 
     if (_selectedId) {
       await loadTasks(_selectedId);
@@ -668,7 +942,7 @@ const RedteamTab = (() => {
       const fTbody   = document.getElementById('redteam-findings-tbody');
       const fHeading = document.getElementById('redteam-findings-heading');
       if (fHeading) fHeading.textContent = 'Findings';
-      if (fTbody)   fTbody.innerHTML = '<tr><td colspan="6" class="empty-state">Select an engagement to view findings.</td></tr>';
+      if (fTbody)   fTbody.innerHTML = '<tr><td colspan="8" class="empty-state">Select an engagement to view findings.</td></tr>';
     }
   }
 

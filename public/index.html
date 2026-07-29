@@ -616,15 +616,25 @@
       <table class="data-table" style="width:100%">
         <thead>
           <tr>
-            <th>Title</th><th>Severity</th><th>Owner</th><th>Due Date</th>
+            <th>Ref</th><th>Title</th><th>Severity</th><th>CVSS</th><th>Owner</th><th>Due Date</th>
             <th>Status</th><th>Actions</th>
           </tr>
         </thead>
         <tbody id="redteam-findings-tbody">
-          <tr><td colspan="6" class="empty-state">Select an engagement to view findings.</td></tr>
+          <tr><td colspan="8" class="empty-state">Select an engagement to view findings.</td></tr>
         </tbody>
       </table>
     </div>
+
+    <!-- Client report -->
+    <div class="section-heading-row" style="margin:2rem 0 .75rem">
+      <h3 id="redteam-report-heading" style="margin:0;font-size:1rem;font-weight:600">Client Report</h3>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn btn-secondary btn-sm" id="rt-btn-report-details" disabled>Report Details</button>
+        <button class="btn btn-primary btn-sm" id="rt-btn-generate-report" disabled>Generate Report (.docx)</button>
+      </div>
+    </div>
+    <p id="redteam-report-hint" class="section-subtitle">Select an engagement to generate its penetration test report.</p>
 
     <!-- Project Modal -->
     <div id="redteam-project-modal" class="modal-overlay" hidden>
@@ -746,12 +756,45 @@
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label" for="rt-finding-description">Description</label>
-            <textarea class="form-textarea" id="rt-finding-description" rows="3"></textarea>
+            <label class="form-label" for="rt-finding-classification">Classification</label>
+            <input class="form-input" id="rt-finding-classification" type="text" placeholder="High – Sensitive Data Exposure">
           </div>
           <div class="form-group">
-            <label class="form-label" for="rt-finding-recommendation">Recommendation</label>
-            <textarea class="form-textarea" id="rt-finding-recommendation" rows="3"></textarea>
+            <label class="form-label" for="rt-finding-cvss-vector">CVSS Vector</label>
+            <input class="form-input" id="rt-finding-cvss-vector" type="text" placeholder="CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-finding-cvss-score">CVSS Score</label>
+            <input class="form-input" id="rt-finding-cvss-score" type="number" min="0" max="10" step="0.1" placeholder="8.6">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-finding-endpoints">Affected Endpoints <span class="form-hint">(one per line)</span></label>
+            <textarea class="form-textarea" id="rt-finding-endpoints" rows="2" placeholder="https://example.co.za"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-finding-description">Description</label>
+            <textarea class="form-textarea" id="rt-finding-description" rows="5"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-finding-business-impact">Business Impact <span class="form-hint">(one bullet per line)</span></label>
+            <textarea class="form-textarea" id="rt-finding-business-impact" rows="4"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-finding-recommendation">Remediation Steps <span class="form-hint">(one bullet per line)</span></label>
+            <textarea class="form-textarea" id="rt-finding-recommendation" rows="4"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Screenshot / Evidence</label>
+            <div id="rt-finding-evidence-new" class="section-subtitle">Save the finding first, then reopen it to attach evidence.</div>
+            <div id="rt-finding-evidence-wrap" hidden>
+              <input type="file" id="rt-finding-evidence-file" accept="image/png,image/jpeg">
+              <p class="section-subtitle" style="margin:.25rem 0 .5rem">PNG or JPEG, up to 4 MB each.</p>
+              <div id="rt-finding-evidence-list"></div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-finding-sort">Report Order</label>
+            <input class="form-input" id="rt-finding-sort" type="number" step="1" value="0">
           </div>
           <div class="form-group">
             <label class="form-label" for="rt-finding-owner">Owner</label>
@@ -780,6 +823,104 @@
           <button class="btn btn-danger" id="rt-finding-modal-delete" hidden>Delete</button>
           <button class="btn btn-secondary" id="rt-finding-modal-close-2">Cancel</button>
           <button class="btn btn-primary" id="rt-finding-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Report Details Modal -->
+    <div id="redteam-report-modal" class="modal-overlay" hidden>
+      <div class="modal-box" style="max-width:760px">
+        <div class="modal-header">
+          <h3 class="modal-title">Report Details</h3>
+          <button class="modal-close" id="rt-report-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <form id="rt-report-form" onsubmit="return false">
+          <p class="section-subtitle" style="margin:0">
+            These sections become the narrative of the generated Word report. Blank lines start a new
+            paragraph; lines beginning with <code>-</code> become bullets.
+          </p>
+
+          <div class="form-group">
+            <label class="form-label" for="rt-report-title">Report Title</label>
+            <input class="form-input" id="rt-report-title" type="text">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-subtitle">Report Subtitle</label>
+            <input class="form-input" id="rt-report-subtitle" type="text">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-version">Version</label>
+            <input class="form-input" id="rt-report-version" type="text" placeholder="v1.0">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-date">Report Date</label>
+            <input class="form-input" id="rt-report-date" type="date">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="rt-report-exec-summary">1. Executive Summary</label>
+            <textarea class="form-textarea" id="rt-report-exec-summary" rows="6"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-key-risk-themes">Key Risk Themes <span class="form-hint">(one bullet per line)</span></label>
+            <textarea class="form-textarea" id="rt-report-key-risk-themes" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-approach">2. Approach</label>
+            <textarea class="form-textarea" id="rt-report-approach" rows="4"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-scope-objectives">3. Scope and Objectives</label>
+            <textarea class="form-textarea" id="rt-report-scope-objectives" rows="4"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-findings-summary">5. Summary of Findings</label>
+            <textarea class="form-textarea" id="rt-report-findings-summary" rows="4"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">6. OWASP Top 10 Results</label>
+            <div id="rt-report-owasp"></div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="rt-report-mitigating-factors">7. Mitigating Factors</label>
+            <textarea class="form-textarea" id="rt-report-mitigating-factors" rows="4"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-attack-paths-intro">8. Attack Paths — Intro</label>
+            <textarea class="form-textarea" id="rt-report-attack-paths-intro" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-attack-paths-narrative">8. Attack Paths — Narrative</label>
+            <textarea class="form-textarea" id="rt-report-attack-paths-narrative" rows="4"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-next-steps">9. Recommended Next Steps</label>
+            <textarea class="form-textarea" id="rt-report-next-steps" rows="4"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="rt-report-scope-endpoints">Appendix A — Scope Endpoints <span class="form-hint">(one per line)</span></label>
+            <textarea class="form-textarea" id="rt-report-scope-endpoints" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-methodology">Appendix A — Methodology</label>
+            <textarea class="form-textarea" id="rt-report-methodology" rows="2"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Appendix A — Delivery Team</label>
+            <div id="rt-report-team"></div>
+            <button class="btn btn-sm btn-secondary" id="rt-report-team-add" type="button" style="margin-top:.5rem">+ Add Member</button>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="rt-report-timeline">Appendix A — Timeline</label>
+            <textarea class="form-textarea" id="rt-report-timeline" rows="2"></textarea>
+          </div>
+        </form>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="rt-report-modal-close-2">Cancel</button>
+          <button class="btn btn-primary" id="rt-report-modal-save">Save</button>
         </div>
       </div>
     </div>
