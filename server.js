@@ -2235,7 +2235,7 @@ const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 async function runScheduledSyncs() {
   let rows;
   try {
-    // SentinelOne is excluded — it runs on its own 30-minute cadence below.
+    // SentinelOne is excluded — it runs on its own 6-hourly cadence below.
     rows = (await pool.query(
       'SELECT tenant_id, provider FROM integrations WHERE is_enabled = TRUE AND provider <> $1',
       [EDR_PROVIDER]
@@ -2283,11 +2283,12 @@ async function runScheduledSyncs() {
 setTimeout(() => { runScheduledSyncs().catch(err => console.error('[integrations] scheduled sync crashed —', err.message)); }, 60 * 1000);
 setInterval(() => { runScheduledSyncs().catch(err => console.error('[integrations] scheduled sync crashed —', err.message)); }, SYNC_INTERVAL_MS);
 
-// ── Managed EDR sync (every 30 min) ────────────────────────────────────────
+// ── Managed EDR sync (every 6 hours) ───────────────────────────────────────
 // SentinelOne threat/activity data is operational rather than reporting-cadence,
-// so it polls far more often than the other integrations.
+// so it polls more often than the other integrations — but four times a day is
+// enough to keep the tab current without hammering the console API.
 
-const EDR_SYNC_INTERVAL_MS = 30 * 60 * 1000;
+const EDR_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let edrSyncRunning = false;
 
 async function runEdrSyncs() {

@@ -746,7 +746,7 @@
       id:       'sentinelone',
       name:     'SentinelOne',
       icon:     '🛡️',
-      desc:     'Managed EDR — syncs threats, console activity and endpoint fleet health every 30 minutes.',
+      desc:     'Managed EDR — syncs threats, console activity and endpoint fleet health every 6 hours.',
       urlLabel: 'Management Console URL',
       urlHint:  'e.g. https://euce1-101.sentinelone.net',
       scopeFields: true, // optional site / account scoping
