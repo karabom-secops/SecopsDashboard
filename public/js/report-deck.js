@@ -129,6 +129,16 @@ window.ReportDeck = (function () {
 '.tk-desc{color:' + P.DECK_MAROON + '}',
 '.tk-when{color:' + P.DECK_MUTED + ';white-space:nowrap;font-size:8.5pt}',
 
+/* remediation tracker — two side-by-side columns */
+'.rem-cols{display:grid;grid-template-columns:1fr 1fr;gap:9mm;align-items:start}',
+'.rem-col{min-width:0}',
+'.rem-h{font-size:12pt;font-weight:700;color:' + P.DECK_INK + ';margin:0 0 1mm}',
+'.rem-sub{font-size:8.5pt;color:' + P.DECK_MUTED + ';margin:0 0 2.5mm}',
+'.rem-empty{font-size:9.5pt;color:' + P.DECK_MUTED + ';font-style:italic;padding:3mm 0}',
+'.rem-more{font-size:8.5pt;color:' + P.DECK_MUTED + ';padding-top:1.5mm}',
+'.rem-src{font-size:7.5pt;font-weight:700;letter-spacing:.3pt;text-transform:uppercase;',
+'  color:' + P.DECK_MUTED + '}',
+
 /* recommendations */
 '.rec-list{display:flex;flex-direction:column;gap:4.5mm}',
 '.rec-item{display:flex;gap:4mm;background:#F7F9FB;border-radius:1.5mm;',

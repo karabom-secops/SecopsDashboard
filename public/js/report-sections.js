@@ -47,6 +47,17 @@ window.ReportSections = (function () {
     return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
   }
 
+  /** '15 Aug 2026' — accepts a DATE ('2026-08-15') or a full ISO timestamp. */
+  function fmtShortDate(value) {
+    if (!value) return '—';
+    var s = String(value);
+    var d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T00:00:00Z' : s);
+    if (isNaN(d.getTime())) return s;
+    return d.toLocaleDateString('en-GB', {
+      day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
+    });
+  }
+
   /** Compact large counts the way the reference deck does: 223000000 -> '223 M'. */
   function compactNumber(v) {
     var n = Number(v);
@@ -362,6 +373,158 @@ window.ReportSections = (function () {
     return html;
   }
 
+  // ── Remediation Tracker ───────────────────────────────────────────────────
+  // Left column: what was closed out during the reporting period.
+  // Right column: what is due in the month after it.
+  //
+  // Sources are the same combined payload the Remediation Tracker tab uses
+  // (/api/remediation-tracker): vuln findings, pentest findings and risks.
+  //
+  // NOTE: vuln_findings has no due_date column — only pentest_findings and risks
+  // carry a target date — so vulnerabilities can appear on the "remediated" side
+  // but never on the "scheduled" side. See the caveat rendered under that column.
+
+  var MAX_REMEDIATION_ROWS = 7;
+
+  /** 'YYYY-MM' of a timestamp, or null. */
+  function monthOf(ts) {
+    if (!ts) return null;
+    var s = String(ts);
+    return /^\d{4}-\d{2}/.test(s) ? s.slice(0, 7) : null;
+  }
+
+  /** Shift a 'YYYY-MM' period by n months. */
+  function shiftPeriod(period, n) {
+    var m = /^(\d{4})-(\d{2})$/.exec(period || '');
+    if (!m) return null;
+    var d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1 + n, 1));
+    return d.toISOString().slice(0, 7);
+  }
+
+  /** 'July 2026' from 'YYYY-MM'. */
+  function periodName(period) {
+    var m = /^(\d{4})-(\d{2})$/.exec(period || '');
+    if (!m) return period || '';
+    return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 1))
+      .toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  }
+
+  var CLOSED_PENTEST = { fixed: 1, accepted: 1, 'risk-accepted': 1 };
+
+  /** Vuln findings store 'Critical'; pentest findings store 'critical'. */
+  function titleCase(s) {
+    var str = String(s == null ? '' : s).trim();
+    return str ? str.charAt(0).toUpperCase() + str.slice(1).toLowerCase() : '';
+  }
+
+  function collectRemediated(data, period) {
+    var out = [];
+
+    (data.vulns || []).forEach(function (v) {
+      if (v.status !== 'fixed') return;
+      if (monthOf(v.statusUpdatedAt) !== period) return;
+      out.push({ source: 'Vuln', item: v.name, detail: v.host || v.cve || '',
+                 severity: v.risk || '', when: v.statusUpdatedAt });
+    });
+
+    (data.pentestFindings || []).forEach(function (f) {
+      if (f.status !== 'fixed') return;
+      if (monthOf(f.status_updated_at) !== period) return;
+      out.push({ source: 'Pentest', item: f.title, detail: f.owner || '',
+                 severity: f.severity || '', when: f.status_updated_at });
+    });
+
+    (data.risks || []).forEach(function (r) {
+      if (r.stage !== 'closed') return;
+      if (monthOf(r.closed_at) !== period) return;
+      out.push({ source: 'Risk', item: r.title, detail: r.owner || '',
+                 severity: r.risk_score != null ? 'Score ' + r.risk_score : '',
+                 when: r.closed_at });
+    });
+
+    return out.sort(function (a, b) { return String(a.when) < String(b.when) ? 1 : -1; });
+  }
+
+  function collectScheduled(data, period) {
+    var out = [];
+
+    (data.pentestFindings || []).forEach(function (f) {
+      if (CLOSED_PENTEST[f.status]) return;
+      if (monthOf(f.due_date) !== period) return;
+      out.push({ source: 'Pentest', item: f.title, detail: f.owner || '',
+                 severity: f.severity || '', when: f.due_date });
+    });
+
+    (data.risks || []).forEach(function (r) {
+      if (r.stage === 'closed') return;
+      if (monthOf(r.due_date) !== period) return;
+      out.push({ source: 'Risk', item: r.title, detail: r.owner || '',
+                 severity: r.risk_score != null ? 'Score ' + r.risk_score : '',
+                 when: r.due_date });
+    });
+
+    return out.sort(function (a, b) { return String(a.when) < String(b.when) ? -1 : 1; });
+  }
+
+  function remediationTable(rows, dateLabel) {
+    if (!rows.length) return null;
+    return D.dataTable({
+      cols: [
+        { label: 'Item', key: 'item', width: '46%',
+          raw: function (r) {
+            return '<span class="rem-src">' + esc(r.source) + '</span> ' +
+                   esc(truncate(r.item || '(untitled)', 68));
+          } },
+        { label: 'Severity', key: 'severity', width: '18%',
+          raw: function (r) { return esc(truncate(titleCase(r.severity) || '—', 16)); } },
+        { label: 'Owner / Host', key: 'detail', width: '20%',
+          raw: function (r) { return esc(truncate(r.detail || '—', 26)); } },
+        { label: dateLabel, key: 'when', width: '16%', cls: 'num',
+          raw: function (r) { return esc(fmtShortDate(r.when)); } },
+      ],
+      rows: rows.slice(0, MAX_REMEDIATION_ROWS),
+    });
+  }
+
+  function remediationColumn(heading, sub, rows, dateLabel, emptyMsg, caveat) {
+    var table = remediationTable(rows, dateLabel);
+    return '<div class="rem-col">' +
+        '<div class="rem-h">' + esc(heading) + '</div>' +
+        '<div class="rem-sub">' + esc(sub) + '</div>' +
+        (table || '<div class="rem-empty">' + esc(emptyMsg) + '</div>') +
+        (rows.length > MAX_REMEDIATION_ROWS
+          ? '<div class="rem-more">+ ' + (rows.length - MAX_REMEDIATION_ROWS) +
+            ' more not shown</div>'
+          : '') +
+        (caveat ? '<div class="rem-more">' + esc(caveat) + '</div>' : '') +
+      '</div>';
+  }
+
+  function renderRemediation(ctx) {
+    var data = ctx.data.vulnFindings;
+    if (!data) return null;
+
+    var period = ctx.period;
+    var next   = shiftPeriod(period, 1);
+    if (!next) return null;
+
+    var done     = collectRemediated(data, period);
+    var upcoming = collectScheduled(data, next);
+    if (!done.length && !upcoming.length) return null;
+
+    return '<div class="rem-cols">' +
+        remediationColumn(
+          'Remediated', 'Closed out during ' + periodName(period),
+          done, 'Closed',
+          'Nothing was closed out during ' + periodName(period) + '.') +
+        remediationColumn(
+          'Scheduled', 'Due during ' + periodName(next),
+          upcoming, 'Due',
+          'Nothing is currently scheduled for ' + periodName(next) + '.',
+          'Covers risks and pentest findings — scan findings carry no target date.') +
+      '</div>';
+  }
+
   // ── Recommendations ───────────────────────────────────────────────────────
   // Straight from /api/secure-score — the same list the Secure Score tab shows.
   // Nothing is authored here; generateRecommendations() in lib/secure-score.js
@@ -584,6 +747,8 @@ window.ReportSections = (function () {
       requires: ['mdr'],                         render: renderTickets },
     { id: 'vulns',        label: 'Vulnerabilities',                group: 'Vulnerabilities',
       requires: ['vulnSummary', 'vulnFindings'], render: renderVulns },
+    { id: 'remediation',  label: 'Remediation Tracker',            group: 'Vulnerabilities',
+      requires: ['vulnFindings'],                render: renderRemediation },
     { id: 'recommendations', label: 'Recommendations',             group: 'Stats',
       requires: ['secureScore'],                 render: renderRecommendations },
   ];
