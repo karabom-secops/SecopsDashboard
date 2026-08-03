@@ -1211,6 +1211,8 @@ input[type="file"] {
 
 .grc-wrapper { display: flex; flex-direction: column; gap: 1.5rem; padding: 1rem; }
 
+#tab-grc .section-header .rpt-actions { margin-top: 0.9rem; }
+
 /* Score panel */
 .grc-score-panel {
   display: flex;
