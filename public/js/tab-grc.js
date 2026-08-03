@@ -343,420 +343,407 @@ const GrcTab = (() => {
     }
   }
 
-  // ── Printable GRC report ───────────────────────────────────────────────────
+  // ── GRC report — 16:9 deck, same chrome as the Reporting tab ───────────────
+  //
+  // Uses window.ReportDeck for all geometry and styling, so this deck and the
+  // client deck stay visually identical. ReportDeck loads after this file in
+  // index.html, hence every reference to it is resolved lazily at call time.
 
   const WEIGHT_POINTS = { critical: 5, high: 3, medium: 2, low: 1 };
   const ANSWER_LABEL  = { yes: 'Yes', partial: 'Partial', no: 'No', na: 'N/A' };
-  const ANSWER_COLOR  = { yes: '#27ae60', partial: '#f39c12', no: '#e74c3c', na: '#90A4AE' };
 
-  function esc(s) {
-    return window.ReportShell.esc(s);
+  // Slides are fixed-height with overflow:hidden, so an over-long table is
+  // cropped silently — cap rows per slide and spill onto continuation slides.
+  // Budget: ~130mm of body height. A control wraps to at most 3 lines at
+  // MAX_CONTROL_CHARS in a ~42%-wide column, so these counts fit with headroom.
+  const MAX_DOMAIN_ROWS   = 13;
+  const MAX_GAP_ROWS      = 8;
+  const MAX_APPENDIX_ROWS = 9;
+  const MAX_CONTROL_CHARS = 160;
+  const MAX_NOTE_CHARS    = 90;
+
+  function esc(s) { return window.ReportShell.esc(s); }
+
+  function truncate(str, n) {
+    const s = String(str == null ? '' : str);
+    return s.length > n ? s.slice(0, n).replace(/\s+\S*$/, '') + '…' : s;
   }
 
-  /** Static (unanimated) twin of renderGauge(), returned as an SVG string. */
-  function buildGrcGaugeSvg(score) {
-    const w = 220, h = 130, cx = w / 2, cy = h - 10, r = 90;
-    const startX = cx - r, endX = cx + r;
-    const color  = getScoreColor(score);
-    const arcLen = Math.PI * r;
-    const offset = arcLen * (1 - score / 100);
-    return `
-      <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-        <path d="M ${startX} ${cy} A ${r} ${r} 0 0 1 ${endX} ${cy}"
-              fill="none" stroke="#dde8f0" stroke-width="12" stroke-linecap="round"/>
-        <path d="M ${startX} ${cy} A ${r} ${r} 0 0 1 ${endX} ${cy}"
-              fill="none" stroke="${color}" stroke-width="12" stroke-linecap="round"
-              stroke-dasharray="${arcLen}" stroke-dashoffset="${offset}"/>
-        <text x="${cx}" y="${cy - 20}" text-anchor="middle"
-              font-size="42" font-weight="700" fill="${color}" font-family="Segoe UI,Arial,sans-serif">${Math.round(score)}</text>
-        <text x="${cx}" y="${cy - 2}" text-anchor="middle"
-              font-size="12" font-weight="600" fill="#7a9bb0" font-family="Segoe UI,Arial,sans-serif">${getScoreRating(score)}</text>
-      </svg>`;
+  function chunkRows(arr, n) {
+    const out = [];
+    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+    return out;
   }
 
-  /** One score row: label, filled bar, right-aligned score. */
-  function buildScoreRow(label, score, meta) {
-    const color = score !== null ? getScoreColor(score) : '#B0BEC5';
-    const pct   = score !== null ? score : 0;
-    return `
-      <div style="margin-bottom:14px;page-break-inside:avoid;break-inside:avoid">
-        <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:5px">
-          <span style="font-size:0.88rem;font-weight:700;color:#2B3445">${esc(label)}</span>
-          ${meta ? `<span style="font-size:0.72rem;color:#90A4AE">${esc(meta)}</span>` : ''}
-          <span style="margin-left:auto;font-size:0.88rem;font-weight:700;color:${color}">${score !== null ? score + '/100' : '—'}</span>
-        </div>
-        <div style="height:9px;background:#EEF2F7;border-radius:5px;overflow:hidden">
-          <div style="height:100%;width:${pct}%;background:${color};border-radius:5px"></div>
-        </div>
-      </div>`;
+  /** Score → deck palette, so the report never uses the on-screen tab colours. */
+  function deckScoreColor(score) {
+    const P = window.ReportShell.PALETTE;
+    if (score === null || score === undefined) return '#A6A6A6';
+    if (score >= 80) return P.DECK_GREEN;
+    if (score >= 60) return P.DECK_AMBER;
+    if (score >= 40) return '#C2691A';
+    return P.DECK_MAROON;
   }
 
-  function buildFrameworkSection() {
-    return Object.keys(FRAMEWORK_LABEL)
-      .map(fw => buildScoreRow(FRAMEWORK_LABEL[fw], calcFrameworkScore(fw), null))
-      .join('');
-  }
+  /** Answer → deck palette. A function because PALETTE resolves lazily. */
+  const ANSWER_DECK_COLOR = () => {
+    const P = window.ReportShell.PALETTE;
+    return { yes: P.DECK_GREEN, partial: P.DECK_AMBER, no: P.DECK_MAROON, na: '#A6A6A6' };
+  };
 
-  function buildDomainSection() {
-    const names = Object.keys(_sections);
-    if (!names.length) return '<p style="font-size:0.88rem;color:#6b7c93">No assessment domains available.</p>';
-    return names.map(name => {
-      const qs       = _sections[name];
-      const answered = qs.filter(q => (_answers[q.id] || {}).answer).length;
-      return buildScoreRow(name, calcSectionScore(qs), `${answered}/${qs.length} answered`);
-    }).join('');
-  }
+  /** Control weight → deck palette. */
+  const WEIGHT_DECK_COLOR = () => {
+    const P = window.ReportShell.PALETTE;
+    return { critical: P.DECK_MAROON, high: '#C2691A', medium: P.DECK_BLUE, low: P.DECK_MUTED };
+  };
 
-  /** Weight badge + NIST/CIS reference chips for a question. */
-  function buildRefChips(q) {
-    const cis = (q.frameworks || [])
+  /** "ID.GV-1 · CIS 14.1" — the framework refs carried on a question. */
+  function refText(q) {
+    const refs = [];
+    if (q.nist_ref) refs.push(q.nist_ref);
+    (q.frameworks || [])
       .filter(f => f.framework === 'CIS_V8')
-      .map(f => `<span style="font-size:0.62rem;font-weight:600;color:#546E7A;background:#EEF2F7;border-radius:3px;padding:2px 6px">CIS ${esc(f.controlId)}</span>`)
-      .join('');
-    const nist = q.nist_ref
-      ? `<span style="font-size:0.62rem;font-weight:600;color:#546E7A;background:#EEF2F7;border-radius:3px;padding:2px 6px">${esc(q.nist_ref)}</span>`
-      : '';
-    return nist + cis;
+      .forEach(f => refs.push('CIS ' + f.controlId));
+    return refs.length ? refs.join(' · ') : '—';
   }
 
-  function weightBadge(weight) {
-    const colors = { critical: '#c0392b', high: '#d68910', medium: '#1565C0', low: '#1e8449' };
-    const bgs    = { critical: 'rgba(231,76,60,0.12)', high: 'rgba(245,158,11,0.12)', medium: 'rgba(21,101,192,0.10)', low: 'rgba(39,174,96,0.12)' };
-    const c = colors[weight] || '#546E7A';
-    return `<span style="font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;
-                         padding:2px 8px;border-radius:3px;background:${bgs[weight] || '#EEF2F7'};color:${c}">${WEIGHT_LABEL[weight] || esc(weight || '')}</span>`;
+  /** Inline progress bar sized for a .dt cell. */
+  function barCell(score) {
+    const color = deckScoreColor(score);
+    const pct   = score === null ? 0 : score;
+    const label = score === null ? '—' : score + '/100';
+    return '<div style="display:flex;align-items:center;gap:2.5mm">' +
+             '<span style="flex:1 1 auto;height:2.2mm;border-radius:1.1mm;background:#E6ECF2;overflow:hidden;display:block">' +
+               '<span style="display:block;height:100%;width:' + pct + '%;border-radius:1.1mm;background:' + color + '"></span>' +
+             '</span>' +
+             '<span style="flex:0 0 auto;font-weight:700;color:' + color + '">' + label + '</span>' +
+           '</div>';
   }
 
-  /** Unresolved items (No / Partial), heaviest first, No before Partial. */
-  function buildGapsSection() {
+  function coloredCell(text, color) {
+    return '<span style="font-weight:700;color:' + color + '">' + esc(text) + '</span>';
+  }
+
+  // ── Slides ────────────────────────────────────────────────────────────────
+
+  /**
+   * Full-bleed blue cover. ReportDeck.coverSlide() hardcodes the MDR deck's
+   * title and subtitle, so this rebuilds it from the same CSS classes and
+   * watermark rather than shipping a misleading heading.
+   */
+  function coverSlide(ctx) {
+    const D = window.ReportDeck;
+    return '<div class="slide cover">' +
+        D.WATERMARK_X +
+        '<div class="cover-inner">' +
+          (ctx.logoDataUri ? '<img class="cover-logo" src="' + ctx.logoDataUri + '" alt="Reflex">' : '') +
+          '<div class="cover-mid">' +
+            '<div class="cover-title">' + esc(ctx.clientName) + ' GRC &amp; Insurability</div>' +
+            '<div class="cover-sub">Governance, Risk and Compliance Assessment</div>' +
+            '<div class="cover-hr"></div>' +
+            '<div class="cover-author">By ' + esc(ctx.author) + '</div>' +
+            '<div class="cover-hr2"></div>' +
+          '</div>' +
+          '<div class="cover-copy">&copy; Reflex&trade; ' + esc(ctx.year) + '</div>' +
+          D.slideFooter(1, ctx.dateStr) +
+        '</div>' +
+      '</div>';
+  }
+
+  function narrativeText(score, answered, totalQ) {
+    let body;
+    if (score >= 80) {
+      body = 'Governance, risk and compliance controls are broadly implemented and evidenced. The organisation presents a favourable risk profile to cyber insurers, with residual work concentrated in refinement rather than remediation.';
+    } else if (score >= 60) {
+      body = 'A workable governance baseline is in place, but several controls remain only partially implemented. Closing the highest-weighted gaps is the fastest route to improving both the GRC score and the resulting insurability position.';
+    } else if (score >= 40) {
+      body = 'Governance coverage is uneven — a material number of controls are absent or only partially implemented. Insurers are likely to query these gaps at renewal, and some may attach conditions or exclusions.';
+    } else {
+      body = 'Governance, risk and compliance coverage is significantly below expectation. The gaps identified in this deck cover controls that underwriters routinely treat as prerequisites, and should be prioritised accordingly.';
+    }
+    const coverage = totalQ > 0
+      ? 'The assessment covers ' + totalQ + ' controls, of which ' + answered +
+        ' (' + Math.round(answered / totalQ * 100) + '%) have been answered.'
+      : 'No assessment questions were available at the time of generation.';
+    return body + ' ' + coverage;
+  }
+
+  /** Three headline tiles plus the narrative, in the Overview slide's idiom. */
+  function scoreSlide(ctx) {
+    const D = window.ReportDeck;
+    const P = window.ReportShell.PALETTE;
+    const color = deckScoreColor(ctx.score);
+    const pct   = ctx.totalQ > 0 ? Math.round(ctx.answered / ctx.totalQ * 100) : 0;
+
+    const card = (title, desc, value, valueColor, sub) =>
+      '<div class="ov-card">' +
+        '<div class="ov-t">' + esc(title) + '</div>' +
+        '<div class="ov-d">' + esc(desc) + '</div>' +
+        '<div class="ov-num" style="color:' + valueColor + ';font-weight:700">' + value + '</div>' +
+        '<div class="ov-sub" style="text-align:center">' + esc(sub) + '</div>' +
+      '</div>';
+
+    const body =
+      '<div class="ov-stack">' +
+        '<div class="ov-row three">' +
+          card('GRC Score', 'Weighted self-assessment across all governance domains.',
+               Math.round(ctx.score) + '<span style="font-size:16pt;color:' + P.DECK_MUTED + '">/100</span>',
+               color, ctx.rating) +
+          card('Assessment Coverage', 'Controls answered out of the total questionnaire.',
+               ctx.answered + '<span style="font-size:16pt;color:' + P.DECK_MUTED + '">/' + ctx.totalQ + '</span>',
+               P.DECK_INK, pct + '% complete') +
+          card('Insurability Weighting', 'Share of the Cyber Insurability Score driven by GRC.',
+               '40<span style="font-size:16pt;color:' + P.DECK_MUTED + '">%</span>',
+               P.DECK_BLUE, 'Secure Score 60%') +
+        '</div>' +
+        '<p style="font-size:11pt;line-height:1.5;color:' + P.DECK_MUTED + ';margin:0">' +
+          esc(narrativeText(ctx.score, ctx.answered, ctx.totalQ)) +
+        '</p>' +
+      '</div>';
+
+    return D.slide({ title: 'GRC Posture', body: body, pageNo: ctx.pageNo, ctx: ctx });
+  }
+
+  /** NIST CSF and CIS v8, as the deck's component-breakdown cards. */
+  function frameworkSlide(ctx) {
+    const D = window.ReportDeck;
+    const P = window.ReportShell.PALETTE;
+    const keys = Object.keys(FRAMEWORK_LABEL);
+
+    const cards = keys.map(fw => {
+      const score = calcFrameworkScore(fw);
+      const color = deckScoreColor(score);
+      const mapped = Object.values(_questionsById)
+        .filter(q => (q.frameworks || []).some(f => f.framework === fw)).length;
+      return '<div class="cmp-card">' +
+          '<div class="cmp-head">' +
+            '<span class="cmp-t">' + esc(FRAMEWORK_LABEL[fw]) + '</span>' +
+            '<span class="cmp-w">' + mapped + ' mapped control' + (mapped === 1 ? '' : 's') + '</span>' +
+          '</div>' +
+          '<div class="cmp-bar"><div class="cmp-fill" style="width:' + (score === null ? 0 : score) + '%;background:' + color + '"></div></div>' +
+          '<div class="cmp-score" style="color:' + color + '">' + (score === null ? '—' : score + '/100') + '</div>' +
+          '<div class="cmp-d">' + (score === null
+            ? 'No answered controls map to this framework yet.'
+            : esc(getScoreRating(score)) + ' — scored over the controls mapped to this framework only.') + '</div>' +
+        '</div>';
+    }).join('');
+
+    const body =
+      '<div class="cmp-row" style="grid-template-columns:repeat(' + Math.max(keys.length, 1) + ',1fr)">' + cards + '</div>' +
+      '<p style="margin-top:7mm;font-size:10pt;line-height:1.5;color:' + P.DECK_MUTED + '">' +
+        'Framework scores are calculated over the subset of controls mapped to each framework, so a single control may ' +
+        'contribute to both. Controls marked N/A or left unanswered are excluded from the calculation.' +
+      '</p>';
+
+    return D.slide({ title: 'Framework Alignment', body: body, pageNo: ctx.pageNo, ctx: ctx });
+  }
+
+  /** One slide per MAX_DOMAIN_ROWS domains. */
+  function domainSlides(ctx, startPage) {
+    const D = window.ReportDeck;
+    const names = Object.keys(_sections);
+
+    const rows = names.map(name => {
+      const qs       = _sections[name];
+      const score    = calcSectionScore(qs);
+      const answered = qs.filter(q => (_answers[q.id] || {}).answer).length;
+      return {
+        domain:   name,
+        score:    score,
+        answered: answered + ' / ' + qs.length,
+        rating:   score === null ? '—' : getScoreRating(score),
+      };
+    });
+
+    const cols = [
+      { label: 'Domain',   key: 'domain',   width: '34%' },
+      { label: 'Score',    key: 'score',    width: '30%', raw: r => barCell(r.score) },
+      { label: 'Answered', key: 'answered', width: '18%', cls: 'num' },
+      { label: 'Rating',   key: 'rating',   width: '18%', raw: r => coloredCell(r.rating, deckScoreColor(r.score)) },
+    ];
+
+    const pages = rows.length ? chunkRows(rows, MAX_DOMAIN_ROWS) : [[]];
+    return pages.map((page, i) => D.slide({
+      title:  'Domain Breakdown' + (pages.length > 1 ? ' (' + (i + 1) + ' of ' + pages.length + ')' : ''),
+      body:   D.dataTable({ cols: cols, rows: page }),
+      pageNo: startPage + i,
+      ctx:    ctx,
+    }));
+  }
+
+  /** Unresolved controls (No / Partial), heaviest weight first, No before Partial. */
+  function gapSlides(ctx, startPage) {
+    const D = window.ReportDeck;
+    const C = ANSWER_DECK_COLOR();
+    const W = WEIGHT_DECK_COLOR();
+
     const gaps = Object.values(_questionsById)
-      .map(q => ({ q, a: (_answers[q.id] || {}) }))
+      .map(q => ({ q: q, a: _answers[q.id] || {} }))
       .filter(x => x.a.answer === 'no' || x.a.answer === 'partial')
       .sort((a, b) => {
         const pw = (WEIGHT_POINTS[b.q.weight] || 2) - (WEIGHT_POINTS[a.q.weight] || 2);
         if (pw !== 0) return pw;
         if (a.a.answer === b.a.answer) return 0;
         return a.a.answer === 'no' ? -1 : 1;
-      });
+      })
+      .map(x => ({
+        weight:  WEIGHT_LABEL[x.q.weight] || x.q.weight || '—',
+        control: truncate(x.q.text, MAX_CONTROL_CHARS),
+        ref:     refText(x.q),
+        status:  ANSWER_LABEL[x.a.answer],
+        notes:   x.a.notes ? truncate(x.a.notes, MAX_NOTE_CHARS) : '—',
+        _ans:    x.a.answer,
+        _w:      x.q.weight,
+      }));
+
+    const cols = [
+      { label: 'Weight',    key: 'weight',  width: '11%', raw: r => coloredCell(r.weight, W[r._w] || '#A6A6A6') },
+      { label: 'Control',   key: 'control', width: '42%' },
+      { label: 'Reference', key: 'ref',     width: '14%' },
+      { label: 'Status',    key: 'status',  width: '10%', raw: r => coloredCell(r.status, C[r._ans]) },
+      { label: 'Notes',     key: 'notes',   width: '23%' },
+    ];
 
     if (!gaps.length) {
-      return `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px 20px;color:#166534;font-size:0.92rem">
-        <strong>No material gaps recorded.</strong> Every answered control is fully implemented, or marked not applicable.
-      </div>`;
+      const P = window.ReportShell.PALETTE;
+      return [D.slide({
+        title: 'Prioritised Gaps',
+        body:  '<div style="background:#F7F9FB;border-left:1.6mm solid ' + P.DECK_GREEN + ';border-radius:1.5mm;padding:6mm 7mm">' +
+                 '<div style="font-size:14pt;font-weight:700;color:' + P.DECK_INK + ';margin-bottom:2mm">No material gaps recorded</div>' +
+                 '<div style="font-size:11pt;color:' + P.DECK_MUTED + ';line-height:1.5">Every answered control is fully implemented, or marked not applicable.</div>' +
+               '</div>',
+        pageNo: startPage,
+        ctx:    ctx,
+      })];
     }
 
-    return gaps.map(({ q, a }) => {
-      const isNo   = a.answer === 'no';
-      const border = isNo ? '#e74c3c' : '#f39c12';
-      const bg     = isNo ? 'rgba(231,76,60,0.04)' : 'rgba(245,158,11,0.04)';
-      return `
-        <div style="border-left:4px solid ${border};border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:10px;
-                    background:${bg};page-break-inside:avoid;break-inside:avoid">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-            ${weightBadge(q.weight)}
-            ${buildRefChips(q)}
-            <span style="margin-left:auto;font-size:0.72rem;font-weight:700;color:${ANSWER_COLOR[a.answer]}">${ANSWER_LABEL[a.answer]}</span>
-          </div>
-          <p style="font-size:0.88rem;color:#1a2a3a;line-height:1.55;margin:0">${esc(q.text)}</p>
-          ${a.notes ? `<p style="font-size:0.8rem;color:#6b7c93;font-style:italic;margin:6px 0 0">${esc(a.notes)}</p>` : ''}
-        </div>`;
-    }).join('');
+    const pages = chunkRows(gaps, MAX_GAP_ROWS);
+    return pages.map((page, i) => D.slide({
+      title:  'Prioritised Gaps' + (pages.length > 1 ? ' (' + (i + 1) + ' of ' + pages.length + ')' : ''),
+      body:   D.dataTable({ cols: cols, rows: page }),
+      pageNo: startPage + i,
+      ctx:    ctx,
+    }));
   }
 
-  /** Every question, grouped by domain, with its recorded answer. */
-  function buildQuestionAppendix() {
-    const names = Object.keys(_sections);
-    if (!names.length) return '<p style="font-size:0.88rem;color:#6b7c93">No questions available.</p>';
+  /** Every control and its recorded answer, grouped by domain, paginated. */
+  function appendixSlides(ctx, startPage) {
+    const D = window.ReportDeck;
+    const C = ANSWER_DECK_COLOR();
 
-    return names.map(name => {
-      const rows = _sections[name].map(q => {
-        const a       = _answers[q.id] || {};
-        const label   = a.answer ? ANSWER_LABEL[a.answer] : 'Unanswered';
-        const color   = a.answer ? ANSWER_COLOR[a.answer] : '#B0BEC5';
-        return `
-          <div style="padding:9px 0;border-bottom:1px solid #eef2f6;page-break-inside:avoid;break-inside:avoid">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-              ${weightBadge(q.weight)}
-              ${buildRefChips(q)}
-              <span style="margin-left:auto;font-size:0.72rem;font-weight:700;color:${color}">${label}</span>
-            </div>
-            <p style="font-size:0.84rem;color:#1a2a3a;line-height:1.5;margin:0">${esc(q.text)}</p>
-            ${a.notes ? `<p style="font-size:0.78rem;color:#6b7c93;font-style:italic;margin:4px 0 0">${esc(a.notes)}</p>` : ''}
-          </div>`;
-      }).join('');
+    const rows = [];
+    Object.keys(_sections).forEach(name => {
+      _sections[name].forEach(q => {
+        const a = _answers[q.id] || {};
+        rows.push({
+          domain:  name,
+          control: truncate(q.text, MAX_CONTROL_CHARS),
+          ref:     refText(q),
+          weight:  WEIGHT_LABEL[q.weight] || q.weight || '—',
+          answer:  a.answer ? ANSWER_LABEL[a.answer] : 'Unanswered',
+          notes:   a.notes ? truncate(a.notes, MAX_NOTE_CHARS) : '—',
+          _ans:    a.answer,
+        });
+      });
+    });
 
-      return `
-        <div style="margin-bottom:22px">
-          <div style="font-size:0.9rem;font-weight:800;color:#2B3445;background:#EEF2F7;border-left:4px solid #1565C0;
-                      padding:8px 12px;margin-bottom:6px;page-break-after:avoid;break-after:avoid">${esc(name)}</div>
-          ${rows}
-        </div>`;
-    }).join('');
+    if (!rows.length) return [];
+
+    const cols = [
+      { label: 'Domain',    key: 'domain',  width: '18%' },
+      { label: 'Control',   key: 'control', width: '36%' },
+      { label: 'Reference', key: 'ref',     width: '13%' },
+      { label: 'Weight',    key: 'weight',  width: '10%' },
+      { label: 'Answer',    key: 'answer',  width: '10%', raw: r => coloredCell(r.answer, r._ans ? C[r._ans] : '#A6A6A6') },
+      { label: 'Notes',     key: 'notes',   width: '13%' },
+    ];
+
+    const pages = chunkRows(rows, MAX_APPENDIX_ROWS);
+    return pages.map((page, i) => D.slide({
+      title:  'Appendix — Responses' + (pages.length > 1 ? ' (' + (i + 1) + ' of ' + pages.length + ')' : ''),
+      body:   D.dataTable({ cols: cols, rows: page }),
+      pageNo: startPage + i,
+      ctx:    ctx,
+    }));
   }
 
-  function buildGrcNarrative(score, answered, totalQ) {
-    const rating = getScoreRating(score);
-    let body;
-    if (score >= 80) {
-      body = 'Governance, risk and compliance controls are broadly implemented and evidenced. The organisation presents a favourable risk profile to cyber insurers, with residual work concentrated in refinement rather than remediation.';
-    } else if (score >= 60) {
-      body = 'A workable governance baseline is in place, but several controls remain partially implemented. Closing the highest-weighted gaps below is the fastest route to improving both the GRC score and the resulting insurability position.';
-    } else if (score >= 40) {
-      body = 'Governance coverage is uneven — a material number of controls are absent or only partially implemented. Insurers are likely to query these gaps at renewal, and some may attach conditions or exclusions.';
-    } else {
-      body = 'Governance, risk and compliance coverage is significantly below expectation. The gaps listed below represent controls that underwriters routinely treat as prerequisites; addressing the critical-weighted items should be treated as a priority.';
+  function methodologySlide(ctx) {
+    const D = window.ReportDeck;
+    const body =
+      '<ul class="bl">' +
+        '<li>Each control carries a weight: <b>Critical</b> 5 points, <b>High</b> 3, <b>Medium</b> 2, <b>Low</b> 1.</li>' +
+        '<li>A <b>Yes</b> answer earns the full weight, <b>Partial</b> earns half, and <b>No</b> earns none.</li>' +
+        '<li>Controls marked <b>N/A</b> or left unanswered are excluded from both the earned and the possible totals, so they neither help nor penalise the score.</li>' +
+        '<li>A domain score is that domain\'s earned points divided by its possible points, expressed out of 100. Framework scores use the same formula over the controls mapped to each framework.</li>' +
+        '<li>The overall GRC score feeds the Cyber Insurability Score at a 40% weighting, combined with the Secure Score at 60%.</li>' +
+        '<li>Ratings band as <b>Low Risk</b> (80+), <b>Moderate Risk</b> (60–79), <b>Elevated Risk</b> (40–59) and <b>High Risk</b> (below 40).</li>' +
+      '</ul>';
+    return D.slide({ title: 'Methodology', body: body, pageNo: ctx.pageNo, ctx: ctx });
+  }
+
+  // ── Deck assembly ─────────────────────────────────────────────────────────
+
+  /** Client label for the cover — mirrors clientName() on the Reports tab. */
+  function clientName() {
+    const ids = ['globalTenantSelect', 'tenantSwitcher'];
+    for (const id of ids) {
+      const sel = document.getElementById(id);
+      if (sel && !sel.hidden && sel.selectedIndex >= 0 && sel.options[sel.selectedIndex]) {
+        const txt = (sel.options[sel.selectedIndex].textContent || '').trim();
+        if (txt && !/^all\b/i.test(txt)) return txt;
+      }
     }
-    const coverage = totalQ > 0
-      ? `The assessment covers ${totalQ} controls, of which ${answered} (${Math.round(answered / totalQ * 100)}%) have been answered.`
-      : 'No assessment questions were available at the time of generation.';
-    return `The current GRC score is <strong>${Math.round(score)}/100</strong> — <strong>${rating}</strong>. ${body} ${coverage} The GRC score contributes 40% of the Cyber Insurability Score, with the Secure Score making up the remaining 60%.`;
+    return 'Client';
   }
 
   async function generateGrcReport() {
-    const score      = _assessment ? (_assessment.grc_score || 0) : 0;
-    const scoreColor = getScoreColor(score);
-    const rating     = getScoreRating(score);
+    const S = window.ReportShell;
+    const D = window.ReportDeck;
+    if (!D) throw new Error('ReportDeck not loaded');
 
+    const score    = _assessment ? (_assessment.grc_score || 0) : 0;
     const totalQ   = Object.values(_sections).reduce((s, q) => s + q.length, 0);
     const answered = Object.values(_answers).filter(a => a.answer).length;
+    const now      = new Date();
 
-    const assessedAt = _assessment
-      ? new Date(_assessment.assessed_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' })
-      : 'Not yet assessed';
+    const ctx = {
+      clientName:  clientName(),
+      author:      (window.currentUser || {}).username || 'Reflex',
+      dateStr:     now.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' }),
+      periodLabel: _assessment
+        ? 'Assessed ' + new Date(_assessment.assessed_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' })
+        : 'Not yet assessed',
+      year:        now.getFullYear(),
+      score:       score,
+      rating:      getScoreRating(score),
+      totalQ:      totalQ,
+      answered:    answered,
+      logoDataUri: await S.logoToDataUri(),
+    };
 
-    const user       = window.currentUser || {};
-    const preparedBy = user.username || 'SecOps Dashboard';
-    const reportDate = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
-    const reportYear = new Date().getFullYear();
+    const slides = [coverSlide(ctx)];
+    const push = (s) => { slides.push(s); };
 
-    const logoDataUri = await window.ReportShell.logoToDataUri();
+    ctx.pageNo = slides.length + 1;
+    push(scoreSlide(ctx));
 
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>GRC &amp; Insurability Assessment Report — ${reportDate}</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 14px; color: #1a2a3a; background: #fff; line-height: 1.6; }
-  @page { size: A4 portrait; margin: 0; }
-  @page :first { margin: 0; }
+    ctx.pageNo = slides.length + 1;
+    push(frameworkSlide(ctx));
 
-  /* ── Cover page — fixed A4 portrait ── */
-  .cover {
-    position: relative; overflow: hidden;
-    width: 210mm; height: 297mm;
-    background: #ffffff;
-    display: flex; flex-direction: column;
-    page-break-after: always; break-after: page;
-    margin: 0 auto;
-  }
-  .cover::before {
-    content: ''; position: absolute; top: -80px; right: -100px;
-    width: 320px; height: 460px;
-    background: #CFD8DC;
-    transform: rotate(-18deg);
-    border-radius: 14px;
-    z-index: 0;
-  }
-  .cover::after {
-    content: ''; position: absolute; bottom: -80px; right: -50px;
-    width: 260px; height: 420px;
-    background: #2B3445;
-    transform: rotate(-18deg);
-    border-radius: 14px;
-    z-index: 1;
-  }
-  .cover-top { padding: 36px 44px 0; position: relative; z-index: 2; }
-  .cover-logo { display: flex; align-items: center; margin-bottom: 12px; }
+    domainSlides(ctx, slides.length + 1).forEach(push);
+    gapSlides(ctx, slides.length + 1).forEach(push);
+    appendixSlides(ctx, slides.length + 1).forEach(push);
 
-  .cover-title-band {
-    position: relative; z-index: 2;
-    margin: 70px 0 0;
-    background: #1565C0;
-    padding: 40px 44px 40px 56px;
-    clip-path: polygon(0 0, calc(100% - 56px) 0, 100% 50%, calc(100% - 56px) 100%, 0 100%);
-    width: 80%;
-  }
-  .cover-eyebrow { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 3px; color: rgba(255,255,255,0.65); margin-bottom: 10px; }
-  .cover-title    { font-size: 1.75rem; font-weight: 800; color: #fff; line-height: 1.2; }
+    ctx.pageNo = slides.length + 1;
+    push(methodologySlide(ctx));
 
-  .cover-meta {
-    position: relative; z-index: 2;
-    padding: 28px 44px 0 56px;
-    display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 460px;
-  }
-  .cover-meta-label { font-size: 0.63rem; text-transform: uppercase; letter-spacing: 1.5px; color: #90A4AE; margin-bottom: 3px; }
-  .cover-meta-value { font-size: 0.88rem; font-weight: 700; color: #2B3445; }
-
-  .cover-footer {
-    position: relative; z-index: 2;
-    margin-top: auto; padding: 24px 44px 32px;
-    display: flex; justify-content: space-between; align-items: flex-end;
-  }
-  .cover-classification {
-    display: inline-block; border: 1.5px solid #B0BEC5; border-radius: 4px;
-    padding: 4px 14px; font-size: 0.68rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 2px; color: #90A4AE;
-  }
-  .cover-footer-right { text-align: right; font-size: 0.78rem; color: #90A4AE; line-height: 1.8; }
-  .cover-footer-right strong { color: #2B3445; }
-
-  /* ── Content pages ── */
-  .page { padding: 18mm 16mm; width: 210mm; margin: 0 auto; }
-
-  .section-heading {
-    font-size: 1.15rem; font-weight: 800; color: #2B3445;
-    border-bottom: 3px solid #1565C0; padding-bottom: 8px;
-    margin-bottom: 20px; margin-top: 36px;
-    page-break-after: avoid; break-after: avoid;
-  }
-  .section-heading:first-child { margin-top: 0; }
-
-  .page-header-stripe { background: #1565C0; height: 6px; width: 100%; }
-
-  .exec-grid { display: grid; grid-template-columns: 220px 1fr; gap: 28px; align-items: center; margin-bottom: 24px; }
-  .exec-gauge-block { text-align: center; background: #EEF2F7; border-radius: 12px; padding: 18px 14px; border-top: 4px solid #1565C0; overflow: hidden; }
-  .exec-gauge-rating { font-size: 1.1rem; font-weight: 700; margin-top: 5px; }
-  .exec-body { font-size: 0.88rem; color: #455A64; line-height: 1.65; }
-
-  .score-box { background: #EEF2F7; border-radius: 10px; padding: 20px 22px; margin-bottom: 24px; border-left: 4px solid #1565C0; page-break-inside: avoid; break-inside: avoid; }
-
-  .page-footer {
-    margin-top: 36px; padding-top: 10px; border-top: 2px solid #1565C0;
-    display: flex; justify-content: space-between; font-size: 0.68rem; color: #90A4AE;
-  }
-
-  .print-btn-bar { position: fixed; top: 20px; right: 20px; z-index: 999; display: flex; gap: 10px; }
-  .print-btn {
-    background: #1565C0; color: #fff; border: none; border-radius: 6px;
-    padding: 10px 22px; font-size: 0.88rem; font-weight: 600; cursor: pointer;
-    box-shadow: 0 2px 10px rgba(21,101,192,0.35);
-  }
-  .print-btn:hover { background: #0D47A1; }
-  .print-btn.close-btn { background: #2B3445; }
-  .print-btn.close-btn:hover { background: #1a2535; }
-
-  @media screen {
-    body { background: #e8ecf0; }
-    .cover, .page-header-stripe, .page { box-shadow: 0 2px 20px rgba(0,0,0,0.15); }
-    .page { background: #fff; }
-  }
-
-  @media print {
-    body { background: #fff; }
-    .print-btn-bar { display: none !important; }
-    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  }
-</style>
-</head>
-<body>
-
-<div class="print-btn-bar">
-  <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
-  <button class="print-btn close-btn" onclick="window.close()">✕ Close</button>
-</div>
-
-<!-- COVER PAGE -->
-<div class="cover">
-  <div class="cover-top">
-    <div class="cover-logo">
-      ${logoDataUri
-        ? `<img src="${logoDataUri}" alt="Reflex" style="height:60px;width:auto">`
-        : `<div style="font-size:1.4rem;font-weight:800;color:#1565C0">reflex</div>`}
-    </div>
-  </div>
-
-  <div class="cover-title-band">
-    <div class="cover-eyebrow">Governance, Risk &amp; Compliance</div>
-    <div class="cover-title">GRC &amp; Insurability<br>Assessment Report</div>
-  </div>
-
-  <div class="cover-meta">
-    <div><div class="cover-meta-label">Report Date</div><div class="cover-meta-value">${esc(reportDate)}</div></div>
-    <div><div class="cover-meta-label">Prepared By</div><div class="cover-meta-value">${esc(preparedBy)}</div></div>
-    <div><div class="cover-meta-label">GRC Score</div><div class="cover-meta-value" style="color:#1565C0">${Math.round(score)}/100 — ${rating}</div></div>
-    <div><div class="cover-meta-label">Last Assessed</div><div class="cover-meta-value">${esc(assessedAt)}</div></div>
-  </div>
-
-  <div class="cover-footer">
-    <div class="cover-classification">Confidential</div>
-    <div class="cover-footer-right">
-      ${esc(reportDate)}<br>
-      Version: 1.0<br>
-      <strong>Prepared by Reflex</strong>
-    </div>
-  </div>
-</div>
-
-<div class="page-header-stripe"></div>
-
-<!-- CONTENT -->
-<div class="page">
-
-  <h2 class="section-heading">1. Executive Summary</h2>
-  <div class="exec-grid">
-    <div class="exec-gauge-block">
-      ${buildGrcGaugeSvg(score)}
-      <div class="exec-gauge-rating" style="color:${scoreColor}">${rating}</div>
-      <div style="font-size:0.75rem;color:#78909C;margin-top:3px">GRC Score</div>
-    </div>
-    <div>
-      <p class="exec-body">${buildGrcNarrative(score, answered, totalQ)}</p>
-    </div>
-  </div>
-
-  <h2 class="section-heading">2. Framework Alignment</h2>
-  <div class="score-box">
-    ${buildFrameworkSection()}
-  </div>
-
-  <h2 class="section-heading">3. Domain Breakdown</h2>
-  <div class="score-box">
-    ${buildDomainSection()}
-  </div>
-
-  <h2 class="section-heading">4. Prioritised Gaps</h2>
-  ${buildGapsSection()}
-
-  <h2 class="section-heading">5. Appendix A — Full Questionnaire Responses</h2>
-  ${buildQuestionAppendix()}
-
-  <h2 class="section-heading">6. Appendix B — Methodology</h2>
-  <p style="font-size:0.88rem;color:#3d5166;margin-bottom:14px">
-    Each control carries a weight reflecting its importance: <strong>Critical (5 points)</strong>,
-    <strong>High (3)</strong>, <strong>Medium (2)</strong> and <strong>Low (1)</strong>.
-    A <em>Yes</em> answer earns the full weight, <em>Partial</em> earns half, and <em>No</em> earns none.
-    Controls marked <em>N/A</em> or left unanswered are excluded from both the earned and the possible
-    totals, so they neither help nor penalise the score.
-  </p>
-  <p style="font-size:0.88rem;color:#3d5166;margin-bottom:14px">
-    A domain score is the earned points across that domain's controls divided by its possible points.
-    Framework scores (NIST CSF, CIS Controls v8) are calculated the same way over the subset of controls
-    mapped to that framework, so a single control may contribute to both. Each score is expressed out of 100.
-  </p>
-  <p style="font-size:0.88rem;color:#3d5166">
-    The overall GRC score feeds the Cyber Insurability Score at a 40% weighting, combined with the
-    Secure Score at 60%. Ratings are banded as Low Risk (80+), Moderate Risk (60–79),
-    Elevated Risk (40–59) and High Risk (below 40).
-  </p>
-
-  <div class="page-footer">
-    <span>GRC &amp; Insurability Assessment Report — ${esc(reportDate)}</span>
-    <span>CONFIDENTIAL — Internal Use Only</span>
-    <span>Prepared by Reflex &copy; ${reportYear}</span>
-  </div>
-</div>
-</body>
-</html>`;
-
-    window.ReportShell.openReportWindow(html, { width: 1060, height: 860 });
+    S.openReportWindow(D.renderDeck(slides, ctx), { width: 1280, height: 820 });
   }
 
   /** Wired from the static header button — loads data first if the tab is cold. */
   async function handleGenerateReport() {
     const btn = document.getElementById('grc-report-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Building…'; }
     try {
       if (!Object.keys(_sections).length) await loadAndRender();
       await generateGrcReport();
@@ -858,14 +845,14 @@ const GrcTab = (() => {
     const saveBtn = document.getElementById('grc-save-btn');
     if (saveBtn) saveBtn.addEventListener('click', saveAssessment);
 
-    // Wire the header report button (lives outside #grc-container, so assign
-    // rather than append — loadAndRender may run again on tab switch).
+    // Wire the header report button. It lives outside #grc-container, so assign
+    // rather than append — loadAndRender may run again on every tab switch.
     const reportBtn = document.getElementById('grc-report-btn');
     if (reportBtn) reportBtn.onclick = handleGenerateReport;
   }
 
-  // Bind the header button up front too, so it works even if the user reaches
-  // it before loadAndRender() has run (handleGenerateReport loads on demand).
+  // Bind up front too, so the button works even if it is reached before
+  // loadAndRender() has run (handleGenerateReport loads on demand).
   const _initBtn = document.getElementById('grc-report-btn');
   if (_initBtn) _initBtn.onclick = handleGenerateReport;
 
