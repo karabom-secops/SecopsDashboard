@@ -683,15 +683,40 @@ const GrcTab = (() => {
 
   // ── Deck assembly ─────────────────────────────────────────────────────────
 
-  /** Client label for the cover — mirrors clientName() on the Reports tab. */
-  function clientName() {
-    const ids = ['globalTenantSelect', 'tenantSwitcher'];
-    for (const id of ids) {
-      const sel = document.getElementById(id);
-      if (sel && !sel.hidden && sel.selectedIndex >= 0 && sel.options[sel.selectedIndex]) {
-        const txt = (sel.options[sel.selectedIndex].textContent || '').trim();
-        if (txt && !/^all\b/i.test(txt)) return txt;
-      }
+  /** The tenant this report is about — same precedence as tenantParam(). */
+  function effectiveTenantId() {
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+    if (isSA && window.globalTenantId) return window.globalTenantId;
+    return (window.currentUser || {}).tenantId || null;
+  }
+
+  /**
+   * Client label for the cover.
+   *
+   * Resolved from /api/tenants by id, not by reading the header dropdowns: the
+   * superadmin selector opens on a "— Select tenant —" placeholder whose text is
+   * not a tenant name, and it is hidden altogether for everyone else. The
+   * dropdowns are only a fallback, and only when one holds a real value.
+   */
+  async function resolveClientName() {
+    const id = effectiveTenantId();
+    if (id) {
+      try {
+        const res = await fetch('api/tenants', { credentials: 'same-origin' });
+        if (res.ok) {
+          const rows = await res.json();
+          const hit = (rows || []).find(t => String(t.id) === String(id));
+          if (hit && hit.name) return hit.name;
+        }
+      } catch (_) { /* fall through */ }
+    }
+    // Placeholder options carry value="", so a truthy value means a real pick.
+    for (const selId of ['globalTenantSelect', 'tenantSwitcher']) {
+      const sel = document.getElementById(selId);
+      if (!sel || !sel.value) continue;
+      const opt = sel.options && sel.options[sel.selectedIndex];
+      const txt = opt && (opt.textContent || '').trim();
+      if (txt) return txt;
     }
     return 'Client';
   }
@@ -707,7 +732,7 @@ const GrcTab = (() => {
     const now      = new Date();
 
     const ctx = {
-      clientName:  clientName(),
+      clientName:  await resolveClientName(),
       author:      (window.currentUser || {}).username || 'Reflex',
       dateStr:     now.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' }),
       periodLabel: _assessment
