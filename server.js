@@ -1997,13 +1997,20 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
     if (error) return res.status(error.status).json({ error: error.message });
 
     const row = await pool.query(
-      'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2',
+      'SELECT base_url, api_key_enc, api_key_iv, config_json, is_enabled FROM integrations WHERE tenant_id = $1 AND provider = $2',
       [tenantId, provider]
     );
     if (!row.rows.length) return res.status(404).json({ error: 'Integration not configured.' });
 
-    const { base_url, api_key_enc, api_key_iv, config_json } = row.rows[0];
+    const { base_url, api_key_enc, api_key_iv, config_json, is_enabled } = row.rows[0];
     const api_key = decryptKey(api_key_enc, api_key_iv);
+
+    // Testing deliberately ignores is_enabled — you should be able to verify
+    // credentials before switching an integration on. But a working connection
+    // on a disabled integration is invisible to every screen and every sync, so
+    // say so rather than returning a bare tick.
+    const disabledNote = is_enabled ? '' :
+      ' This integration is currently disabled — enable it to start syncing and to show data on its screens.';
 
     if (provider === REPORTS_PROVIDER) {
       await arcticWolfReportsAdapter.testConnection({ base_url, api_key, ...(config_json || {}) });
@@ -2033,11 +2040,11 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
         'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
         [JSON.stringify(merged), tenantId, provider]
       );
-      return res.json({ ok: true, message: info.message, detected });
+      return res.json({ ok: true, message: info.message + disabledNote, detected, isEnabled: is_enabled });
     } else {
       await adapter.fetchTickets({ base_url, api_key, ...(config_json || {}) }, true);
     }
-    res.json({ ok: true, message: 'Connection successful.' });
+    res.json({ ok: true, message: 'Connection successful.' + disabledNote, isEnabled: is_enabled });
   } catch (err) {
     res.status(400).json({ ok: false, error: err.message });
   }
@@ -2351,16 +2358,27 @@ async function runSentinelOneSync(tenantId) {
   }
 }
 
-/** Load an enabled Wazuh integration row with its key decrypted, or throw. */
+/** Load an enabled Wazuh integration row with its key decrypted, or throw.
+ *  The thrown error carries `.reason` so callers can tell a missing integration
+ *  apart from one that exists but is switched off — those need completely
+ *  different things from the operator, and collapsing them into "no data yet"
+ *  sends people hunting for a connection problem they do not have. */
 async function loadWazuhIntegration(tenantId) {
   const row = await pool.query(
-    `SELECT id, tenant_id, base_url, api_key_enc, api_key_iv, config_json
-       FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE`,
+    `SELECT id, tenant_id, base_url, api_key_enc, api_key_iv, config_json, is_enabled
+       FROM integrations WHERE tenant_id = $1 AND provider = $2`,
     [tenantId, WAZUH_PROVIDER]
   );
   if (!row.rows.length) {
-    const err = new Error('Wazuh integration not configured or disabled.');
+    const err = new Error('Wazuh integration not configured.');
     err.httpStatus = 404;
+    err.reason = 'not_configured';
+    throw err;
+  }
+  if (!row.rows[0].is_enabled) {
+    const err = new Error('Wazuh integration is disabled.');
+    err.httpStatus = 409;
+    err.reason = 'disabled';
     throw err;
   }
   const r = row.rows[0];
@@ -2627,12 +2645,16 @@ async function wazuhCached(key, produce) {
   return p;
 }
 
-/** Envelope returned when no Wazuh integration is configured at all. */
-function wazuhNotConfigured(days, keys) {
+/** Envelope returned when the Wazuh integration is missing or switched off.
+ *  `reason` is 'not_configured' | 'disabled' — the screens word their empty
+ *  state from it, because "you have not set this up" and "you set this up and
+ *  then disabled it" call for completely different next steps. */
+function wazuhUnavailable(days, keys, reason) {
   const out = {
     windowDays: days,
     source: null,
     configured: false,
+    reason: reason || 'not_configured',
     detected: null,
     sync: null,
     partial: [],
@@ -2655,8 +2677,8 @@ async function wazuhScreen(tenantId, screen, days) {
   let integration;
   try {
     integration = await loadWazuhIntegration(tenantId);
-  } catch (_) {
-    return wazuhNotConfigured(days, keys);
+  } catch (err) {
+    return wazuhUnavailable(days, keys, err.reason);
   }
 
   const tz  = integration.config.timeZone || 'UTC';

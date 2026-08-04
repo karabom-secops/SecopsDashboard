@@ -168,6 +168,7 @@ const O365Tab = (() => {
     const content = document.getElementById('o365-content');
 
     if (!s || !s.configured) {
+      U.renderEmptyState('o365-empty', s, 'the office365 module is enabled on your Wazuh manager');
       if (empty)   empty.hidden = false;
       if (content) content.hidden = true;
       U.renderSyncMeta('o365-sync-meta', s && s.sync);
@@ -202,7 +203,6 @@ const O365Tab = (() => {
     const sync = document.getElementById('o365-sync-btn');
     if (sync) sync.addEventListener('click', () => U.syncNow('o365-sync-btn', 'o365-sync-meta', loadAndRender));
 
-    U.bindAdminLink('o365-goto-admin');
   }
 
   return {

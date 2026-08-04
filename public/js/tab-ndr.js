@@ -151,11 +151,13 @@ const NdrTab = (() => {
     const empty   = document.getElementById('ndr-empty');
     const content = document.getElementById('ndr-content');
 
-    // Only a missing integration counts as "empty". Once Wazuh is configured the
-    // screen always renders, and individual panels explain their own gaps —
+    // Only a missing or disabled integration counts as "empty", and
+    // renderEmptyState words itself from which. Once Wazuh is connected the
+    // screen always renders and individual panels explain their own gaps —
     // showing the onboarding card because one source is quiet would hide the
     // sources that are working.
     if (!s || !s.configured) {
+      U.renderEmptyState('ndr-empty', s, 'your FortiGate is forwarding syslog to Wazuh');
       if (empty)   empty.hidden = false;
       if (content) content.hidden = true;
       U.renderSyncMeta('ndr-sync-meta', s && s.sync);
@@ -192,7 +194,6 @@ const NdrTab = (() => {
     const sync = document.getElementById('ndr-sync-btn');
     if (sync) sync.addEventListener('click', () => U.syncNow('ndr-sync-btn', 'ndr-sync-meta', loadAndRender));
 
-    U.bindAdminLink('ndr-goto-admin');
   }
 
   return {

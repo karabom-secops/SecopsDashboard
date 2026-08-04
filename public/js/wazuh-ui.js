@@ -295,6 +295,43 @@ const WazuhUI = (() => {
       : `Built from stored daily rollups over the last ${summary.windowDays} days — ranges beyond 30 days exceed the indexer's retention.`;
   }
 
+  /**
+   * Word a screen's empty state from why the integration is unavailable.
+   *
+   * "Never set up" and "set up, then switched off" look identical from the data
+   * side — both yield nothing — but they need opposite things from the operator.
+   * Telling someone to go configure an integration they already configured is
+   * how an afternoon disappears.
+   *
+   * @param {string} elId      the screen's empty-state container
+   * @param {object} summary   the /api/{ndr,o365}/summary response (may be null)
+   * @param {string} sourceHint what ingestion this screen needs, e.g.
+   *                            "your FortiGate is forwarding syslog to Wazuh"
+   */
+  function renderEmptyState(elId, summary, sourceHint) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const linkId = elId + '-admin-link';
+    const link = `<a href="#" id="${linkId}">Admin → Integrations</a>`;
+
+    let body;
+    if (summary && summary.reason === 'disabled') {
+      body = `<p><strong>The Wazuh integration is switched off.</strong></p>
+        <p>Its connection may be working fine — but while it is disabled nothing syncs and
+        this screen stays empty. Enable it under ${link}, then press Save.</p>`;
+    } else if (!summary) {
+      // The route answers null when a superadmin has no organisation selected.
+      body = `<p><strong>No organisation selected.</strong></p>
+        <p>Pick one from the Organisation dropdown in the header to see its data.</p>`;
+    } else {
+      body = `<p><strong>No data yet.</strong></p>
+        <p>Configure the Wazuh Indexer integration under ${link}, and make sure ${esc(sourceHint)}.</p>`;
+    }
+
+    el.innerHTML = body;
+    bindAdminLink(linkId);
+  }
+
   /** Wire an "Admin → Integrations" link inside an empty state. */
   function bindAdminLink(id) {
     const el = document.getElementById(id);
@@ -338,7 +375,7 @@ const WazuhUI = (() => {
     isReady, placeholder, restore, panel, fillTable,
     destroyChart, lineChart, doughnutChart, barChart,
     renderStats, renderSyncMeta, renderStaleBanner, renderSourceNote,
-    bindAdminLink, syncNow,
+    renderEmptyState, bindAdminLink, syncNow,
   };
 })();
 

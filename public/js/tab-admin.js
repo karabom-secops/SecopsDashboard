@@ -1040,7 +1040,13 @@
     const base_url  = regionSel ? regionSel.value.trim() : (urlInput ? urlInput.value.trim() : '');
 
     const api_key    = (keyInput ? keyInput.value.trim() : '');
-    const is_enabled = enabled ? enabled.checked : true;
+
+    // The toggle is rendered disabled-and-unchecked until a row exists, so on a
+    // first save `enabled.checked` is false and the integration would be stored
+    // disabled — connecting fine on Test but invisible to every screen that
+    // filters on is_enabled. A disabled toggle means "new integration", and
+    // nobody configures one intending it to be off.
+    const is_enabled = (enabled && !enabled.disabled) ? enabled.checked : true;
 
     if (!base_url) { setIntFeedback(providerId, 'Server region / Base URL is required.', true); return; }
 
@@ -1114,8 +1120,14 @@
         body: JSON.stringify(tenantBody()),
       });
       const data = await res.json();
-      if (data.ok) { setIntFeedback(providerId, '✓ ' + data.message, false); }
-      else         { setIntFeedback(providerId, '✗ ' + (data.error || 'Connection failed.'), true); }
+      if (data.ok) {
+        // A working connection on a disabled integration still shows nothing on
+        // its screens, so it gets a warning mark rather than a clean tick.
+        const disabled = data.isEnabled === false;
+        setIntFeedback(providerId, (disabled ? '⚠ ' : '✓ ') + data.message, disabled);
+      } else {
+        setIntFeedback(providerId, '✗ ' + (data.error || 'Connection failed.'), true);
+      }
     } catch (err) { setIntFeedback(providerId, 'Network error: ' + err.message, true); }
   }
 
