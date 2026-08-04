@@ -74,6 +74,17 @@
     if (label) label.textContent = TAB_LABELS[target] || '';
     document.title = (TAB_LABELS[target] ? TAB_LABELS[target] + ' · ' : '') + 'SecOps Dashboard';
 
+    window.currentTab = target;
+    renderTab(target);
+  }
+
+  /**
+   * Run a tab's renderer. Split out of switchTab so the same dispatch serves
+   * both "the user opened this tab" and "the data underneath it changed" —
+   * notably a superadmin switching organisation, which must not leave one
+   * tenant's numbers on screen labelled as another's.
+   */
+  function renderTab(target) {
     // Lazy-render tabs that need it
     if (target === 'metrics' && window._summaryData.length && window.currentWeekKey) {
       const weekData = window._lastWeekData;
@@ -140,6 +151,16 @@
       window.renderAdmin();
     }
   }
+
+  /* A superadmin changed the Organisation selector. Re-render whatever is on
+     screen: almost every tab is tenant-scoped, and showing one customer's
+     figures under another customer's name is worse than showing nothing.
+     Routing through renderTab means a tab added later is covered automatically
+     — the previous version named two tabs explicitly and silently went stale
+     for the other fourteen. */
+  document.addEventListener('tenant:changed', () => {
+    if (window.currentTab) renderTab(window.currentTab);
+  });
 
   // ── Manager Dashboard button ─────────────────────────────────────────────
   const managerDashboardBtn = document.getElementById('managerDashboardBtn');

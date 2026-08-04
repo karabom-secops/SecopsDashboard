@@ -138,7 +138,7 @@
       } catch (_) { /* non-critical */ }
     }
 
-    // ── Global tenant selector (superadmin only — shared across Vulns & Awareness) ──
+    // ── Global tenant selector (superadmin only — scopes every tenant-aware tab) ──
     window.globalTenantId = null;
     if (user.role === 'superadmin') {
       const globalWrap = document.getElementById('globalTenantFilterWrap');
@@ -157,15 +157,14 @@
             globalWrap.hidden = false;
             globalSel.addEventListener('change', function () {
               window.globalTenantId = globalSel.value ? parseInt(globalSel.value, 10) : null;
-              // Re-render whichever of the tenant-scoped tabs is currently visible
-              var activePanel = document.querySelector('.tab-panel:not([hidden])');
-              if (activePanel) {
-                if (activePanel.id === 'tab-vulns' && typeof window.renderVulns === 'function') {
-                  window.renderVulns();
-                } else if (activePanel.id === 'tab-awareness' && typeof window.renderAwareness === 'function') {
-                  window.renderAwareness();
-                }
-              }
+              // app.js re-renders the active tab. Announcing the change rather
+              // than naming tabs here is what keeps this correct as tabs are
+              // added — the old version listed Vulns and Awareness by hand and
+              // left every other tenant-scoped tab showing the previous
+              // customer's data.
+              document.dispatchEvent(new CustomEvent('tenant:changed', {
+                detail: { tenantId: window.globalTenantId },
+              }));
             });
           }
         } catch (_) { /* non-critical */ }
