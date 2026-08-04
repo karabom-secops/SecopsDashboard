@@ -20,24 +20,33 @@
     'remediation-tracker': document.getElementById('tab-remediation-tracker'),
     'secure-score': document.getElementById('tab-secure-score'),
     edr:          document.getElementById('tab-edr'),
+    ndr:          document.getElementById('tab-ndr'),
+    o365:         document.getElementById('tab-o365'),
     'mdr-pricing': document.getElementById('tab-mdr-pricing'),
     reports:      document.getElementById('tab-reports'),
     admin:        document.getElementById('tab-admin'),
   };
 
   // ── Sidebar navigation ────────────────────────────────────────────────────
-  const sideNavItems = document.querySelectorAll('.side-nav-item');
+  // Nav clicks, the active-item marking and the category accordion all live in
+  // sidenav.js, which delegates on `document` — so it reaches the cloned items
+  // inside a rail flyout as well as the real ones. Caching a NodeList here
+  // would snapshot the DOM at parse time and miss those clones entirely.
 
   const TAB_LABELS = {
     operations: 'Operations',
     metrics:    'Metrics & Trends',
+    redteam:    'Red Team',
     vulns:      'Vulnerabilities',
     awareness:  'Awareness',
     'incident-response': 'Incident Response',
+    grc:        'GRC',
     'risk-register': 'Risk Register',
     'remediation-tracker': 'Remediation Tracker',
     'secure-score': 'Secure Score',
     edr:        'Managed EDR',
+    ndr:        'Managed NDR',
+    o365:       'Managed Office 365',
     'mdr-pricing': 'MDR Pricing',
     reports:    'Reports',
     admin:      'Admin',
@@ -51,15 +60,19 @@
       return;
     }
 
-    // Update side nav active state
-    sideNavItems.forEach(item => {
-      item.classList.toggle('active', item.dataset.tab === target);
-    });
+    // Mark the active item (real + flyout clones) and open its category.
+    if (window.SideNav) window.SideNav.syncActive(target);
 
     // Show/hide panels
     Object.entries(tabPanels).forEach(([key, panel]) => {
       if (panel) panel.hidden = key !== target;
     });
+
+    // The sidebar is the usual "where am I", but it shrinks to icons or
+    // disappears entirely — so the header carries the name in those modes.
+    const label = document.getElementById('currentTabLabel');
+    if (label) label.textContent = TAB_LABELS[target] || '';
+    document.title = (TAB_LABELS[target] ? TAB_LABELS[target] + ' · ' : '') + 'SecOps Dashboard';
 
     // Lazy-render tabs that need it
     if (target === 'metrics' && window._summaryData.length && window.currentWeekKey) {
@@ -111,6 +124,12 @@
     if (target === 'edr' && typeof window.EdrTab !== 'undefined') {
       window.EdrTab.loadAndRender();
     }
+    if (target === 'ndr' && typeof window.NdrTab !== 'undefined') {
+      window.NdrTab.loadAndRender();
+    }
+    if (target === 'o365' && typeof window.O365Tab !== 'undefined') {
+      window.O365Tab.loadAndRender();
+    }
     if (target === 'mdr-pricing' && typeof window.MdrPricingTab !== 'undefined') {
       window.MdrPricingTab.loadAndRender();
     }
@@ -134,15 +153,8 @@
     });
   }
 
-  // Side nav items drive tab switching directly
-  sideNavItems.forEach(item => {
-    if (!item.dataset.tab) return; // plain links (e.g. Manager Dashboard) navigate normally
-    item.addEventListener('click', () => {
-      switchTab(item.dataset.tab);
-    });
-  });
-
-  // Expose so other modules can switch tabs programmatically
+  // Expose so other modules can switch tabs programmatically. sidenav.js calls
+  // through this too — its delegated click handler is what drives the nav.
   window.switchTab = switchTab;
 
   // ── Fetch the list of available weeks ────────────────────────────────────
@@ -253,17 +265,22 @@
     });
   }
 
-  // index.html marks Operations active by default. If the user has no access
-  // to it, fall back to the first tab in the side nav they can view.
+  // Operations is the default landing tab. If the user has no access to it,
+  // fall back to the first tab the side nav is actually showing them —
+  // SideNav.firstVisibleTab() walks the categories in order and then the
+  // pinned footer, so an admin-only user still lands somewhere.
   function selectDefaultTab() {
-    if (window.canView('operations')) return 'operations';
+    if (window.canView('operations')) {
+      switchTab('operations');
+      return 'operations';
+    }
 
-    const firstAllowed = Array.from(sideNavItems)
-      .map(item => item.dataset.tab)
-      .find(key => key && window.canView(key));
+    const firstAllowed = window.SideNav
+      ? window.SideNav.firstVisibleTab()
+      : Array.from(document.querySelectorAll('.side-nav-item[data-tab]'))
+          .map(item => item.dataset.tab)
+          .find(key => key && window.canView(key));
 
-    // Drop the pre-set active state and hide the Operations panel.
-    sideNavItems.forEach(item => item.classList.remove('active'));
     Object.values(tabPanels).forEach(panel => { if (panel) panel.hidden = true; });
 
     if (firstAllowed) switchTab(firstAllowed);

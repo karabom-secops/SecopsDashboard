@@ -201,6 +201,18 @@
       el.hidden = !window.canView(el.dataset.tab);
     });
 
+    // Roll that up to the category headers — otherwise a readonly or sales
+    // user is shown accordions that open onto nothing.
+    document.querySelectorAll('.side-nav-group').forEach(group => {
+      group.hidden = !group.querySelector('.side-nav-item[data-tab]:not([hidden])');
+    });
+
+    // Hand back to sidenav.js: re-run the accordion, repair the active tab if
+    // permissions just removed it, and drop the nav chrome if nothing is left.
+    // An event rather than a direct call because auth.js resolves
+    // asynchronously and must not depend on script order.
+    document.dispatchEvent(new CustomEvent('nav:permissions-updated'));
+
     // Overrides can leave someone with nothing at all — say so rather than
     // showing an empty dashboard shell.
     if (viewableTabs.length === 0 && !onManagerPage) {

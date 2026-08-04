@@ -26,11 +26,12 @@ const { calculateSecureScore, generateRecommendations } = require('./lib/secure-
 const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils');
 const arcticWolfAdapter = require('./lib/integrations/arctic-wolf');
 const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
-const irisDfirAdapter   = require('./lib/integrations/iris-dfir');
 const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports');
 const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
 const sentinelOneAdapter = require('./lib/integrations/sentinelone');
+const wazuhAdapter = require('./lib/integrations/wazuh-indexer');
 const { computeEdrSummary } = require('./lib/edr-metrics');
+const wazuhMetrics = require('./lib/wazuh-metrics');
 const { buildPentestReport, imageDimensions, DEFAULT_OWASP } = require('./lib/report-docx');
 
 const app  = express();
@@ -1852,7 +1853,6 @@ app.delete('/api/mdr', async (req, res) => {
 
 const INTEGRATION_ADAPTERS = {
   arctic_wolf: arcticWolfAdapter,
-  iris_dfir:   irisDfirAdapter,
 };
 
 // Arctic Wolf Reports (security-awareness session history) isn't ticket-shaped,
@@ -1863,7 +1863,12 @@ const REPORTS_PROVIDER = 'arctic_wolf_reports';
 // agent fleet into their own tables for the Managed EDR tab.
 const EDR_PROVIDER = 'sentinelone';
 
-const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER]);
+// Wazuh is a log SOURCE rather than a ticket feed: the Managed NDR and Managed
+// Office 365 tabs live-query its indexer for short ranges, and its "sync" writes
+// daily rollups for the long ones. Not in INTEGRATION_ADAPTERS for that reason.
+const WAZUH_PROVIDER = 'wazuh';
+
+const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER]);
 
 function resolveIntegrationTenant(req, source) {
   if (req.session.role === 'superadmin') {
@@ -2004,6 +2009,31 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
       await arcticWolfReportsAdapter.testConnection({ base_url, api_key, ...(config_json || {}) });
     } else if (provider === EDR_PROVIDER) {
       await sentinelOneAdapter.testConnection({ base_url, api_key, ...(config_json || {}) });
+    } else if (provider === WAZUH_PROVIDER) {
+      const cfg  = { base_url, api_key, ...(config_json || {}) };
+      const info = await wazuhAdapter.testConnection(cfg);
+
+      // A successful test is the natural moment to work out which modules are
+      // actually ingesting. The screens read this to decide whether a panel
+      // draws a chart or explains why it can't — see detectModules().
+      let detected = null;
+      try {
+        detected = await wazuhAdapter.detectModules({ ...cfg, tsField: info.tsField });
+      } catch (probeErr) {
+        console.warn('[wazuh] module probe failed after a successful connection —', probeErr.message);
+      }
+
+      const merged = {
+        ...(config_json || {}),
+        tsField: info.tsField,
+        ...(info.tlsFingerprint ? { tlsFingerprint: info.tlsFingerprint } : {}),
+        ...(detected ? { detected } : {}),
+      };
+      await pool.query(
+        'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
+        [JSON.stringify(merged), tenantId, provider]
+      );
+      return res.json({ ok: true, message: info.message, detected });
     } else {
       await adapter.fetchTickets({ base_url, api_key, ...(config_json || {}) }, true);
     }
@@ -2091,7 +2121,7 @@ async function runArcticWolfReportsSync(tenantId, userId) {
   }
 }
 
-/** Core sync logic for ticket-shaped providers (Arctic Wolf tickets, IrisDFIR).
+/** Core sync logic for ticket-shaped providers (Arctic Wolf tickets).
  *  Throws on failure; thrown errors carry `.httpStatus` for the HTTP route. */
 async function runTicketIntegrationSync(provider, tenantId, userId) {
   const adapter = INTEGRATION_ADAPTERS[provider];
@@ -2321,6 +2351,73 @@ async function runSentinelOneSync(tenantId) {
   }
 }
 
+/** Load an enabled Wazuh integration row with its key decrypted, or throw. */
+async function loadWazuhIntegration(tenantId) {
+  const row = await pool.query(
+    `SELECT id, tenant_id, base_url, api_key_enc, api_key_iv, config_json
+       FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE`,
+    [tenantId, WAZUH_PROVIDER]
+  );
+  if (!row.rows.length) {
+    const err = new Error('Wazuh integration not configured or disabled.');
+    err.httpStatus = 404;
+    throw err;
+  }
+  const r = row.rows[0];
+  return {
+    id:        r.id,
+    tenant_id: r.tenant_id,
+    base_url:  r.base_url,
+    api_key:   decryptKey(r.api_key_enc, r.api_key_iv),
+    config:    r.config_json || {},
+  };
+}
+
+/** Config object the adapter expects, assembled from the integration row. */
+function wazuhConfig(integration) {
+  return Object.assign({}, integration.config, {
+    base_url: integration.base_url,
+    api_key:  integration.api_key,
+    // Stable shard routing per tenant, so cardinality/terms approximations do
+    // not jitter between refreshes. Users notice numbers moving on a reload.
+    preference: `secops-${integration.tenant_id}`,
+  });
+}
+
+/** Core sync for Wazuh: snapshot yesterday plus any day the backfill window
+ *  says is missing, errored or partial. Idempotent by construction — see
+ *  lib/wazuh-metrics.js writeBag(). */
+async function runWazuhRollupSync(tenantId) {
+  const integration = await loadWazuhIntegration(tenantId);
+  const tz   = integration.config.timeZone || 'UTC';
+  const days = await wazuhMetrics.daysNeedingSnapshot(pool, integration.id, tz);
+
+  let rows = 0;
+  const failures = [];
+  for (const day of days) {
+    try {
+      const r = await wazuhMetrics.snapshotDay(pool, integration, day);
+      rows += r.rows;
+    } catch (err) {
+      failures.push(`${day}: ${err.message}`);
+    }
+  }
+
+  const ok = failures.length === 0;
+  const message = ok
+    ? `Snapshotted ${days.length} day${days.length !== 1 ? 's' : ''} (${rows} metric rows)`
+    : `Snapshotted ${days.length - failures.length}/${days.length} days — ${failures[0]}`;
+
+  await pool.query(
+    `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = $1, last_sync_message = $2
+      WHERE tenant_id = $3 AND provider = $4`,
+    [ok ? 'ok' : 'error', message, tenantId, WAZUH_PROVIDER]
+  );
+
+  console.log(`[integrations] wazuh rollup: ${message} for tenant ${tenantId}`);
+  return { ok, synced: rows, days: days.length, message };
+}
+
 /** POST /api/integrations/:provider/sync — fetch fresh data from the provider and store it */
 app.post('/api/integrations/:provider/sync', async (req, res) => {
   const provider = req.params.provider;
@@ -2329,9 +2426,10 @@ app.post('/api/integrations/:provider/sync', async (req, res) => {
 
   try {
     let result;
-    if (provider === REPORTS_PROVIDER)   result = await runArcticWolfReportsSync(tenantId, req.session.userId);
-    else if (provider === EDR_PROVIDER)  result = await runSentinelOneSync(tenantId);
-    else                                 result = await runTicketIntegrationSync(provider, tenantId, req.session.userId);
+    if (provider === REPORTS_PROVIDER)     result = await runArcticWolfReportsSync(tenantId, req.session.userId);
+    else if (provider === EDR_PROVIDER)    result = await runSentinelOneSync(tenantId);
+    else if (provider === WAZUH_PROVIDER)  result = await runWazuhRollupSync(tenantId);
+    else                                   result = await runTicketIntegrationSync(provider, tenantId, req.session.userId);
     return res.json(result);
   } catch (err) {
     if (err.stillGenerating) {
@@ -2351,10 +2449,10 @@ const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 async function runScheduledSyncs() {
   let rows;
   try {
-    // SentinelOne is excluded — it runs on its own 6-hourly cadence below.
+    // SentinelOne and Wazuh are excluded — they run on their own cadences below.
     rows = (await pool.query(
-      'SELECT tenant_id, provider FROM integrations WHERE is_enabled = TRUE AND provider <> $1',
-      [EDR_PROVIDER]
+      'SELECT tenant_id, provider FROM integrations WHERE is_enabled = TRUE AND provider <> ALL($1::text[])',
+      [[EDR_PROVIDER, WAZUH_PROVIDER]]
     )).rows;
   } catch (err) {
     console.error('[integrations] scheduled sync: failed to load integrations —', err.message);
@@ -2442,6 +2540,185 @@ async function runEdrSyncs() {
 
 setTimeout(() => { runEdrSyncs().catch(err => console.error('[integrations] sentinelone sync crashed —', err.message)); }, 45 * 1000);
 setInterval(() => { runEdrSyncs().catch(err => console.error('[integrations] sentinelone sync crashed —', err.message)); }, EDR_SYNC_INTERVAL_MS);
+
+// ── Wazuh daily rollups (hourly tick, snapshots complete days) ──────────────
+// The Managed NDR and Managed O365 tabs read the indexer live for short ranges,
+// so this job exists only to keep long-range trends alive past the indexer's
+// retention. It ticks hourly rather than daily because daysNeedingSnapshot()
+// always re-runs yesterday: the Office 365 Management Activity API delivers
+// events up to 24h late, so a day that looked complete last night usually is
+// not. Re-snapshotting is safe — writeBag() is idempotent.
+
+const WAZUH_ROLLUP_INTERVAL_MS = 60 * 60 * 1000;
+let wazuhRollupRunning = false;
+
+async function runWazuhRollups() {
+  if (wazuhRollupRunning) {
+    console.log('[integrations] wazuh rollup still running — skipping this tick');
+    return;
+  }
+  wazuhRollupRunning = true;
+
+  try {
+    let rows;
+    try {
+      rows = (await pool.query(
+        'SELECT tenant_id FROM integrations WHERE is_enabled = TRUE AND provider = $1',
+        [WAZUH_PROVIDER]
+      )).rows;
+    } catch (err) {
+      console.error('[integrations] wazuh rollup: failed to load integrations —', err.message);
+      return;
+    }
+
+    for (const row of rows) {
+      try {
+        await runWazuhRollupSync(row.tenant_id);
+      } catch (err) {
+        console.error(`[integrations] wazuh rollup failed: tenant ${row.tenant_id} — ${err.message}`);
+      }
+    }
+  } finally {
+    wazuhRollupRunning = false;
+  }
+}
+
+setTimeout(() => { runWazuhRollups().catch(err => console.error('[integrations] wazuh rollup crashed —', err.message)); }, 90 * 1000);
+setInterval(() => { runWazuhRollups().catch(err => console.error('[integrations] wazuh rollup crashed —', err.message)); }, WAZUH_ROLLUP_INTERVAL_MS);
+
+// ── Managed NDR & Managed Office 365 (Wazuh) data routes ───────────────────
+
+function resolveWazuhTenant(req) {
+  if (req.session.role === 'superadmin') {
+    const tid = parseInt(req.query.tenantId, 10);
+    if (isNaN(tid) || tid < 1) return { tenantId: null };
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+/**
+ * Short-lived response cache. Dashboards get tab-switched and refreshed
+ * constantly, and Wazuh Indexer nodes are usually undersized — without this one
+ * impatient user can fan a single screen out into dozens of searches.
+ */
+const WAZUH_CACHE_TTL_MS = 45 * 1000;
+const wazuhCache   = new Map();  // key → { at, value }
+const wazuhInFlight = new Map(); // key → Promise (collapses concurrent misses)
+
+async function wazuhCached(key, produce) {
+  const hit = wazuhCache.get(key);
+  if (hit && Date.now() - hit.at < WAZUH_CACHE_TTL_MS) return hit.value;
+
+  const pending = wazuhInFlight.get(key);
+  if (pending) return pending;
+
+  const p = (async () => {
+    try {
+      const value = await produce();
+      wazuhCache.set(key, { at: Date.now(), value });
+      return value;
+    } finally {
+      wazuhInFlight.delete(key);
+    }
+  })();
+
+  wazuhInFlight.set(key, p);
+  return p;
+}
+
+/** Envelope returned when no Wazuh integration is configured at all. */
+function wazuhNotConfigured(days, keys) {
+  const out = {
+    windowDays: days,
+    source: null,
+    configured: false,
+    detected: null,
+    sync: null,
+    partial: [],
+  };
+  keys.forEach(k => { out[k] = { available: false, data: null, reason: 'not_ingesting', lastEventAt: null }; });
+  return out;
+}
+
+/**
+ * Fetch a screen's panels, choosing the data source by range.
+ *
+ * ≤ 30 days comes from the indexer live; longer ranges come from the Postgres
+ * rollups, which is the only place data older than the indexer's retention
+ * still exists. The two are never blended inside one chart — the response says
+ * which was used so the UI can label it.
+ */
+async function wazuhScreen(tenantId, screen, days) {
+  const keys = screen === 'ndr' ? ['traffic', 'threats', 'geo', 'vpnAdmin'] : ['o365', 'graph'];
+
+  let integration;
+  try {
+    integration = await loadWazuhIntegration(tenantId);
+  } catch (_) {
+    return wazuhNotConfigured(days, keys);
+  }
+
+  const tz  = integration.config.timeZone || 'UTC';
+  const key = `${integration.id}:${screen}:${days}:${tz}`;
+
+  return wazuhCached(key, async () => {
+    const live = days <= wazuhMetrics.LIVE_MAX_DAYS;
+    let panels;
+
+    if (live) {
+      const cfg   = wazuhConfig(integration);
+      const range = { from: `now-${days}d/d`, to: 'now', tz };
+      panels = screen === 'ndr'
+        ? await wazuhAdapter.fetchNdr(cfg, range)
+        : await wazuhAdapter.fetchO365(cfg, range);
+    } else {
+      panels = screen === 'ndr'
+        ? await wazuhMetrics.ndrFromRollups(pool, tenantId, days)
+        : await wazuhMetrics.o365FromRollups(pool, tenantId, days);
+    }
+
+    const meta = await pool.query(
+      `SELECT last_synced_at, last_sync_status, last_sync_message
+         FROM integrations WHERE tenant_id = $1 AND provider = $2`,
+      [tenantId, WAZUH_PROVIDER]
+    );
+
+    const out = {
+      windowDays: days,
+      source: live ? 'live' : 'rollup',
+      configured: true,
+      timeZone: tz,
+      detected: integration.config.detected || null,
+      sync: meta.rows[0] || null,
+      partial: panels._partial || [],
+    };
+    keys.forEach(k => { out[k] = panels[k]; });
+    return out;
+  });
+}
+
+function wazuhDays(req) {
+  return Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
+}
+
+/** GET /api/ndr/summary?days=30 — Managed NDR panels (firewall) */
+app.get('/api/ndr/summary', requireAuth, async (req, res) => {
+  try {
+    const { tenantId } = resolveWazuhTenant(req);
+    if (tenantId === null) return res.json(null);
+    res.json(await wazuhScreen(tenantId, 'ndr', wazuhDays(req)));
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/o365/summary?days=30 — Managed Office 365 panels */
+app.get('/api/o365/summary', requireAuth, async (req, res) => {
+  try {
+    const { tenantId } = resolveWazuhTenant(req);
+    if (tenantId === null) return res.json(null);
+    res.json(await wazuhScreen(tenantId, 'o365', wazuhDays(req)));
+  } catch (err) { return serverError(res, err); }
+});
 
 // ── Managed EDR (SentinelOne) data routes ──────────────────────────────────
 
