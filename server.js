@@ -2724,21 +2724,37 @@ function wazuhDays(req) {
   return Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
 }
 
+/* Keys the two screens expect back, so an unavailable response is still shaped
+   the way the client renders. */
+const WAZUH_SCREEN_KEYS = {
+  ndr:  ['traffic', 'threats', 'geo', 'vpnAdmin'],
+  o365: ['o365', 'graph'],
+};
+
+/** Resolve the tenant, or answer with a *reasoned* envelope rather than `null`.
+ *  A bare null forced the client to guess why it got nothing, and it guessed
+ *  wrong — an admin whose account has no active organisation was told to pick
+ *  one from a dropdown only superadmins can see. */
+function wazuhScreenFor(req, screen) {
+  const days = wazuhDays(req);
+  const { tenantId } = resolveWazuhTenant(req);
+  if (tenantId === null || tenantId === undefined) {
+    return wazuhUnavailable(days, WAZUH_SCREEN_KEYS[screen], 'no_tenant');
+  }
+  return wazuhScreen(tenantId, screen, days);
+}
+
 /** GET /api/ndr/summary?days=30 — Managed NDR panels (firewall) */
 app.get('/api/ndr/summary', requireAuth, async (req, res) => {
   try {
-    const { tenantId } = resolveWazuhTenant(req);
-    if (tenantId === null) return res.json(null);
-    res.json(await wazuhScreen(tenantId, 'ndr', wazuhDays(req)));
+    res.json(await wazuhScreenFor(req, 'ndr'));
   } catch (err) { return serverError(res, err); }
 });
 
 /** GET /api/o365/summary?days=30 — Managed Office 365 panels */
 app.get('/api/o365/summary', requireAuth, async (req, res) => {
   try {
-    const { tenantId } = resolveWazuhTenant(req);
-    if (tenantId === null) return res.json(null);
-    res.json(await wazuhScreen(tenantId, 'o365', wazuhDays(req)));
+    res.json(await wazuhScreenFor(req, 'o365'));
   } catch (err) { return serverError(res, err); }
 });
 

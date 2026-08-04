@@ -314,15 +314,32 @@ const WazuhUI = (() => {
     const linkId = elId + '-admin-link';
     const link = `<a href="#" id="${linkId}">Admin → Integrations</a>`;
 
+    const reason = summary && summary.reason;
     let body;
-    if (summary && summary.reason === 'disabled') {
+
+    if (!summary) {
+      // The request itself failed. Say that, rather than inventing a cause —
+      // guessing here is what previously told an admin to use a dropdown only
+      // superadmins can see.
+      body = `<p><strong>Could not load this screen.</strong></p>
+        <p>The request to the server failed. Try Refresh; if it keeps happening, check the
+        server log for the error behind it.</p>`;
+    } else if (reason === 'no_tenant') {
+      // No organisation is attached to this request. For a superadmin that means
+      // the header filter is unset; for everyone else it means their account has
+      // no active organisation, which they cannot fix from the filter.
+      const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+      body = isSA
+        ? `<p><strong>No organisation selected.</strong></p>
+           <p>Pick one from the Organisation dropdown in the header to see its data.</p>`
+        : `<p><strong>Your account has no active organisation.</strong></p>
+           <p>If there is an organisation dropdown in the header, choose one there. Otherwise ask an
+           administrator to assign your account to an organisation — every screen on this dashboard
+           is scoped to one.</p>`;
+    } else if (reason === 'disabled') {
       body = `<p><strong>The Wazuh integration is switched off.</strong></p>
         <p>Its connection may be working fine — but while it is disabled nothing syncs and
         this screen stays empty. Enable it under ${link}, then press Save.</p>`;
-    } else if (!summary) {
-      // The route answers null when a superadmin has no organisation selected.
-      body = `<p><strong>No organisation selected.</strong></p>
-        <p>Pick one from the Organisation dropdown in the header to see its data.</p>`;
     } else {
       body = `<p><strong>No data yet.</strong></p>
         <p>Configure the Wazuh Indexer integration under ${link}, and make sure ${esc(sourceHint)}.</p>`;

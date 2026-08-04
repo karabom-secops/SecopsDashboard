@@ -113,6 +113,22 @@
         if (tRes.ok) {
           const tenants = await tRes.json();
           if (tenants.length > 1) {
+            // Without an active tenant nothing gets `selected`, so the browser
+            // displays the FIRST option as though it were active while the
+            // session actually has none. Choosing that same visible option then
+            // fires no change event, leaving the user permanently stuck with
+            // every tenant-scoped screen empty. An explicit placeholder makes
+            // the displayed state match reality and makes any real choice fire.
+            var hasActive = tenants.some(function (t) { return t.id === user.tenantId; });
+            if (!hasActive) {
+              var ph = document.createElement('option');
+              ph.value       = '';
+              ph.textContent = '— Select organisation —';
+              ph.disabled    = true;
+              ph.selected    = true;
+              tenantSwitcher.appendChild(ph);
+            }
+
             tenants.forEach(function (t) {
               var opt = document.createElement('option');
               opt.value = t.id;
@@ -123,6 +139,7 @@
             tenantSwitcher.hidden = false;
             tenantSwitcher.addEventListener('change', async function () {
               var newId = parseInt(tenantSwitcher.value, 10);
+              if (isNaN(newId)) return;   // placeholder
               try {
                 await fetch(apiUrl('auth/switch-tenant'), {
                   method: 'POST',
