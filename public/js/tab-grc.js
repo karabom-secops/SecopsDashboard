@@ -412,7 +412,60 @@ const GrcTab = (() => {
     '.dt tbody td{padding:1.7mm 2mm}',
 
     '.bl li{font-size:11.5pt;margin-bottom:4mm}',
+
+    /* Print sharpness. Synthetic antialiasing thins the strokes and prints
+       soft; let the print pipeline hint the glyphs itself. */
+    '@media print{body{-webkit-font-smoothing:auto}}',
   ].join('\n');
+
+  /**
+   * Recolour the logo's pixels to white, preserving alpha.
+   *
+   * ReportDeck makes the cover logo white with `filter:brightness(0) invert(1)`.
+   * A CSS filter forces the image into its own composited layer, which Chrome
+   * rasterises at screen DPI when printing — so the mark prints noticeably
+   * softer than everything around it. Baking the colour in keeps it an ordinary
+   * image at its native 2231×1751, and lets us switch the filter off.
+   *
+   * Resolves to null on any failure; callers fall back to the filtered original.
+   */
+  async function whiteLogoDataUri(srcDataUri) {
+    if (!srcDataUri) return null;
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload  = () => resolve(i);
+        i.onerror = reject;
+        i.src = srcDataUri;
+      });
+      const w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) return null;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const cx = canvas.getContext('2d');
+      cx.drawImage(img, 0, 0);
+
+      // A data: URI does not taint the canvas, so getImageData is allowed here.
+      const px = cx.getImageData(0, 0, w, h);
+      const d  = px.data;
+      for (let i = 0; i < d.length; i += 4) { d[i] = 255; d[i + 1] = 255; d[i + 2] = 255; }
+      cx.putImageData(px, 0, 0);
+
+      return canvas.toDataURL('image/png');
+    } catch (_) { return null; }
+  }
+
+  // ReportDeck's watermark tinted by `.cover-wm{opacity:.07}`. Same mark, but
+  // with the alpha baked into the stroke colour — one less composited layer,
+  // for the same reason the logo avoids a filter.
+  const WATERMARK =
+    '<svg class="cover-wm" viewBox="0 0 100 100" aria-hidden="true">' +
+      '<g stroke="rgba(255,255,255,0.07)" stroke-width="19" stroke-linecap="round" fill="none">' +
+        '<line x1="20" y1="14" x2="80" y2="86"/>' +
+        '<line x1="80" y1="14" x2="20" y2="86"/>' +
+      '</g>' +
+    '</svg>';
 
   function esc(s) { return window.ReportShell.esc(s); }
 
@@ -485,10 +538,12 @@ const GrcTab = (() => {
    */
   function coverSlide(ctx) {
     const D = window.ReportDeck;
+    // Prefer the pre-whitened logo; the filtered original is the fallback.
+    const coverLogo = ctx.logoWhiteDataUri || ctx.logoDataUri;
     return '<div class="slide cover">' +
-        D.WATERMARK_X +
+        WATERMARK +
         '<div class="cover-inner">' +
-          (ctx.logoDataUri ? '<img class="cover-logo" src="' + ctx.logoDataUri + '" alt="Reflex">' : '') +
+          (coverLogo ? '<img class="cover-logo" src="' + coverLogo + '" alt="Reflex">' : '') +
           '<div class="cover-mid">' +
             '<div class="cover-title">' + esc(ctx.clientName) + ' GRC &amp; Insurability</div>' +
             '<div class="cover-sub">Governance, Risk and Compliance Assessment</div>' +
@@ -797,6 +852,7 @@ const GrcTab = (() => {
       answered:    answered,
       logoDataUri: await S.logoToDataUri(),
     };
+    ctx.logoWhiteDataUri = await whiteLogoDataUri(ctx.logoDataUri);
 
     const slides = [coverSlide(ctx)];
     const push = (s) => { slides.push(s); };
@@ -820,8 +876,15 @@ const GrcTab = (() => {
     const doc = D.renderDeck(slides, ctx);
     if (doc.indexOf('</head>') === -1) throw new Error('renderDeck emitted no </head>');
 
+    const css = PORTRAIT_CSS +
+      // Only safe once the pixels are already white — otherwise the mark would
+      // print in its original dark colours on the blue cover.
+      (ctx.logoWhiteDataUri ? '\n.cover-logo{filter:none}' : '') +
+      // The alpha is baked into the stroke, so the layer-forming opacity goes.
+      '\n.cover-wm{opacity:1}';
+
     S.openReportWindow(
-      doc.replace('</head>', '<style>\n' + PORTRAIT_CSS + '\n</style>\n</head>'),
+      doc.replace('</head>', '<style>\n' + css + '\n</style>\n</head>'),
       { width: 940, height: 1000 }
     );
   }
