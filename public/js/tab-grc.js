@@ -352,15 +352,67 @@ const GrcTab = (() => {
   const WEIGHT_POINTS = { critical: 5, high: 3, medium: 2, low: 1 };
   const ANSWER_LABEL  = { yes: 'Yes', partial: 'Partial', no: 'No', na: 'N/A' };
 
-  // Slides are fixed-height with overflow:hidden, so an over-long table is
-  // cropped silently — cap rows per slide and spill onto continuation slides.
-  // Budget: ~130mm of body height. A control wraps to at most 3 lines at
-  // MAX_CONTROL_CHARS in a ~42%-wide column, so these counts fit with headroom.
-  const MAX_DOMAIN_ROWS   = 13;
-  const MAX_GAP_ROWS      = 8;
-  const MAX_APPENDIX_ROWS = 9;
-  const MAX_CONTROL_CHARS = 160;
-  const MAX_NOTE_CHARS    = 90;
+  // Pages are fixed-height with overflow:hidden, so an over-long table is
+  // cropped silently — cap rows per page and spill onto continuation pages.
+  // Budget: ~235mm of body height on A4 portrait. A control wraps to at most 3
+  // lines at MAX_CONTROL_CHARS in the narrower portrait column, giving a ~16mm
+  // row, so these counts fit with headroom.
+  const MAX_DOMAIN_ROWS   = 20;
+  const MAX_GAP_ROWS      = 12;
+  const MAX_APPENDIX_ROWS = 13;
+  const MAX_CONTROL_CHARS = 120;
+  const MAX_NOTE_CHARS    = 60;
+
+  /**
+   * A4 portrait geometry.
+   *
+   * ReportDeck is landscape 16:9 by contract — the client deck on the Reporting
+   * tab depends on it — so this restates only the size-dependent rules and is
+   * appended after DECK_CSS, where equal specificity means it wins. Every
+   * colour, table, cover and footer style still comes from ReportDeck, so the
+   * two reports stay visually identical apart from the page shape.
+   */
+  const PORTRAIT_CSS = [
+    '@page{size:210mm 297mm;margin:0}',
+    '.slide{width:210mm;height:297mm;padding:14mm 15mm 11mm}',
+
+    /* Type scaled to the narrower measure */
+    '.sl-title{font-size:22pt;letter-spacing:-.2pt}',
+    '.sl-logo{height:11mm}',
+    '.sl-body{padding-top:5mm}',
+
+    /* Cover */
+    '.cover-inner{padding:14mm 15mm 11mm}',
+    '.cover-logo{height:14mm}',
+    '.cover-wm{top:-26mm;right:-24mm;width:104mm;height:104mm}',
+    '.cover-mid{padding-right:10mm}',
+    '.cover-title{font-size:34pt;letter-spacing:-.6pt}',
+    '.cover-sub{font-size:15pt;margin-top:5mm}',
+    '.cover-hr{width:62mm;margin:9mm 0 4mm}',
+    '.cover-hr2{width:62mm;margin:4mm 0 0}',
+    '.cover-author{font-size:12pt}',
+
+    /* Headline tiles — three across a 180mm measure */
+    '.ov-stack{justify-content:flex-start;gap:9mm}',
+    '.ov-row.three .ov-card{min-height:52mm}',
+    '.ov-card{padding:5mm 5mm 4.5mm}',
+    '.ov-t{font-size:12.5pt}',
+    '.ov-d{font-size:8.5pt}',
+    '.ov-num{font-size:24pt;margin-top:3.5mm}',
+    '.ov-sub{font-size:9pt;margin-top:2mm}',
+
+    /* Framework cards */
+    '.cmp-card{padding:4.5mm 5mm}',
+    '.cmp-t{font-size:11pt}',
+    '.cmp-score{font-size:17pt}',
+
+    /* Tables: less width, far more height */
+    '.dt{font-size:8.5pt}',
+    '.dt thead th{font-size:8pt;padding:1.8mm 2mm}',
+    '.dt tbody td{padding:1.7mm 2mm}',
+
+    '.bl li{font-size:11.5pt;margin-bottom:4mm}',
+  ].join('\n');
 
   function esc(s) { return window.ReportShell.esc(s); }
 
@@ -597,10 +649,10 @@ const GrcTab = (() => {
       }));
 
     const cols = [
-      { label: 'Weight',    key: 'weight',  width: '11%', raw: r => coloredCell(r.weight, W[r._w] || '#A6A6A6') },
-      { label: 'Control',   key: 'control', width: '42%' },
+      { label: 'Weight',    key: 'weight',  width: '12%', raw: r => coloredCell(r.weight, W[r._w] || '#A6A6A6') },
+      { label: 'Control',   key: 'control', width: '40%' },
       { label: 'Reference', key: 'ref',     width: '14%' },
-      { label: 'Status',    key: 'status',  width: '10%', raw: r => coloredCell(r.status, C[r._ans]) },
+      { label: 'Status',    key: 'status',  width: '11%', raw: r => coloredCell(r.status, C[r._ans]) },
       { label: 'Notes',     key: 'notes',   width: '23%' },
     ];
 
@@ -650,12 +702,12 @@ const GrcTab = (() => {
     if (!rows.length) return [];
 
     const cols = [
-      { label: 'Domain',    key: 'domain',  width: '18%' },
-      { label: 'Control',   key: 'control', width: '36%' },
+      { label: 'Domain',    key: 'domain',  width: '16%' },
+      { label: 'Control',   key: 'control', width: '34%' },
       { label: 'Reference', key: 'ref',     width: '13%' },
       { label: 'Weight',    key: 'weight',  width: '10%' },
-      { label: 'Answer',    key: 'answer',  width: '10%', raw: r => coloredCell(r.answer, r._ans ? C[r._ans] : '#A6A6A6') },
-      { label: 'Notes',     key: 'notes',   width: '13%' },
+      { label: 'Answer',    key: 'answer',  width: '11%', raw: r => coloredCell(r.answer, r._ans ? C[r._ans] : '#A6A6A6') },
+      { label: 'Notes',     key: 'notes',   width: '16%' },
     ];
 
     const pages = chunkRows(rows, MAX_APPENDIX_ROWS);
@@ -762,7 +814,16 @@ const GrcTab = (() => {
     ctx.pageNo = slides.length + 1;
     push(methodologySlide(ctx));
 
-    S.openReportWindow(D.renderDeck(slides, ctx), { width: 1280, height: 820 });
+    // renderDeck() hardcodes the landscape DECK_CSS, so the portrait overrides
+    // go in as a second stylesheet immediately before </head> — last sheet wins
+    // at equal specificity. Everything else about the document is ReportDeck's.
+    const doc = D.renderDeck(slides, ctx);
+    if (doc.indexOf('</head>') === -1) throw new Error('renderDeck emitted no </head>');
+
+    S.openReportWindow(
+      doc.replace('</head>', '<style>\n' + PORTRAIT_CSS + '\n</style>\n</head>'),
+      { width: 940, height: 1000 }
+    );
   }
 
   /** Wired from the static header button — loads data first if the tab is cold. */
