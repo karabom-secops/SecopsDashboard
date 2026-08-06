@@ -6,12 +6,12 @@ const MdrPricingTab = (() => {
 
   // Default annual unit cost ($) per line item — used until the user overrides them.
   const DEFAULT_RATES = {
-    mdrUser:      35.02,
-    mdrServer:    35.02,
-    o365:         12.86,
+    mdrUser:      61.44,
+    mdrServer:    61.44,
+    o365:         22.56,
     incident:     670.00,
     dataExplorer: 13.68,
-    platform:     8.55,
+    platform:     15.00,
     logRetention: 0.00,
     sensor:       712.52,
     physicalSensor: 2171.00,
