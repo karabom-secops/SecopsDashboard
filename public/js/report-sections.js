@@ -382,9 +382,9 @@ window.ReportSections = (function () {
   // Sources are the same combined payload the Remediation Tracker tab uses
   // (/api/remediation-tracker): vuln findings, pentest findings and risks.
   //
-  // NOTE: vuln_findings has no due_date column — only pentest_findings and risks
-  // carry a target date — so vulnerabilities can appear on the "remediated" side
-  // but never on the "scheduled" side. See the caveat rendered under that column.
+  // All three carry a target date: pentest findings and risks have one entered by
+  // hand, vuln findings get one from the severity SLA (first detected + 1 week for
+  // Critical, 2 weeks High, 1 month Medium, 2 months Low — see lib/vuln-parser.js).
 
   // Both columns now stack vertically (see .rem-cols), so the two tables share
   // the body height rather than sitting side by side.
@@ -414,6 +414,7 @@ window.ReportSections = (function () {
   }
 
   var CLOSED_PENTEST = { fixed: 1, accepted: 1, 'risk-accepted': 1 };
+  var CLOSED_VULN    = { fixed: 1, accepted: 1 };
 
   /** Vuln findings store 'Critical'; pentest findings store 'critical'. */
   function titleCase(s) {
@@ -451,6 +452,13 @@ window.ReportSections = (function () {
 
   function collectScheduled(data, period) {
     var out = [];
+
+    (data.vulns || []).forEach(function (v) {
+      if (CLOSED_VULN[v.status]) return;
+      if (monthOf(v.dueDate) !== period) return;
+      out.push({ source: 'Vuln', item: v.name, detail: v.host || v.cve || '',
+                 severity: v.risk || '', when: v.dueDate });
+    });
 
     (data.pentestFindings || []).forEach(function (f) {
       if (CLOSED_PENTEST[f.status]) return;
@@ -525,7 +533,8 @@ window.ReportSections = (function () {
           'Scheduled', 'Due during ' + periodName(next),
           upcoming, 'Due',
           'Nothing is currently scheduled for ' + periodName(next) + '.',
-          'Covers risks and pentest findings — scan findings carry no target date.') +
+          'Scan findings are dated by remediation SLA: Critical 1 week, High 2 weeks, ' +
+          'Medium 1 month, Low 2 months from first detection.') +
       '</div>';
   }
 

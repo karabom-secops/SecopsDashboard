@@ -12,6 +12,12 @@ const RemediationTrackerTab = (() => {
 
   const DEFAULT_DURATION_DAYS = 14;
 
+  // Vulnerability remediation SLA, in days from first detection.
+  // Mirrors SLA_DAYS in lib/vuln-parser.js — the server stores the resulting
+  // due_date on each finding; this is only a fallback for scans uploaded before
+  // due dates were persisted.
+  const VULN_SLA_DAYS = { critical: 7, high: 14, medium: 30, low: 60 };
+
   const STATUS_OPTIONS = {
     vuln:     [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted']],
     risk:     [['identified', 'Identified'], ['assessing', 'Assessing'], ['mitigating', 'Mitigating'], ['monitoring', 'Monitoring'], ['closed', 'Closed']],
@@ -80,16 +86,20 @@ const RemediationTrackerTab = (() => {
 
     const vulns = (data.vulns || []).map(v => {
       const start = toDateOnly(v.firstSeenAt) || today;
+      const severity = (v.risk || '').toLowerCase() || 'informational';
+      // Prefer the stored due date; fall back to the severity SLA off first detection.
+      const sla = VULN_SLA_DAYS[severity];
+      const due = toDateOnly(v.dueDate) || (sla ? addDays(start, sla) : null);
       return {
         source: 'vuln',
         id: v.idx,
         title: v.name || v.cve || 'Unnamed finding',
-        severity: (v.risk || '').toLowerCase() || 'informational',
+        severity,
         owner: '',
-        dueDate: null,
+        dueDate: due,
         status: v.status || 'open',
         startDate: start,
-        endDate: addDays(start, DEFAULT_DURATION_DAYS),
+        endDate: due || addDays(start, DEFAULT_DURATION_DAYS),
         raw: v,
       };
     });
