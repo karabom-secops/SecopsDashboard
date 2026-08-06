@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 16:9 slide-deck shell for the client-facing report.
+ * A4 portrait slide-deck shell for the client-facing report.
  *
  * Owns geometry and chrome only — it knows nothing about SecOps data. The
  * per-slide bodies come from report-sections.js.
@@ -9,15 +9,21 @@
  * Deliberately separate from the A4 report in tab-secure-score.js: that is a
  * flow document the printer paginates, this is fixed-geometry boxes where
  * content must not reflow. Only the primitives in report-shell.js are shared.
+ *
+ * Portrait trades width for height against the old 16:9 landscape geometry:
+ * the usable measure drops from ~302mm to ~180mm while the body grows from
+ * ~130mm to ~235mm. Anything laid out here in columns is sized for the narrower
+ * measure, and the row budgets in report-sections.js are set against the taller
+ * body — change one and re-check the other.
  */
 window.ReportDeck = (function () {
 
   var S = window.ReportShell;
   var P = S.PALETTE;
 
-  // 16:9 at a printable size. 338.7mm x 190.5mm is the PowerPoint default.
-  var SLIDE_W = '338.7mm';
-  var SLIDE_H = '190.5mm';
+  // A4 portrait, the standard print size for this deck.
+  var SLIDE_W = '210mm';
+  var SLIDE_H = '297mm';
 
   var DECK_CSS = [
 '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}',
@@ -27,17 +33,17 @@ window.ReportDeck = (function () {
 '@page{size:' + SLIDE_W + ' ' + SLIDE_H + ';margin:0}',
 
 '.slide{position:relative;overflow:hidden;width:' + SLIDE_W + ';height:' + SLIDE_H + ';',
-'  background:#fff;padding:15mm 18mm 12mm;display:flex;flex-direction:column;',
+'  background:#fff;padding:14mm 15mm 11mm;display:flex;flex-direction:column;',
 '  page-break-after:always;break-after:page;page-break-inside:avoid;break-inside:avoid}',
 /* Without this Chrome emits a trailing blank page after the final slide. */
 '.slide:last-of-type{page-break-after:auto;break-after:auto}',
 
 /* header */
 '.sl-head{display:flex;justify-content:space-between;align-items:flex-start;flex:0 0 auto;gap:10mm}',
-'.sl-title{font-size:30pt;font-weight:800;color:' + P.DECK_BLUE + ';line-height:1.05;letter-spacing:-.4pt}',
+'.sl-title{font-size:22pt;font-weight:800;color:' + P.DECK_BLUE + ';line-height:1.05;letter-spacing:-.2pt}',
 '.sl-rule{height:2.5pt;background:' + P.DECK_BLUE + ';margin-top:3.5mm}',
-'.sl-logo{height:13mm;width:auto;flex:0 0 auto;align-self:flex-start}',
-'.sl-body{flex:1 1 auto;padding-top:6mm;min-height:0;overflow:hidden}',
+'.sl-logo{height:11mm;width:auto;flex:0 0 auto;align-self:flex-start}',
+'.sl-body{flex:1 1 auto;padding-top:5mm;min-height:0;overflow:hidden}',
 
 /* footer */
 '.sl-foot{flex:0 0 auto;display:flex;align-items:center;gap:3mm;font-size:8.5pt;',
@@ -50,24 +56,24 @@ window.ReportDeck = (function () {
 
 /* cover */
 '.slide.cover{background:' + P.DECK_BLUE + ';padding:0;color:#fff}',
-'.cover-inner{position:relative;z-index:2;height:100%;padding:15mm 18mm 12mm;',
+'.cover-inner{position:relative;z-index:2;height:100%;padding:14mm 15mm 11mm;',
 '  display:flex;flex-direction:column}',
-'.cover-wm{position:absolute;top:-34mm;right:-30mm;width:132mm;height:132mm;opacity:.07;',
+'.cover-wm{position:absolute;top:-26mm;right:-24mm;width:104mm;height:104mm;opacity:.07;',
 '  z-index:1;pointer-events:none}',
-'.cover-copy{position:absolute;right:18mm;bottom:19mm;font-size:8.5pt;',
+'.cover-copy{position:absolute;right:15mm;bottom:18mm;font-size:8.5pt;',
 '  color:rgba(255,255,255,.85);z-index:3}',
 /* align-self is load-bearing: .cover-inner is a column flex container, so the
    default align-items:stretch would blow the logo out to the full slide width
    and destroy its aspect ratio. reflex-logo.png is a stacked lockup (~1.27:1)
    with an alpha channel, so brightness(0) invert(1) yields a clean white mark. */
-'.cover-logo{height:16mm;width:auto;flex:0 0 auto;align-self:flex-start;',
+'.cover-logo{height:14mm;width:auto;flex:0 0 auto;align-self:flex-start;',
 '  filter:brightness(0) invert(1)}',
-'.cover-mid{margin-top:auto;margin-bottom:auto;padding-right:40mm}',
-'.cover-title{font-size:50pt;font-weight:800;line-height:1.03;color:#fff;letter-spacing:-1.1pt}',
-'.cover-sub{font-size:20pt;font-weight:700;color:' + P.DECK_NAVY + ';margin-top:6mm;line-height:1.15}',
-'.cover-hr{width:78mm;height:1pt;background:rgba(255,255,255,.8);margin:11mm 0 5mm}',
-'.cover-author{font-size:13.5pt;font-weight:700;color:#fff}',
-'.cover-hr2{width:78mm;height:1pt;background:rgba(255,255,255,.8);margin:5mm 0 0}',
+'.cover-mid{margin-top:auto;margin-bottom:auto;padding-right:10mm}',
+'.cover-title{font-size:34pt;font-weight:800;line-height:1.03;color:#fff;letter-spacing:-.6pt}',
+'.cover-sub{font-size:15pt;font-weight:700;color:' + P.DECK_NAVY + ';margin-top:5mm;line-height:1.15}',
+'.cover-hr{width:62mm;height:1pt;background:rgba(255,255,255,.8);margin:9mm 0 4mm}',
+'.cover-author{font-size:12pt;font-weight:700;color:#fff}',
+'.cover-hr2{width:62mm;height:1pt;background:rgba(255,255,255,.8);margin:4mm 0 0}',
 '.slide.cover .sl-foot{color:rgba(255,255,255,.85)}',
 '.slide.cover .sl-dot{background:rgba(255,255,255,.55)}',
 '.slide.cover .sl-dot.lg{background:rgba(255,255,255,.9)}',
@@ -80,41 +86,41 @@ window.ReportDeck = (function () {
 /* Single row of three. The row is centred in the slide body and each card
    centres its own content, so three tiles don't read as a top-heavy strip with
    the values stranded at the bottom. */
-'.ov-stack{height:100%;display:flex;flex-direction:column;justify-content:center;gap:7mm}',
+'.ov-stack{height:100%;display:flex;flex-direction:column;justify-content:flex-start;gap:9mm}',
 '.ov-row.three{grid-template-columns:repeat(3,1fr)}',
-'.ov-row.three .ov-card{min-height:58mm}',
+'.ov-row.three .ov-card{min-height:52mm}',
 
 /* Secure Score component breakdown (mirrors the cards on the Secure Score tab) */
 '.cmp-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6mm}',
-'.cmp-card{border:.5pt solid #D6E4F0;border-radius:1.5mm;padding:5mm 5.5mm}',
+'.cmp-card{border:.5pt solid #D6E4F0;border-radius:1.5mm;padding:4.5mm 5mm}',
 '.cmp-head{display:flex;align-items:baseline;justify-content:space-between;gap:3mm}',
-'.cmp-t{font-size:12pt;font-weight:600;color:' + P.DECK_INK + '}',
+'.cmp-t{font-size:11pt;font-weight:600;color:' + P.DECK_INK + '}',
 '.cmp-w{font-size:9pt;color:' + P.DECK_MUTED + '}',
 '.cmp-bar{margin:3mm 0 2.5mm;height:2.4mm;border-radius:1.2mm;background:#E6ECF2;overflow:hidden}',
 '.cmp-fill{height:100%;border-radius:1.2mm}',
-'.cmp-score{font-size:19pt;font-weight:700;color:' + P.DECK_INK + ';line-height:1}',
+'.cmp-score{font-size:17pt;font-weight:700;color:' + P.DECK_INK + ';line-height:1}',
 '.cmp-d{margin-top:2mm;font-size:8.5pt;color:' + P.DECK_MUTED + ';line-height:1.4}',
-'.ov-card{background:' + P.DECK_CARD + ';border-radius:1.5mm;padding:6mm 6mm 5mm;',
+'.ov-card{background:' + P.DECK_CARD + ';border-radius:1.5mm;padding:5mm 5mm 4.5mm;',
 '  display:flex;flex-direction:column;min-height:0}',
 '.ov-ico{width:8.5mm;height:8.5mm;color:' + P.DECK_BLUE + ';margin-bottom:3mm;flex:0 0 auto}',
-'.ov-t{font-size:15pt;font-weight:600;color:' + P.DECK_INK + ';margin-bottom:2mm}',
-'.ov-d{font-size:9.5pt;color:' + P.DECK_MUTED + ';line-height:1.45;flex:1 1 auto}',
-'.ov-pill{align-self:flex-start;margin-top:4.5mm;border-radius:1mm;padding:2.5mm 9mm;',
-'  font-size:20pt;font-weight:700;color:#fff;line-height:1}',
+'.ov-t{font-size:12.5pt;font-weight:600;color:' + P.DECK_INK + ';margin-bottom:2mm}',
+'.ov-d{font-size:8.5pt;color:' + P.DECK_MUTED + ';line-height:1.45;flex:1 1 auto}',
+'.ov-pill{align-self:flex-start;margin-top:4mm;border-radius:1mm;padding:2.2mm 7mm;',
+'  font-size:17pt;font-weight:700;color:#fff;line-height:1}',
 '.ov-pill.green{background:' + P.DECK_GREEN + '}',
 '.ov-pill.amber{background:' + P.DECK_AMBER + '}',
-'.ov-num{margin-top:4.5mm;font-size:30pt;font-weight:400;color:' + P.DECK_INK + ';line-height:1;',
+'.ov-num{margin-top:3.5mm;font-size:24pt;font-weight:400;color:' + P.DECK_INK + ';line-height:1;',
 '  text-align:center}',
-'.ov-nodata{margin-top:4.5mm;font-size:13pt;font-style:italic;color:#A6A6A6;text-align:center}',
-'.ov-sub{margin-top:2.5mm;font-size:11pt;font-weight:600;color:' + P.DECK_MUTED + ';',
+'.ov-nodata{margin-top:3.5mm;font-size:11pt;font-style:italic;color:#A6A6A6;text-align:center}',
+'.ov-sub{margin-top:2mm;font-size:9pt;font-weight:600;color:' + P.DECK_MUTED + ';',
 '  text-transform:uppercase;letter-spacing:.6pt}',
 
 /* data tables */
-'.dt-cap{font-size:12pt;font-weight:600;color:' + P.DECK_INK + ';margin:0 0 2.2mm;text-align:center}',
-'.dt{width:100%;border-collapse:collapse;font-size:9pt;table-layout:fixed;line-height:1.3}',
+'.dt-cap{font-size:11pt;font-weight:600;color:' + P.DECK_INK + ';margin:0 0 2.2mm;text-align:center}',
+'.dt{width:100%;border-collapse:collapse;font-size:8.5pt;table-layout:fixed;line-height:1.3}',
 '.dt thead th{background:' + P.DECK_TABLE_HEAD + ';color:#fff;font-weight:600;text-align:left;',
-'  padding:2mm 2.6mm;font-size:8.5pt;vertical-align:bottom}',
-'.dt tbody td{padding:1.9mm 2.6mm;border-bottom:.5pt solid #E6E6E6;vertical-align:top;',
+'  padding:1.8mm 2mm;font-size:8pt;vertical-align:bottom}',
+'.dt tbody td{padding:1.7mm 2mm;border-bottom:.5pt solid #E6E6E6;vertical-align:top;',
 '  word-wrap:break-word;overflow-wrap:break-word}',
 '.dt tbody tr:nth-child(even){background:#F2F5F9}',
 '.dt tr.total td{font-weight:700;background:#E4EAF2;border-bottom:none}',
@@ -129,8 +135,10 @@ window.ReportDeck = (function () {
 '.tk-desc{color:' + P.DECK_MAROON + '}',
 '.tk-when{color:' + P.DECK_MUTED + ';white-space:nowrap;font-size:8.5pt}',
 
-/* remediation tracker — two side-by-side columns */
-'.rem-cols{display:grid;grid-template-columns:1fr 1fr;gap:9mm;align-items:start}',
+/* remediation tracker — stacked in portrait. Two side-by-side 4-column tables
+   would each get ~85mm of the 180mm measure and wrap to unreadable slivers;
+   portrait has the vertical room to run them one above the other instead. */
+'.rem-cols{display:grid;grid-template-columns:1fr;gap:7mm;align-items:start}',
 '.rem-col{min-width:0}',
 '.rem-h{font-size:12pt;font-weight:700;color:' + P.DECK_INK + ';margin:0 0 1mm}',
 '.rem-sub{font-size:8.5pt;color:' + P.DECK_MUTED + ';margin:0 0 2.5mm}',
@@ -140,12 +148,12 @@ window.ReportDeck = (function () {
 '  color:' + P.DECK_MUTED + '}',
 
 /* recommendations */
-'.rec-list{display:flex;flex-direction:column;gap:4.5mm}',
-'.rec-item{display:flex;gap:4mm;background:#F7F9FB;border-radius:1.5mm;',
-'  border-left:1.6mm solid #BFBFBF;padding:4.5mm 5mm}',
+'.rec-list{display:flex;flex-direction:column;gap:4mm}',
+'.rec-item{display:flex;gap:3.5mm;background:#F7F9FB;border-radius:1.5mm;',
+'  border-left:1.6mm solid #BFBFBF;padding:4mm 4.5mm}',
 '.rec-body{flex:1 1 auto;min-width:0}',
-'.rec-area{font-size:12.5pt;font-weight:700;color:' + P.DECK_INK + ';margin-bottom:1.5mm}',
-'.rec-text{font-size:10.5pt;color:' + P.DECK_MUTED + ';line-height:1.45}',
+'.rec-area{font-size:11.5pt;font-weight:700;color:' + P.DECK_INK + ';margin-bottom:1.5mm}',
+'.rec-text{font-size:9.5pt;color:' + P.DECK_MUTED + ';line-height:1.45}',
 '.rec-meta{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:2mm}',
 '.rec-chip{font-size:8pt;font-weight:700;letter-spacing:.5pt;text-transform:uppercase;',
 '  color:#fff;border-radius:1mm;padding:1.2mm 3mm;white-space:nowrap}',
@@ -153,17 +161,17 @@ window.ReportDeck = (function () {
 
 /* bullets */
 '.bl{list-style:none;padding:0;margin:0}',
-'.bl li{position:relative;padding-left:7mm;margin-bottom:4.5mm;font-size:13pt;line-height:1.45;',
+'.bl li{position:relative;padding-left:7mm;margin-bottom:4mm;font-size:11.5pt;line-height:1.45;',
 '  color:' + P.DECK_INK + '}',
 '.bl li::before{content:"";position:absolute;left:1.5mm;top:2.2mm;width:1.8mm;height:1.8mm;',
 '  border-radius:50%;background:' + P.DECK_BLUE + '}',
 
 /* severity pill row (vulnerabilities) */
-'.sev-row{display:grid;grid-template-columns:repeat(4,1fr);gap:6mm;margin-bottom:7mm}',
-'.sev-card{background:' + P.DECK_CARD + ';border-radius:1.5mm;padding:5mm;text-align:center}',
-'.sev-n{font-size:28pt;font-weight:700;line-height:1}',
-'.sev-l{font-size:10pt;font-weight:600;color:' + P.DECK_MUTED + ';margin-top:2mm;',
-'  text-transform:uppercase;letter-spacing:.5pt}',
+'.sev-row{display:grid;grid-template-columns:repeat(4,1fr);gap:4mm;margin-bottom:6mm}',
+'.sev-card{background:' + P.DECK_CARD + ';border-radius:1.5mm;padding:4mm 3mm;text-align:center}',
+'.sev-n{font-size:22pt;font-weight:700;line-height:1}',
+'.sev-l{font-size:8.5pt;font-weight:600;color:' + P.DECK_MUTED + ';margin-top:2mm;',
+'  text-transform:uppercase;letter-spacing:.4pt}',
 
 /* print chrome */
 '.print-btn-bar{position:fixed;top:16px;right:16px;z-index:9999;display:flex;gap:10px;',

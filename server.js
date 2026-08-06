@@ -1113,7 +1113,7 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) =>
 
     const fileText = req.file.buffer.toString('utf8');
 
-    let { findings, format: usedFormat } = parseVulnFile(fileText, {
+    let { findings, format: usedFormat, mergedCount } = parseVulnFile(fileText, {
       format:   (req.body.fileFormat || 'auto').trim(),
       fileName: req.file.originalname || '',
       mimeType: req.file.mimetype     || '',
@@ -1240,8 +1240,8 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) =>
     });
 
     const autoClosedCount = autoClosedFindings.length;
-    console.log(`[vulns] Upload ${monthKey} (tenant ${tenantId}, ${usedFormat}): ${findings.length} findings, ${carried} carried over, ${autoClosedCount} auto-closed`);
-    return res.json({ monthKey, tenantId, summary, carriedCounts, autoClosedCount, format: usedFormat });
+    console.log(`[vulns] Upload ${monthKey} (tenant ${tenantId}, ${usedFormat}): ${findings.length} findings, ${mergedCount} duplicate rows merged, ${carried} carried over, ${autoClosedCount} auto-closed`);
+    return res.json({ monthKey, tenantId, summary, carriedCounts, autoClosedCount, format: usedFormat, mergedCount });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     return serverError(res, err);

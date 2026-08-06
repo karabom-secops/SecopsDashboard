@@ -19,12 +19,14 @@ window.ReportSections = (function () {
 
   // Slides are fixed-height with overflow:hidden, so an over-long list is
   // cropped silently. Cap explicitly rather than trusting the layout.
-  // Budget: ~130mm of body height per slide. A ticket row wraps to at most 3
-  // lines at 105 chars in a 39%-wide column, so 7 rows fit with headroom.
-  var MAX_AWARENESS_ROWS = 3;
-  var MAX_TICKET_ROWS    = 7;
-  var MAX_VULN_ROWS      = 9;
-  var MAX_DESC_CHARS     = 105;
+  // Budget: ~235mm of body height per A4 portrait slide. A ticket row wraps to
+  // at most 3 lines at MAX_DESC_CHARS in the narrower 39%-wide column (~70mm
+  // rather than the old ~118mm), giving a ~16mm row, so these fit with headroom.
+  // The vuln count is lower because a .sev-row sits above that table.
+  var MAX_AWARENESS_ROWS = 6;
+  var MAX_TICKET_ROWS    = 12;
+  var MAX_VULN_ROWS      = 11;
+  var MAX_DESC_CHARS     = 80;
 
   function esc(s) { return S.esc(s); }
 
@@ -384,7 +386,9 @@ window.ReportSections = (function () {
   // carry a target date — so vulnerabilities can appear on the "remediated" side
   // but never on the "scheduled" side. See the caveat rendered under that column.
 
-  var MAX_REMEDIATION_ROWS = 7;
+  // Both columns now stack vertically (see .rem-cols), so the two tables share
+  // the body height rather than sitting side by side.
+  var MAX_REMEDIATION_ROWS = 6;
 
   /** 'YYYY-MM' of a timestamp, or null. */
   function monthOf(ts) {
