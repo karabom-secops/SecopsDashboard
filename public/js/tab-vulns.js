@@ -460,11 +460,12 @@
           <td class="vuln-name-cell" title="${escHtml(f.name)}">${escHtml(f.name)}</td>
           <td>${escHtml(f.cve || '—')}</td>
           <td class="age-cell">${_ageHtml(f)}</td>
+          <td class="due-cell">${_dueHtml(f)}</td>
           <td><button class="status-pill ${escHtml(s)} status-edit-btn" data-idx="${origIdx}" title="Click to manage status">${escHtml(statusLabel)}</button></td>
           <td class="notes-cell" data-idx="${origIdx}">${notesHtml}</td>
         </tr>
       `;
-    }).join('') || `<tr><td colspan="9">No findings match the current filter.</td></tr>`;
+    }).join('') || `<tr><td colspan="10">No findings match the current filter.</td></tr>`;
 
     tbody.querySelectorAll('.status-edit-btn, .notes-cell').forEach(el => {
       el.addEventListener('click', () => {
@@ -552,14 +553,54 @@
     }
   }
 
-  // ── Age/SLA helper ─────────────────────────────────────────────────────────
+  // ── Age/SLA helpers ────────────────────────────────────────────────────────
+
+  // Remediation SLA, in days. Mirrors SLA_DAYS in lib/vuln-parser.js — used only
+  // as a fallback for scans uploaded before due dates were stored.
+  const SLA_DAYS = { critical: 7, high: 14, medium: 30, low: 60 };
+
+  /** Remediation deadline for a finding, or null when it has no SLA. */
+  function _dueDate(f) {
+    if (f.dueDate) return new Date(f.dueDate);
+    const days = SLA_DAYS[(f.risk || '').toLowerCase()];
+    if (!days || !f.firstSeenAt) return null;
+    return new Date(new Date(f.firstSeenAt).getTime() + days * 86400000);
+  }
+
+  /** Whole days until the deadline; negative once overdue. */
+  function _daysToDue(f) {
+    const due = _dueDate(f);
+    if (!due) return null;
+    return Math.ceil((due - Date.now()) / 86400000);
+  }
+
+  /** Findings already closed have stopped the clock. */
+  function _slaActive(f) {
+    const s = f.status || 'open';
+    return s === 'open' || s === 'in-progress';
+  }
+
   function _ageHtml(f) {
     if (!f.firstSeenAt) return '<span class="age-unknown">—</span>';
     const days = Math.floor((Date.now() - new Date(f.firstSeenAt)) / 86400000);
-    const risk = (f.risk || '').toLowerCase();
-    const isOverdue = (risk === 'critical' && days > 30) || (risk === 'high' && days > 60) || (risk === 'medium' && days > 90);
+    const left = _daysToDue(f);
+    const isOverdue = _slaActive(f) && left !== null && left < 0;
     const cls = isOverdue ? 'age-overdue' : (days < 7 ? 'age-new' : '');
     return `<span class="${cls}">${days}d</span>`;
+  }
+
+  /** Due-date cell: date plus how far past/short of the deadline it is. */
+  function _dueHtml(f) {
+    const due = _dueDate(f);
+    if (!due) return '<span class="age-unknown">—</span>';
+
+    const dateStr = due.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' });
+    if (!_slaActive(f)) return `<span class="due-closed" title="Closed — SLA no longer running">${dateStr}</span>`;
+
+    const left = _daysToDue(f);
+    if (left < 0)  return `<span class="due-overdue" title="Overdue by ${-left} day(s)">${dateStr} <em>(${-left}d over)</em></span>`;
+    if (left <= 3) return `<span class="due-soon" title="Due in ${left} day(s)">${dateStr} <em>(${left}d left)</em></span>`;
+    return `<span class="due-ok">${dateStr}</span>`;
   }
 
   // ── Status summary bar ─────────────────────────────────────────────────────
@@ -728,14 +769,21 @@
     if (_statusFilter !== 'All') rows = rows.filter(f => (f.status || 'open') === _statusFilter);
     const esc = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
     const csv = [
-      ['Host', 'Port', 'Risk', 'Vulnerability', 'CVE', 'Days Open', 'Status', 'Notes'].join(','),
+      ['Host', 'Port', 'Risk', 'Vulnerability', 'CVE', 'Days Open', 'Due Date', 'SLA', 'Status', 'Notes'].join(','),
       ...rows.map(f => {
         const days = f.firstSeenAt
           ? Math.floor((Date.now() - new Date(f.firstSeenAt)) / 86400000) + 'd'
           : '';
+        const due  = _dueDate(f);
+        const left = _daysToDue(f);
+        const sla  = !due || !_slaActive(f) ? ''
+                   : (left < 0 ? `Overdue by ${-left}d` : `${left}d left`);
         return [
           f.host, f.port || '', f.risk, f.name,
-          f.cve || '', days, f.status || 'open', f.notes || ''
+          f.cve || '', days,
+          due ? due.toISOString().slice(0, 10) : '',
+          sla,
+          f.status || 'open', f.notes || ''
         ].map(esc).join(',');
       })
     ].join('\r\n');
@@ -776,6 +824,13 @@
         : '—';
       const color = severityColor[f.risk] || '#374151';
       const solution = (f.solution || '—').replace(/\n/g, ' ');
+      const due  = _dueDate(f);
+      const left = _daysToDue(f);
+      const overdue = _slaActive(f) && left !== null && left < 0;
+      const dueLabel = due
+        ? due.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) +
+          (overdue ? ` (${-left}d over)` : '')
+        : '—';
       return `<tr>
         <td style="color:${color};font-weight:700;white-space:nowrap">${esc(f.risk)}</td>
         <td>${esc(f.host)}</td>
@@ -783,6 +838,7 @@
         <td>${esc(f.cve || '—')}</td>
         <td>${esc(f.name)}</td>
         <td style="text-align:center">${esc(days)}</td>
+        <td style="text-align:center;white-space:nowrap${overdue ? ';color:#b91c1c;font-weight:700' : ''}">${esc(dueLabel)}</td>
         <td style="font-size:12px">${esc(solution)}</td>
       </tr>`;
     }).join('');
@@ -814,10 +870,11 @@
   <div class="scard"><div class="num">${rows.length}</div><div class="lbl">Total</div></div>
 </div>
 <table>
-  <thead><tr><th>Priority</th><th>Host</th><th>Port</th><th>CVE</th><th>Vulnerability</th><th>Age</th><th>Recommended Action</th></tr></thead>
-  <tbody>${tableRows || '<tr><td colspan="7">No findings match the selected filter.</td></tr>'}</tbody>
+  <thead><tr><th>Priority</th><th>Host</th><th>Port</th><th>CVE</th><th>Vulnerability</th><th>Age</th><th>Remediate By</th><th>Recommended Action</th></tr></thead>
+  <tbody>${tableRows || '<tr><td colspan="8">No findings match the selected filter.</td></tr>'}</tbody>
 </table>
-<div class="footer">Generated by SecOps Dashboard &mdash; For IT remediation use only. Please action Critical and High items within SLA.</div>
+<div class="footer">Generated by SecOps Dashboard &mdash; For IT remediation use only.<br>
+Remediation SLA, measured from the date a finding was first detected: Critical 1 week &middot; High 2 weeks &middot; Medium 1 month &middot; Low 2 months.</div>
 </body></html>`;
 
     const win = window.open('', '_blank');

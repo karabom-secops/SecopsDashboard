@@ -2625,6 +2625,14 @@ body.login-page {
 .age-new { color: var(--muted); font-style: italic; }
 .age-unknown { color: var(--muted); }
 
+/* Due date = first detected + severity SLA (Critical 1w / High 2w / Med 1m / Low 2m) */
+.due-cell { font-size: 0.8rem; white-space: nowrap; }
+.due-cell em { font-style: normal; font-size: 0.72rem; opacity: 0.85; }
+.due-ok { color: var(--muted); }
+.due-soon { color: var(--amber); font-weight: 600; }
+.due-overdue { color: var(--red); font-weight: 700; }
+.due-closed { color: var(--muted); text-decoration: line-through; opacity: 0.7; }
+
 /* ── Sidebar layout ────────────────────────────────────────────────────────────── */
 /* Content follows the sidebar through the single --side-w token, so the two can
    never desynchronise. See the "Sidebar states" block for where it is set. */

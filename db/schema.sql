@@ -108,10 +108,12 @@ CREATE TABLE IF NOT EXISTS vuln_findings (
   notes             TEXT        NOT NULL DEFAULT '',
   status_updated_at TIMESTAMPTZ,
   first_seen_at     TIMESTAMPTZ,
+  due_date          TIMESTAMPTZ,   -- first_seen_at + severity SLA; see lib/vuln-parser.js
   UNIQUE (scan_id, finding_index)
 );
 
 CREATE INDEX IF NOT EXISTS idx_vuln_findings_scan ON vuln_findings (scan_id);
+CREATE INDEX IF NOT EXISTS idx_vuln_findings_due  ON vuln_findings (due_date);
 
 -- ── Security Awareness Uploads ────────────────────────────────────────────
 -- One row per tenant (latest-only). Delete + re-insert on each upload.

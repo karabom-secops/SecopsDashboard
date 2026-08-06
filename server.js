@@ -18,7 +18,7 @@ const { requireAuth, requireSuperAdmin, pageGate, loadPageAccess } = require('./
 const { ROLES, ROLE_LABELS, PAGES, PAGE_KEYS, LEVELS, LEVEL_RANK, resolveAccess } = require('./lib/pages');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
-const { parseVulnFile, computeVulnSummary } = require('./lib/vuln-parser');
+const { parseVulnFile, computeVulnSummary, computeDueDate } = require('./lib/vuln-parser');
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
 const XLSX = require('xlsx');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
@@ -1165,6 +1165,9 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) =>
       } else {
         f.firstSeenAt = f.firstSeenAt || uploadNow;
       }
+      // SLA clock runs from first exposure, so carried-over findings keep their
+      // original deadline rather than resetting each month.
+      f.dueDate = computeDueDate(f.risk, f.firstSeenAt);
     });
 
     const autoClosedFindings = [];
@@ -1191,6 +1194,7 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) =>
                           : `Auto-closed because this finding no longer appears in the ${monthKey} scan.`,
         statusUpdatedAt: uploadNow.toISOString(),
         firstSeenAt:     prev.first_seen_at || uploadNow,
+        dueDate:         computeDueDate(prev.risk, prev.first_seen_at || uploadNow),
       });
     }
 
@@ -1214,8 +1218,9 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) =>
       await client.query(
         `INSERT INTO vuln_findings
            (scan_id, finding_index, plugin_id, name, risk, host, port, protocol,
-            cve, cvss_v2, cvss_v3, synopsis, solution, status, notes, status_updated_at, first_seen_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+            cve, cvss_v2, cvss_v3, synopsis, solution, status, notes, status_updated_at,
+            first_seen_at, due_date)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
         [
           scanId, i,
           f.pluginId   || null, f.name     || null, f.risk     || null,
@@ -1226,6 +1231,7 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) =>
           f.notes  || '',
           f.statusUpdatedAt ? new Date(f.statusUpdatedAt) : null,
           f.firstSeenAt || null,
+          f.dueDate     || null,
         ]
       );
     }
@@ -1301,7 +1307,8 @@ app.get('/api/vulns/:monthKey', async (req, res) => {
               protocol, cve, cvss_v2 AS "cvssV2", cvss_v3 AS "cvssV3",
               synopsis, solution, status, notes,
               status_updated_at AS "statusUpdatedAt",
-              first_seen_at AS "firstSeenAt"
+              first_seen_at AS "firstSeenAt",
+              due_date AS "dueDate"
        FROM vuln_findings WHERE scan_id = $1 ORDER BY finding_index ASC`,
       [scan.id]
     );
@@ -1311,6 +1318,7 @@ app.get('/api/vulns/:monthKey', async (req, res) => {
       delete f.idx;
       if (f.statusUpdatedAt) f.statusUpdatedAt = f.statusUpdatedAt.toISOString();
       if (f.firstSeenAt)     f.firstSeenAt     = f.firstSeenAt.toISOString();
+      if (f.dueDate)         f.dueDate         = f.dueDate.toISOString();
       return f;
     });
 
@@ -4190,7 +4198,8 @@ app.get('/api/remediation-tracker', requireAuth, async (req, res) => {
       vulnMonthKey = scanRes.rows[0].monthKey;
       const findingsRes = await pool.query(
         `SELECT finding_index AS idx, name, risk, host, cve, status, notes,
-                status_updated_at AS "statusUpdatedAt", first_seen_at AS "firstSeenAt"
+                status_updated_at AS "statusUpdatedAt", first_seen_at AS "firstSeenAt",
+                due_date AS "dueDate"
          FROM vuln_findings WHERE scan_id=$1 ORDER BY finding_index ASC`,
         [scanRes.rows[0].id]
       );
