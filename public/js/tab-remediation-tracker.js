@@ -29,6 +29,16 @@ const RemediationTrackerTab = (() => {
 
   const SOURCE_LABELS = { vuln: 'Vulnerability', risk: 'Risk', pentest: 'Pentest', incident: 'Incident' };
 
+  // Shared ranking across all four sources. Vulns/pentest/incidents use the
+  // critical…informational vocabulary; risks are bucketed into high/medium/low
+  // from their score in normalize(). Anything unrecognised sorts last.
+  const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3, informational: 4, info: 4 };
+
+  function severityRank(item) {
+    const r = SEVERITY_RANK[(item.severity || '').toLowerCase()];
+    return r === undefined ? 5 : r;
+  }
+
   function esc(s) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
@@ -247,7 +257,12 @@ const RemediationTrackerTab = (() => {
       const q = _searchTerm.trim().toLowerCase();
       rows = rows.filter(i => i.title.toLowerCase().includes(q));
     }
-    return rows;
+    // Most severe first, then soonest deadline (undated last), then title.
+    return rows.slice().sort((a, b) =>
+      severityRank(a) - severityRank(b) ||
+      (a.dueDate || '9999-12-31').localeCompare(b.dueDate || '9999-12-31') ||
+      a.title.localeCompare(b.title)
+    );
   }
 
   function renderActiveView() {
@@ -508,7 +523,10 @@ const RemediationTrackerTab = (() => {
 
   function exportCsv() {
     const header = ['Source', 'Title', 'Severity', 'Owner', 'Due Date', 'Status'];
-    const rows = _items.map(i => [SOURCE_LABELS[i.source], i.title, i.severity, i.owner, fmt(i.dueDate), i.status]);
+    const rows = _items.slice()
+      .sort((a, b) => severityRank(a) - severityRank(b) ||
+                      (a.dueDate || '9999-12-31').localeCompare(b.dueDate || '9999-12-31'))
+      .map(i => [SOURCE_LABELS[i.source], i.title, i.severity, i.owner, fmt(i.dueDate), i.status]);
     const csv = [header, ...rows]
       .map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
       .join('\n');
