@@ -418,7 +418,16 @@ window.ReportsTab = (function () {
         catch (err) { body = null; }
 
         if (!body) { skipped.push(s.label); return; }
-        slides.push(D.slide({ title: s.label, body: body, pageNo: slides.length + 1, ctx: full }));
+
+        // A section may return one body, or an array of bodies when its content
+        // does not fit a single fixed-height slide (slides never scroll — see
+        // .slide overflow:hidden in report-deck.js). Each body becomes a page.
+        var bodies = Array.isArray(body) ? body.filter(Boolean) : [body];
+        if (!bodies.length) { skipped.push(s.label); return; }
+
+        bodies.forEach(function (b) {
+          slides.push(D.slide({ title: s.label, body: b, pageNo: slides.length + 1, ctx: full }));
+        });
       });
 
       var msgs = [];

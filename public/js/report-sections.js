@@ -5,8 +5,9 @@
  *
  * Each entry declares the data it needs (`requires`, resolved to URLs by the
  * DATA_SOURCES map in tab-reports.js) and returns a slide body as an HTML
- * string. Returning null self-disables the section — the generator then skips
- * it without consuming a page number.
+ * string, or an array of bodies to span several pages. Returning null
+ * self-disables the section — the generator then skips it without consuming a
+ * page number.
  *
  * The cover slide is not in this registry; ReportDeck.coverSlide() always emits
  * it as page 1.
@@ -390,6 +391,13 @@ window.ReportSections = (function () {
   // the body height rather than sitting side by side.
   var MAX_REMEDIATION_ROWS = 6;
 
+  // The Scheduled list is never truncated — everything due in the period is
+  // shown, spilling onto continuation slides. Row budgets are set against the
+  // ~235mm portrait body: page 1 shares its height with the Remediated table,
+  // continuation pages carry one table each and so fit far more.
+  var SCHEDULED_ROWS_FIRST = MAX_REMEDIATION_ROWS;
+  var SCHEDULED_ROWS_CONT  = 18;
+
   /** 'YYYY-MM' of a timestamp, or null. */
   function monthOf(ts) {
     if (!ts) return null;
@@ -478,8 +486,9 @@ window.ReportSections = (function () {
     return out.sort(function (a, b) { return String(a.when) < String(b.when) ? -1 : 1; });
   }
 
-  function remediationTable(rows, dateLabel) {
+  function remediationTable(rows, dateLabel, limit) {
     if (!rows.length) return null;
+    var max = limit === undefined ? MAX_REMEDIATION_ROWS : limit;
     return D.dataTable({
       cols: [
         { label: 'Item', key: 'item', width: '46%',
@@ -494,18 +503,19 @@ window.ReportSections = (function () {
         { label: dateLabel, key: 'when', width: '16%', cls: 'num',
           raw: function (r) { return esc(fmtShortDate(r.when)); } },
       ],
-      rows: rows.slice(0, MAX_REMEDIATION_ROWS),
+      rows: rows.slice(0, max),
     });
   }
 
-  function remediationColumn(heading, sub, rows, dateLabel, emptyMsg, caveat) {
-    var table = remediationTable(rows, dateLabel);
+  function remediationColumn(heading, sub, rows, dateLabel, emptyMsg, caveat, limit) {
+    var max   = limit === undefined ? MAX_REMEDIATION_ROWS : limit;
+    var table = remediationTable(rows, dateLabel, max);
     return '<div class="rem-col">' +
         '<div class="rem-h">' + esc(heading) + '</div>' +
         '<div class="rem-sub">' + esc(sub) + '</div>' +
         (table || '<div class="rem-empty">' + esc(emptyMsg) + '</div>') +
-        (rows.length > MAX_REMEDIATION_ROWS
-          ? '<div class="rem-more">+ ' + (rows.length - MAX_REMEDIATION_ROWS) +
+        (rows.length > max
+          ? '<div class="rem-more">+ ' + (rows.length - max) +
             ' more not shown</div>'
           : '') +
         (caveat ? '<div class="rem-more">' + esc(caveat) + '</div>' : '') +
@@ -524,18 +534,47 @@ window.ReportSections = (function () {
     var upcoming = collectScheduled(data, next);
     if (!done.length && !upcoming.length) return null;
 
-    return '<div class="rem-cols">' +
+    var slaNote = 'Scan findings are dated by remediation SLA: Critical 1 week, High 2 weeks, ' +
+                  'Medium 1 month, Low 2 months from first detection.';
+
+    // Page 1 shares its height with the Remediated table, so it carries the
+    // first slice of Scheduled; the remainder spills onto continuation pages.
+    var firstSlice = upcoming.slice(0, SCHEDULED_ROWS_FIRST);
+    var overflow   = upcoming.slice(SCHEDULED_ROWS_FIRST);
+    var totalPages = 1 + Math.ceil(overflow.length / SCHEDULED_ROWS_CONT);
+
+    function scheduledSub(pageNo) {
+      var sub = 'Due during ' + periodName(next);
+      if (totalPages > 1) sub += ' — page ' + pageNo + ' of ' + totalPages;
+      return sub;
+    }
+
+    var pages = ['<div class="rem-cols">' +
         remediationColumn(
           'Remediated', 'Closed out during ' + periodName(period),
           done, 'Closed',
           'Nothing was closed out during ' + periodName(period) + '.') +
         remediationColumn(
-          'Scheduled', 'Due during ' + periodName(next),
-          upcoming, 'Due',
+          'Scheduled', scheduledSub(1),
+          firstSlice, 'Due',
           'Nothing is currently scheduled for ' + periodName(next) + '.',
-          'Scan findings are dated by remediation SLA: Critical 1 week, High 2 weeks, ' +
-          'Medium 1 month, Low 2 months from first detection.') +
-      '</div>';
+          overflow.length ? null : slaNote,
+          SCHEDULED_ROWS_FIRST) +
+      '</div>'];
+
+    for (var i = 0; i < overflow.length; i += SCHEDULED_ROWS_CONT) {
+      var chunk = overflow.slice(i, i + SCHEDULED_ROWS_CONT);
+      var last  = i + SCHEDULED_ROWS_CONT >= overflow.length;
+      pages.push('<div class="rem-cols">' +
+          remediationColumn(
+            'Scheduled (continued)', scheduledSub(pages.length + 1),
+            chunk, 'Due', '',
+            last ? slaNote : null,
+            SCHEDULED_ROWS_CONT) +
+        '</div>');
+    }
+
+    return pages;
   }
 
   // ── Recommendations ───────────────────────────────────────────────────────
