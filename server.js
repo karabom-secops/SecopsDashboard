@@ -22,7 +22,10 @@ const { parseVulnFile, computeVulnSummary, computeDueDate } = require('./lib/vul
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
 const XLSX = require('xlsx');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
-const { calculateSecureScore, calculateVulnScore, generateRecommendations } = require('./lib/secure-score');
+const {
+  calculateSecureScore, calculateVulnScore, calculateAwarenessScore,
+  calculateMdrScore, generateRecommendations,
+} = require('./lib/secure-score');
 const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils');
 const arcticWolfAdapter = require('./lib/integrations/arctic-wolf');
 const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
@@ -4419,6 +4422,110 @@ function resolveScoreTenant(req) {
   return req.session.tenantId || null;
 }
 
+/** Last day of a 'YYYY-MM' month, as an ISO instant. */
+function monthEnd(monthKey) {
+  const [y, m] = monthKey.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 1) - 1).toISOString();
+}
+
+/** The last `n` calendar months ending at the current one, newest first. */
+function recentMonths(n) {
+  const out = [];
+  const now = new Date();
+  for (let i = 0; i < n; i++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    out.push(d.toISOString().slice(0, 7));
+  }
+  return out;
+}
+
+/**
+ * Rebuild the awareness and incident-response components for past months.
+ *
+ * Both are reconstructable even though awareness_uploads and mdr_uploads keep
+ * only the latest snapshot: the child rows are dated. A session knows when it
+ * was sent and when it was completed; a ticket knows when it was raised and
+ * resolved. Counting each as at a month end therefore recovers what the score
+ * would have been then.
+ *
+ * The caveat is that it reconstructs from TODAY'S export: a user who has since
+ * left, or a ticket purged upstream, is no longer in the data and so is absent
+ * from past months too. Stored snapshots are authoritative where they exist;
+ * this fills the gap before snapshots start accumulating.
+ *
+ * Phishing simulations are excluded to match the live score in /api/secure-score.
+ */
+async function reconstructComponents(tenantId, months) {
+  const out = new Map();
+  if (!months.length) return out;
+
+  let sessions = [];
+  try {
+    const r = await pool.query(
+      `SELECT s.sent_date, s.completed_date, s.status
+         FROM awareness_sessions s
+         JOIN awareness_uploads u ON u.id = s.upload_id
+        WHERE u.tenant_id = $1
+          AND s.sent_date IS NOT NULL
+          AND (s.session_type IS NULL OR LOWER(s.session_type) NOT LIKE '%phishing simulation%')`,
+      [tenantId]
+    );
+    sessions = r.rows;
+  } catch (_) { /* not migrated, or summary-format upload — no session history */ }
+
+  let tickets = [];
+  try {
+    const r = await pool.query(
+      `SELECT t.created_at, t.resolved_at
+         FROM mdr_tickets t
+         JOIN mdr_uploads u ON u.id = t.upload_id
+        WHERE u.tenant_id = $1 AND t.created_at IS NOT NULL`,
+      [tenantId]
+    );
+    tickets = r.rows;
+  } catch (_) { /* not migrated */ }
+
+  months.forEach(monthKey => {
+    const end = monthEnd(monthKey);
+    const rec = { awarenessScore: null, mdrScore: null };
+
+    // Sessions issued by the end of the month, and those completed by then.
+    const sent = sessions.filter(s => new Date(s.sent_date).toISOString() <= end);
+    if (sent.length) {
+      const done = sent.filter(s =>
+        s.completed_date && new Date(s.completed_date).toISOString() <= end
+      ).length;
+      rec.awarenessScore = calculateAwarenessScore({
+        upload: { total_users: sent.length, total_incomplete: sent.length - done },
+      });
+    }
+
+    // Tickets raised by the end of the month, resolved state as at that date.
+    const raised = tickets.filter(t => new Date(t.created_at).toISOString() <= end);
+    if (raised.length) {
+      const closed = raised.filter(t =>
+        t.resolved_at && new Date(t.resolved_at).toISOString() <= end
+      );
+      const hours = closed
+        .map(t => (new Date(t.resolved_at) - new Date(t.created_at)) / 3600000)
+        .filter(h => h >= 0);
+      rec.mdrScore = calculateMdrScore({
+        upload: {
+          total_tickets:        raised.length,
+          resolved_count:       closed.length,
+          avg_resolution_hours: hours.length
+            ? hours.reduce((a, b) => a + b, 0) / hours.length
+            : 0,
+        },
+      });
+    }
+
+    out.set(monthKey, rec);
+  });
+
+  return out;
+}
+
 /**
  * Persist a daily snapshot of the score and its components.
  *
@@ -4584,16 +4691,18 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
  * report deck's trend arrows).
  *
  * Two kinds of row:
- *   source: 'snapshot' — a real stored measurement from secure_scores, with
- *                        genuine per-component scores for that month.
- *   source: 'derived'  — reconstructed from that month's vuln_scans row. Only
- *                        the vulnerability component is real for these; the
- *                        awareness and incident-response inputs no longer exist
- *                        for past months, so those components are null rather
- *                        than back-filled with today's values.
+ *   source: 'snapshot'      — a stored measurement from secure_scores, taken at
+ *                             the time. Authoritative.
+ *   source: 'reconstructed' — rebuilt from dated source rows: that month's vuln
+ *                             scan (carried forward if none), sessions sent and
+ *                             completed by the month end, and tickets raised and
+ *                             resolved by then. Accurate, but derived from
+ *                             today's data, so anything since deleted upstream
+ *                             is missing from past months too.
  *
- * Snapshots only accumulate from the first time a score is viewed, so early
- * months will be 'derived' until history builds up.
+ * A component is null only when its source genuinely has nothing for that month
+ * (no scan yet, summary-format awareness upload, no tickets). The composite is
+ * then re-weighted over the components that do exist.
  */
 app.get('/api/secure-score/history', requireAuth, async (req, res) => {
   try {
@@ -4614,27 +4723,8 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
       vulnTrendRows = vulnTrend.rows;
     } catch (_) { /* table may not exist yet */ }
 
-    // Pre-fetch latest awareness + MDR once for all months
-    let latestAwarenessData = null;
-    try {
-      const ar = await pool.query(
-        `SELECT total_users, total_incomplete FROM awareness_uploads
-         WHERE tenant_id = $1 ORDER BY uploaded_at DESC LIMIT 1`,
-        [tenantId]
-      );
-      if (ar.rows.length > 0) latestAwarenessData = { upload: ar.rows[0] };
-    } catch (_) { /* table may not exist yet */ }
-
-    let latestMdrData = null;
-    try {
-      const mr = await pool.query(
-        `SELECT total_tickets, resolved_count, avg_resolution_hours FROM mdr_uploads
-         WHERE tenant_id = $1
-         ORDER BY uploaded_at DESC LIMIT 1`,
-        [tenantId]
-      );
-      if (mr.rows.length > 0) latestMdrData = { upload: mr.rows[0] };
-    } catch (_) { /* table may not exist yet */ }
+    // Awareness and MDR for past months are reconstructed from dated child rows
+    // rather than back-filled with today's figures — see reconstructComponents().
 
     // Real stored measurements: the last snapshot taken in each month.
     let snapshots = [];
@@ -4652,23 +4742,47 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
       snapshots = snapRes.rows;
     } catch (_) { /* table not migrated — fall back to derived months only */ }
 
+    // Cover the last 6 calendar months plus any month that has a vuln scan, so
+    // the trend is continuous even when scans are irregular.
+    const months = [...new Set(
+      recentMonths(6).concat(vulnTrendRows.map(r => r.month_key))
+    )].sort().reverse().slice(0, 12);
+
+    const reconstructed = await reconstructComponents(tenantId, months);
+
+    // Vulnerability posture carries forward: findings persist until the next
+    // scan, so a month without one inherits the most recent earlier scan.
+    const scansAsc = [...vulnTrendRows].sort((a, b) => (a.month_key < b.month_key ? -1 : 1));
+    const vulnAsOf = monthKey => {
+      let found = null;
+      scansAsc.forEach(r => { if (r.month_key <= monthKey) found = r; });
+      return found;
+    };
+
     const byMonth = new Map();
 
-    // Derived first, so a real snapshot for the same month overwrites it.
-    vulnTrendRows.forEach(row => {
-      const { composite } = calculateSecureScore(
-        { summary: row.summary },
-        latestAwarenessData,
-        latestMdrData
-      );
-      byMonth.set(row.month_key, {
-        monthKey:       row.month_key,
-        score:          composite,
-        // Only the vulnerability input is genuinely from this month.
-        vulnScore:      calculateVulnScore({ summary: row.summary }),
-        awarenessScore: null,
-        mdrScore:       null,
-        source:         'derived',
+    // Reconstructed first, so a real stored snapshot overwrites it below.
+    months.forEach(monthKey => {
+      const scan = vulnAsOf(monthKey);
+      const rec  = reconstructed.get(monthKey) || {};
+      // Nothing measurable for this month at all — skip rather than emit zeroes.
+      if (!scan && rec.awarenessScore == null && rec.mdrScore == null) return;
+
+      const vulnScore = scan ? calculateVulnScore({ summary: scan.summary }) : null;
+      const parts = [
+        { v: vulnScore,          w: 0.40 },
+        { v: rec.awarenessScore, w: 0.35 },
+        { v: rec.mdrScore,       w: 0.25 },
+      ].filter(p => p.v != null);
+      const den = parts.reduce((a, p) => a + p.w, 0);
+
+      byMonth.set(monthKey, {
+        monthKey,
+        score:          den ? Math.round(parts.reduce((a, p) => a + p.v * p.w, 0) / den) : null,
+        vulnScore,
+        awarenessScore: rec.awarenessScore,
+        mdrScore:       rec.mdrScore,
+        source:         'reconstructed',
       });
     });
 

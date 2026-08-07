@@ -1414,10 +1414,10 @@ window.ReportSections = (function () {
     }) +
     '<div class="rag-note">Gap is the distance from the agreed target score. ' +
       'A positive gap means the domain is at or above target.' +
-      (prev.source === 'derived'
-        ? ' Per-domain comparisons begin once monthly snapshots accumulate: ' +
-          'awareness and incident-response inputs are replaced by each upload, ' +
-          'so earlier months can only be reconstructed for vulnerabilities.'
+      (prev.source === 'reconstructed'
+        ? ' Prior-month figures are reconstructed from dated scan, training and ' +
+          'ticket records rather than a stored measurement, so they reflect the ' +
+          'data held today.'
         : '') +
     '</div>';
   }
