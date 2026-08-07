@@ -4230,29 +4230,6 @@ function resolveReportTenant(req, source) {
   return { tenantId: req.session.tenantId };
 }
 
-/**
- * Metrics the deck reports but the dashboard cannot derive.
- *
- * Control coverage would require Entra ID / Intune / Defender / mail-gateway
- * integrations that do not exist yet; breach and materiality determinations are
- * human judgements. All are entered on the Reports tab and stored in
- * report_metrics with source='manual', per tenant and period.
- */
-const REPORT_MANUAL_METRICS = [
-  // Business impact
-  'confirmedBreaches', 'materialIncidents', 'downtimeHours',
-  // Identity
-  'mfaCoverage', 'conditionalAccessCoverage', 'privilegedReviews',
-  // Endpoints
-  'endpointCoverage', 'edrDeployment', 'unsupportedDevices',
-  // Servers
-  'patchCompliance', 'criticalServerCompliance',
-  // Email & data
-  'phishingBlocked', 'secureEmailStatus', 'dlpAlerts', 'dataExposureIncidents',
-  // Detection performance — no detection timestamp exists in the ticket data
-  'mttd',
-];
-
 /** Current month as 'YYYY-MM'. */
 function currentPeriod() {
   return new Date().toISOString().slice(0, 7);
@@ -4340,13 +4317,6 @@ app.get('/api/reports/metrics', requireAuth, async (req, res) => {
       // scoring engine lives in exactly one place; only the override is ours.
       secureScore:       tile('secureScore',       null,                       'secure-score'),
     };
-
-    // Attested / manually-measured metrics. Nothing in the dashboard can derive
-    // these — control coverage would need Entra/Intune/Defender integrations,
-    // and breach materiality is a human judgement — so they are override-only.
-    // They still travel through the same { derived, source, override } shape so
-    // the deck renders them identically to everything else.
-    REPORT_MANUAL_METRICS.forEach(id => { tiles[id] = tile(id, null, 'manual'); });
 
     res.json({ tenantId, tenantName, period, tiles, warnings });
   } catch (err) { return serverError(res, err); }

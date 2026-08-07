@@ -36,6 +36,11 @@ window.ReportsTab = (function () {
     secureScore:      function () { return 'api/secure-score' + tenantParam('?'); },
     // Prior-month component scores, for the trend and maturity sections.
     secureScoreHistory: function () { return 'api/secure-score/history' + tenantParam('?'); },
+    // Managed EDR / Managed Office 365 back the Cyber Defence Coverage slide.
+    // Both take a trailing day window rather than a calendar month, so ask for
+    // enough days to span the reporting period (see edrWindowDays).
+    edr:  function (ctx) { return 'api/edr/summary?days='  + edrWindowDays(ctx) + tenantParam('&'); },
+    o365: function (ctx) { return 'api/o365/summary?days=' + edrWindowDays(ctx) + tenantParam('&'); },
     // Same endpoint the Awareness tab uses, so the deck cannot drift from it.
     awareness:        function () { return 'api/awareness' + tenantParam('?'); },
     mdr:              function () { return 'api/mdr' + tenantParam('?'); },
@@ -126,6 +131,19 @@ window.ReportsTab = (function () {
     };
   }
 
+  /**
+   * Days of telemetry to request so the window covers the reporting period.
+   * The EDR and O365 endpoints only accept a trailing window, so a report on an
+   * older month needs a longer one. Clamped to what those routes allow.
+   */
+  function edrWindowDays(ctx) {
+    var m = /^(\d{4})-(\d{2})$/.exec((ctx && ctx.period) || '');
+    if (!m) return 30;
+    var start = Date.UTC(Number(m[1]), Number(m[2]) - 1, 1);
+    var days  = Math.ceil((Date.now() - start) / 86400000);
+    return Math.max(30, Math.min(365, days));
+  }
+
   /** Overview tiles plus every attested metric, which share the override store. */
   function allOverrideIds() {
     var ids = TILES.map(function (t) { return t.id; });
@@ -214,35 +232,6 @@ window.ReportsTab = (function () {
     }).join('');
   }
 
-  /**
-   * Attested metrics: figures no integration can supply, grouped as a short
-   * checklist. Blank means "not measured" and the deck omits the metric rather
-   * than printing a misleading zero.
-   */
-  function renderManualMetrics(prefs) {
-    var host = document.getElementById('rpt-manual');
-    if (!host) return;
-    var tiles  = (_metrics && _metrics.tiles) || {};
-    var groups = window.ReportSections.MANUAL_METRICS || [];
-
-    host.innerHTML = groups.map(function (g) {
-      return '<div class="rpt-mgroup">' +
-          '<div class="rpt-mgh">' + S.esc(g.group) + '</div>' +
-          '<div class="rpt-mitems">' +
-            g.items.map(function (it) {
-              var info   = tiles[it.id] || {};
-              var stored = prefs.overrides && prefs.overrides[it.id];
-              var value  = stored != null ? stored : (info.override != null ? info.override : '');
-              return '<label class="rpt-mfield">' +
-                  '<span class="rpt-mlabel">' + S.esc(it.label) + '</span>' +
-                  '<input type="text" id="rpt-ov-' + it.id + '" ' +
-                         'value="' + S.esc(value) + '" placeholder="' + S.esc(it.hint) + '">' +
-                '</label>';
-            }).join('') +
-          '</div>' +
-        '</div>';
-    }).join('');
-  }
 
   async function populateClients(prefs) {
     var sel = document.getElementById('rpt-client');
@@ -290,7 +279,9 @@ window.ReportsTab = (function () {
     var keys = [];
     window.ReportSections.forEach(function (s) {
       if (selectedIds.indexOf(s.id) === -1) return;
-      s.requires.forEach(function (k) {
+      // `optional` is fetched but does not gate: a section listing it renders
+      // with whatever subset arrived, rather than disabling itself outright.
+      s.requires.concat(s.optional || []).forEach(function (k) {
         if (keys.indexOf(k) === -1) keys.push(k);
       });
     });
@@ -324,7 +315,6 @@ window.ReportsTab = (function () {
     _metrics = mergeSecureScore(pair[0], pair[1]);
     var p = loadPrefs();
     renderTiles(p);
-    renderManualMetrics(p);
 
     var warns = (_metrics && _metrics.warnings) || [];
     if (!pair[1] || pair[1].score == null) {

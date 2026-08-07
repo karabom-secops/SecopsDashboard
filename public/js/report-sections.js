@@ -700,10 +700,12 @@ window.ReportSections = (function () {
         target: MATURITY_TARGETS.awareness,        basis: 'Awareness completion' },
       { label: 'Incident Response Capability', score: now.incidentResponse, prev: prev.incidentResponse,
         target: MATURITY_TARGETS.incidentResponse, basis: 'Resolution rate & speed' },
-      { label: 'Identity Security',           score: tileNum(ctx, 'mfaCoverage'),      prev: null,
-        target: 95, basis: 'MFA coverage (attested)' },
-      { label: 'Endpoint Protection',         score: tileNum(ctx, 'edrDeployment'),    prev: null,
-        target: 95, basis: 'EDR deployment (attested)' },
+      // 99, not 100: an absolute-zero-legacy target would leave this row reading
+      // "outside appetite" almost permanently and stop carrying information.
+      { label: 'Identity Security',           score: (identityMetrics(ctx) || {}).modernAuth, prev: null,
+        target: 99, basis: 'Modern auth coverage (Office 365)' },
+      { label: 'Endpoint Protection',         score: (endpointMetrics(ctx) || {}).agentCurrency, prev: null,
+        target: 98, basis: 'EDR agent currency' },
     ];
   }
 
@@ -780,17 +782,29 @@ window.ReportSections = (function () {
       return monthOf(t.createdAt) === period;
     }).length;
 
+    // Everything here comes from the Incident Response tab's records. A
+    // "confirmed breach" is a data-breach incident that was worked to closure;
+    // "material" is critical or high severity — both are properties the IR tab
+    // already captures, so nothing is attested separately.
+    var closed = { resolved: 1, closed: 1 };
+    var confirmedBreaches = incidents.filter(function (i) {
+      return inPeriod(i) && i.incident_type === 'data_breach' && closed[i.status];
+    }).length;
+    var material = incidents.filter(function (i) {
+      var s = String(i.severity || '').toLowerCase();
+      return inPeriod(i) && (s === 'critical' || s === 'high');
+    }).length;
+
     var rows = [
-      { label: 'Confirmed Breaches',           value: tileNum(ctx, 'confirmedBreaches'), attested: true },
-      { label: 'Security Incidents',           value: Math.max(securityIncidents, mdrTickets) },
-      { label: 'Material Incidents',           value: tileNum(ctx, 'materialIncidents'), attested: true },
-      { label: 'Business Downtime (hrs)',      value: tileNum(ctx, 'downtimeHours'),     attested: true },
-      { label: 'Data Loss Events',             value: countType('data_breach') },
+      { label: 'Confirmed Breaches',            value: confirmedBreaches },
+      { label: 'Security Incidents',            value: Math.max(securityIncidents, mdrTickets) },
+      { label: 'Material Incidents',            value: material },
+      { label: 'Data Loss Events',              value: countType('data_breach') },
       { label: 'Privileged Account Compromise', value: countType('unauthorized_access') },
-      { label: 'Ransomware Events',            value: countType('malware_ransomware') },
+      { label: 'Ransomware Events',             value: countType('malware_ransomware') },
     ];
 
-    if (!rows.some(function (r) { return r.value != null; })) return null;
+    if (!incidents.length && !mdrTickets) return null;
 
     return '<div class="bi-grid">' +
         rows.map(function (r) {
@@ -798,14 +812,13 @@ window.ReportSections = (function () {
           var zero  = r.value === 0;
           return '<div class="bi-cell' + (zero ? ' ok' : '') + '">' +
               '<div class="bi-v' + (r.value == null ? ' nd' : '') + '">' + esc(shown) + '</div>' +
-              '<div class="bi-l">' + esc(r.label) +
-                (r.attested ? '<span class="bi-att">attested</span>' : '') +
-              '</div>' +
+              '<div class="bi-l">' + esc(r.label) + '</div>' +
             '</div>';
         }).join('') +
       '</div>' +
-      '<div class="rag-note">Figures marked <b>attested</b> are confirmed by the security team; ' +
-        'the remainder are counted automatically from incident records.</div>';
+      '<div class="rag-note">Counted from Incident Response records for ' +
+        esc(ctx.periodLabel || 'the period') + '. A confirmed breach is a data-breach ' +
+        'incident worked to closure; material means critical or high severity.</div>';
   }
 
   // ── Top Cyber Risks (risk register) ───────────────────────────────────────
@@ -944,82 +957,129 @@ window.ReportSections = (function () {
 
   // ── Cyber Defence Coverage ────────────────────────────────────────────────
 
-  var CONTROL_GROUPS = [
-    { group: 'Identity', items: [
-      { id: 'mfaCoverage',               label: 'MFA coverage',              unit: '%', target: 95 },
-      { id: 'conditionalAccessCoverage', label: 'Conditional Access',        unit: '%', target: 90 },
-      { id: 'privilegedReviews',         label: 'Privileged accounts reviewed', unit: '%', target: 100 },
-    ] },
-    { group: 'Endpoints', items: [
-      { id: 'endpointCoverage',   label: 'Endpoint coverage',   unit: '%', target: 98 },
-      { id: 'edrDeployment',      label: 'EDR deployment',      unit: '%', target: 98 },
-      { id: 'unsupportedDevices', label: 'Unsupported devices', unit: '',  lowerIsBetter: true },
-    ] },
-    { group: 'Servers', items: [
-      { id: 'patchCompliance',          label: 'Patch compliance',        unit: '%', target: 95 },
-      { id: 'criticalServerCompliance', label: 'Critical servers patched', unit: '%', target: 98 },
-    ] },
-    { group: 'Email & Data', items: [
-      { id: 'phishingBlocked',        label: 'Phishing blocked',    unit: '%', target: 99 },
-      { id: 'dlpAlerts',              label: 'DLP alerts',          unit: '',  lowerIsBetter: true },
-      { id: 'dataExposureIncidents',  label: 'Data exposure events', unit: '', lowerIsBetter: true },
-    ] },
-  ];
+  /** Unwrap the { available, data } envelope the Wazuh-backed screens return. */
+  function envData(node) {
+    return node && node.available && node.data ? node.data : null;
+  }
+
+  function pct(part, whole) {
+    if (!whole) return null;
+    return Math.round((part / whole) * 1000) / 10;
+  }
+
+  /**
+   * Identity posture from the Managed Office 365 tab (/api/o365/summary).
+   *
+   * MFA and Conditional Access *coverage* are tenant configuration, which this
+   * telemetry does not carry — it records sign-in events. Modern-auth coverage
+   * is the closest genuine control-effectiveness measure available: the share
+   * of sign-ins not using legacy protocols, which cannot enforce MFA.
+   */
+  function identityMetrics(ctx) {
+    var o = ctx.data.o365 || {};
+    var g = envData(o.graph);
+    var d = envData(o.o365);
+    if (!g && !d) return null;
+
+    var signins = (g && g.signins) || {};
+    var legacy  = (signins.legacyAuth && signins.legacyAuth.total) || 0;
+    var total   = signins.total || 0;
+
+    return {
+      modernAuth:  total ? pct(total - legacy, total) : null,
+      legacyAuth:  total ? legacy : null,
+      caFailures:  signins.caFailures != null ? signins.caFailures : null,
+      riskyUsers:  g && g.riskyUsers ? g.riskyUsers.distinct : null,
+      failedLogins: d && d.signins ? d.signins.failed : null,
+    };
+  }
+
+  /** Endpoint posture from the Managed EDR tab (/api/edr/summary). */
+  function endpointMetrics(ctx) {
+    var s = ctx.data.edr;
+    if (!s || !s.fleet) return null;
+    var f = s.fleet;
+    if (!f.total) return null;
+
+    return {
+      protected:  f.total,
+      agentCurrency: f.coverage != null ? f.coverage : pct(f.upToDate, f.total),
+      online:     pct(f.online, f.total),
+      stale:      f.stale != null ? f.stale : null,
+      infected:   f.infected != null ? f.infected : null,
+      windowDays: s.windowDays || null,
+    };
+  }
 
   /**
    * Everything the Reports tab renders an input for. Grouped so the form reads
    * as a short attestation checklist rather than a wall of boxes.
    */
-  var MANUAL_METRIC_FIELDS = [
-    { group: 'Business impact', items: [
-      { id: 'confirmedBreaches', label: 'Confirmed breaches',   hint: '0' },
-      { id: 'materialIncidents', label: 'Material incidents',   hint: '0' },
-      { id: 'downtimeHours',     label: 'Business downtime',    hint: 'hours' },
-    ] },
-    { group: 'Detection performance', items: [
-      { id: 'mttd', label: 'Mean time to detect', hint: 'minutes' },
-    ] },
-  ].concat(CONTROL_GROUPS.map(function (g) {
-    return {
-      group: g.group,
-      items: g.items.map(function (it) {
-        return { id: it.id, label: it.label, hint: it.unit === '%' ? '%' : 'count' };
-      }),
-    };
-  }));
+  /** One coverage cell. `target` greens the value; `lowerIsBetter` greens zero. */
+  function ccItem(label, value, opts) {
+    var o = opts || {};
+    var tone = '#8C8C8C';
+    if (value != null && o.target != null) {
+      tone = value >= o.target ? '#2E9E5B' : (value >= o.target - 10 ? '#f39c12' : '#e74c3c');
+    } else if (value != null && o.lowerIsBetter) {
+      tone = value === 0 ? '#2E9E5B' : (value <= (o.warnAbove || 0) ? '#f39c12' : '#e74c3c');
+    } else if (value != null) {
+      tone = P.DECK_INK;
+    }
+
+    return '<div class="cc-item">' +
+        '<div class="cc-v" style="color:' + (value == null ? '#A6A6A6' : tone) + '">' +
+          (value == null ? 'No data' : esc(String(value) + (o.unit || ''))) +
+        '</div>' +
+        '<div class="cc-l">' + esc(label) +
+          (o.target != null ? '<span class="cc-t">target ' + o.target + (o.unit || '') + '</span>' : '') +
+        '</div>' +
+      '</div>';
+  }
 
   function renderControlCoverage(ctx) {
-    var any = false;
-    var html = CONTROL_GROUPS.map(function (g) {
-      var cells = g.items.map(function (it) {
-        var v = tileNum(ctx, it.id);
-        if (v != null) any = true;
+    var id  = identityMetrics(ctx);
+    var ep  = endpointMetrics(ctx);
+    if (!id && !ep) return null;
 
-        var tone = '#8C8C8C';
-        if (v != null && it.target != null) {
-          tone = v >= it.target ? '#2E9E5B' : (v >= it.target - 10 ? '#f39c12' : '#e74c3c');
-        } else if (v != null && it.lowerIsBetter) {
-          tone = v === 0 ? '#2E9E5B' : '#f39c12';
-        }
+    var groups = [];
 
-        return '<div class="cc-item">' +
-            '<div class="cc-v" style="color:' + (v == null ? '#A6A6A6' : tone) + '">' +
-              (v == null ? 'Not measured' : esc(String(v) + it.unit)) +
-            '</div>' +
-            '<div class="cc-l">' + esc(it.label) +
-              (it.target != null ? '<span class="cc-t">target ' + it.target + it.unit + '</span>' : '') +
-            '</div>' +
-          '</div>';
-      }).join('');
+    if (id) {
+      groups.push('<div class="cc-group">' +
+        '<div class="cc-gh">Identity &mdash; Managed Office 365</div>' +
+        '<div class="cc-items">' +
+          ccItem('Modern auth coverage', id.modernAuth, { unit: '%', target: 99 }) +
+          ccItem('Legacy auth sign-ins', id.legacyAuth, { lowerIsBetter: true }) +
+          ccItem('Users flagged at risk', id.riskyUsers, { lowerIsBetter: true }) +
+          // Neither of these is a defect count, so neither is coloured as one:
+          // a Conditional Access failure is a policy block working as intended,
+          // and some failed sign-ins are expected in any population.
+          ccItem('Conditional Access blocks', id.caFailures, {}) +
+          ccItem('Failed sign-ins', id.failedLogins, {}) +
+        '</div></div>');
+    }
 
-      return '<div class="cc-group"><div class="cc-gh">' + esc(g.group) + '</div>' +
-             '<div class="cc-items">' + cells + '</div></div>';
-    }).join('');
+    if (ep) {
+      groups.push('<div class="cc-group">' +
+        '<div class="cc-gh">Endpoints &mdash; Managed EDR</div>' +
+        '<div class="cc-items">' +
+          ccItem('Endpoints protected', ep.protected, {}) +
+          ccItem('Agent currency', ep.agentCurrency, { unit: '%', target: 98 }) +
+          ccItem('Agents online', ep.online, { unit: '%', target: 95 }) +
+          ccItem('Not reporting', ep.stale, { lowerIsBetter: true }) +
+          ccItem('Endpoints with active threats', ep.infected, { lowerIsBetter: true }) +
+        '</div></div>');
+    }
 
-    if (!any) return null;
-    return '<div class="cc-grid">' + html + '</div>' +
-      '<div class="rag-note">Control coverage is attested by the security team each month; ' +
-      'these figures are not yet fed by a platform integration.</div>';
+    var window = ep && ep.windowDays ? ep.windowDays : null;
+    return '<div class="cc-grid">' + groups.join('') + '</div>' +
+      '<div class="rag-note">' +
+        'Drawn from the Managed Office 365 and Managed EDR telemetry' +
+        (window ? ' over a trailing ' + window + '-day window' : '') + '. ' +
+        'MFA and Conditional Access <i>coverage</i> are tenant configuration rather than ' +
+        'sign-in telemetry, so modern-auth coverage is reported in their place: the share ' +
+        'of sign-ins not using legacy protocols, which cannot enforce MFA.' +
+      '</div>';
   }
 
   // ── Threat Landscape ──────────────────────────────────────────────────────
@@ -1120,8 +1180,12 @@ window.ReportSections = (function () {
     var mttr   = hours.length ? hours.reduce(function (s, h) { return s + h; }, 0) / hours.length : null;
     var median = hours.length ? hours[Math.floor(hours.length / 2)] : null;
     var slaPct = slaTotal ? Math.round((slaMet / slaTotal) * 1000) / 10 : null;
-    var mttd   = tileNum(ctx, 'mttd');
     var resRate = raised.length ? Math.round((resolved.length / raised.length) * 1000) / 10 : null;
+
+    // EDR carries its own mean-time-to-mitigate, which is the closest thing to a
+    // detection-side measure available; the ticket feed has no detection stamp.
+    var edr  = endpointMetrics(ctx) ? ctx.data.edr : null;
+    var mttm = edr && edr.threats && edr.threats.mttmHours != null ? edr.threats.mttmHours : null;
 
     function hrs(v) {
       if (v == null) return '—';
@@ -1129,8 +1193,8 @@ window.ReportSections = (function () {
     }
 
     var rows = [
-      { kpi: 'Mean time to detect (MTTD)',  target: '—',                    actual: mttd == null ? 'Not measured' : mttd + ' min', ok: null },
       { kpi: 'Mean time to respond (MTTR)', target: '—',                    actual: hrs(mttr), ok: null },
+      { kpi: 'Mean time to mitigate (EDR)', target: '—',                    actual: hrs(mttm), ok: null },
       { kpi: 'Median time to respond',      target: '—',                    actual: hrs(median), ok: null },
       { kpi: 'Resolution SLA achievement',  target: SLA_TARGET_PCT + ' %',  actual: slaPct == null ? '—' : slaPct + ' %',
         ok: slaPct == null ? null : slaPct >= SLA_TARGET_PCT },
@@ -1154,7 +1218,8 @@ window.ReportSections = (function () {
     '<div class="rag-note">Response time is measured from ticket creation to resolution. ' +
       'SLA targets: High ' + MDR_SLA_HOURS.HIGH + ' hrs, Medium ' + MDR_SLA_HOURS.MEDIUM +
       ' hrs, Low ' + MDR_SLA_HOURS.LOW + ' hrs. ' +
-      'MTTD requires a detection timestamp that the ticket feed does not currently carry.</div>';
+      'Mean time to detect is not reported: the ticket feed carries no detection ' +
+      'timestamp, so mean time to mitigate from the EDR platform is shown instead.</div>';
   }
 
   // ── Security Maturity Trend ───────────────────────────────────────────────
@@ -1517,21 +1582,23 @@ window.ReportSections = (function () {
   // the operational detail in between.
   var EXEC_SECTIONS = [
     { id: 'execRisk',     label: 'Executive Risk Assessment',      group: 'Executive',
-      requires: ['secureScore'],                 render: renderExecRisk,        order: 'lead' },
+      requires: ['secureScore'], optional: ['edr', 'o365', 'vulnFindings', 'secureScoreHistory'],
+      render: renderExecRisk,        order: 'lead' },
     { id: 'businessImpact', label: 'Business Impact Summary',      group: 'Executive',
-      requires: [],                              render: renderBusinessImpact,  order: 'lead' },
+      requires: ['vulnFindings'],                render: renderBusinessImpact,  order: 'lead' },
     { id: 'topRisks',     label: 'Top Cyber Risks',                group: 'Executive',
       requires: ['vulnFindings'],                render: renderTopRisks,        order: 'lead' },
     { id: 'vulnExposure', label: 'Vulnerability Exposure',         group: 'Executive',
       requires: ['vulnFindings'],                render: renderVulnExposure,    order: 'lead' },
     { id: 'controlCoverage', label: 'Cyber Defence Coverage',      group: 'Executive',
-      requires: [],                              render: renderControlCoverage, order: 'lead' },
+      requires: [], optional: ['edr', 'o365'],   render: renderControlCoverage, order: 'lead' },
     { id: 'threatLandscape', label: 'Threat Landscape',            group: 'Executive',
       requires: ['vulnFindings'],                render: renderThreatLandscape, order: 'lead' },
     { id: 'irKpis',       label: 'Detection & Response KPIs',      group: 'Executive',
-      requires: ['mdr'],                         render: renderIrKpis,          order: 'lead' },
+      requires: ['mdr'], optional: ['edr'],      render: renderIrKpis,          order: 'lead' },
     { id: 'maturityTrend', label: 'Security Maturity Trend',       group: 'Executive',
-      requires: ['secureScore'],                 render: renderMaturityTrend,   order: 'lead' },
+      requires: ['secureScore'], optional: ['secureScoreHistory'],
+      render: renderMaturityTrend,   order: 'lead' },
     { id: 'assurance',    label: 'Board Assurance Statement',      group: 'Executive',
       requires: [],                              render: renderAssurance,       order: 'tail' },
   ];
@@ -1547,8 +1614,9 @@ window.ReportSections = (function () {
   ORDERED.draftAssurance    = draftAssurance;
   ORDERED.scoreBand         = scoreBand;
   ORDERED.tileValue         = tileValue;
-  ORDERED.CONTROL_GROUPS    = CONTROL_GROUPS;
-  ORDERED.MANUAL_METRICS    = MANUAL_METRIC_FIELDS;
+  // Every deck figure is now derived from a tab's own data; nothing is attested
+  // by hand, so the Reports tab has no manual-entry form to render.
+  ORDERED.MANUAL_METRICS    = [];
 
   return ORDERED;
 })();

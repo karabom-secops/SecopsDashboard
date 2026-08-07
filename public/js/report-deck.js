@@ -157,8 +157,6 @@ window.ReportDeck = (function () {
 '.bi-v{font-size:24pt;font-weight:800;color:' + P.DECK_INK + ';line-height:1}',
 '.bi-v.nd{font-size:11pt;font-weight:600;color:#A6A6A6;font-style:italic}',
 '.bi-l{margin-top:2.5mm;font-size:9pt;color:' + P.DECK_MUTED + ';line-height:1.35}',
-'.bi-att{display:block;font-size:7pt;text-transform:uppercase;letter-spacing:.4pt;',
-'  color:#8C8C8C;margin-top:.8mm}',
 
 /* vulnerability exposure */
 '.sev-dot{display:inline-block;width:2.2mm;height:2.2mm;border-radius:50%;vertical-align:middle}',
