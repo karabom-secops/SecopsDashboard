@@ -689,6 +689,18 @@ window.ReportSections = (function () {
 
   // ── Executive Risk Assessment ─────────────────────────────────────────────
 
+  /** Name the signals the Identity score actually used, so the basis is honest. */
+  function identityBasis(ctx) {
+    var id = identityMetrics(ctx);
+    if (!id || !id.termsUsed || !id.termsUsed.length) return 'Office 365 sign-in telemetry';
+    var names = {
+      modernAuth:    'modern auth',
+      riskHandled:   'risk handling',
+      signInSuccess: 'sign-in success',
+    };
+    return id.termsUsed.map(function (k) { return names[k]; }).join(', ') + ' (Office 365)';
+  }
+
   function riskAreas(ctx) {
     var now  = componentScores(ctx);
     var prev = previousScores(ctx);
@@ -701,7 +713,7 @@ window.ReportSections = (function () {
       { label: 'Incident Response Capability', score: now.incidentResponse, prev: prev.incidentResponse,
         target: MATURITY_TARGETS.incidentResponse, basis: 'Resolution rate & speed' },
       { label: 'Identity Security',           score: (identityMetrics(ctx) || {}).score, prev: null,
-        target: 90, basis: 'MFA, Conditional Access, modern auth & risk handling' },
+        target: 90, basis: identityBasis(ctx) },
       { label: 'Endpoint Protection',         score: (endpointMetrics(ctx) || {}).agentCurrency, prev: null,
         target: 98, basis: 'EDR agent currency' },
     ];
@@ -988,16 +1000,25 @@ window.ReportSections = (function () {
   }
 
   /**
-   * Weights for the Identity Security composite. Each term is a measured ratio;
-   * any term that is unavailable drops out and the rest are re-normalised, so a
-   * partial signal still scores rather than dragging the result down.
+   * Weights for the Identity Security composite.
+   *
+   * Only ratios the current integration actually produces are here. MFA
+   * enrolment, Conditional Access coverage and device compliance are not: they
+   * are directory configuration, and neither the Office 365 audit log nor the
+   * MS Graph feed carries them. Rather than report them as permanently
+   * unmeasured, they are left out until a Graph configuration integration
+   * exists.
+   *
+   * Any term without data drops out and the rest re-normalise, so a partial
+   * signal still scores rather than dragging the result down.
    */
   var IDENTITY_WEIGHTS = {
-    mfaRate:      0.40,
-    caCoverage:   0.25,
-    modernAuth:   0.20,
-    riskHandled:  0.15,
+    modernAuth:    0.45,   // ms-graph: sign-ins not on legacy protocols
+    riskHandled:   0.35,   // ms-graph: flagged users actually dealt with
+    signInSuccess: 0.20,   // office365 audit: credential-attack pressure
   };
+
+  var RISK_HANDLED_STATES = { remediated: 1, dismissed: 1, confirmedsafe: 1 };
 
   /**
    * Identity posture from the Managed Office 365 tab (/api/o365/summary).
@@ -1019,29 +1040,36 @@ window.ReportSections = (function () {
     var legacy  = (signins.legacyAuth && signins.legacyAuth.total) || 0;
     var total   = signins.total || 0;
 
+    // Risk state travels per user on riskyUsers.users[], through both the live
+    // and the rollup path — no extra aggregation needed.
+    var users   = Array.isArray(risky.users) ? risky.users : [];
+    var handled = users.filter(function (u) {
+      return RISK_HANDLED_STATES[String(u.state || '').toLowerCase()];
+    }).length;
+
+    var ok   = d && d.signins ? (d.signins.success || 0) : null;
+    var bad  = d && d.signins ? (d.signins.failed  || 0) : null;
+    var attempts = ok != null && bad != null ? ok + bad : 0;
+
     var m = {
-      // Sign-ins that required and satisfied multi-factor authentication.
-      mfaRate: tallyShare(signins.authRequirement, function (l) {
-        return l.indexOf('multifactor') !== -1;
-      }),
-      // Sign-ins a Conditional Access policy actually evaluated. 'notApplied'
-      // is the real coverage gap: no policy looked at that sign-in.
-      caCoverage: tallyShare(signins.caStatus, function (l) {
-        return l !== 'notapplied' && l !== 'not applied';
-      }),
-      modernAuth: total ? pct(total - legacy, total) : null,
-      // Flagged users that were remediated or dismissed rather than left open.
-      riskHandled: tallyShare(risky.byState, function (l) {
-        return l === 'remediated' || l === 'dismissed' || l === 'confirmedsafe';
-      }),
-      deviceCompliant: tallyShare(signins.deviceCompliance, function (l) {
-        return l === 'true' || l === '1';
-      }),
+      modernAuth:  total ? pct(total - legacy, total) : null,
+      riskHandled: users.length ? pct(handled, users.length) : null,
+      // Share of sign-in attempts that succeeded. A falling rate means
+      // credential pressure — spraying, stuffing or a broken auth path.
+      signInSuccess: attempts ? pct(ok, attempts) : null,
 
       legacyAuth:   total ? legacy : null,
       caFailures:   signins.caFailures != null ? signins.caFailures : null,
       riskyUsers:   risky.distinct != null ? risky.distinct : null,
-      failedLogins: d && d.signins ? d.signins.failed : null,
+      riskOpen:     users.length ? users.length - handled : null,
+      failedLogins: bad,
+      // Sources whose failures look like spraying rather than a stuck client.
+      sprayIps: d && d.failedLogins && Array.isArray(d.failedLogins.byIp)
+        ? d.failedLogins.byIp.filter(function (r) { return r.spray; }).length
+        : null,
+      adminOps:     d && d.admin        ? d.admin.total        : null,
+      mailboxRules: d && d.mailboxRules ? d.mailboxRules.total : null,
+      dlpEvents:    d && d.dlp          ? d.dlp.total          : null,
     };
 
     // Weighted composite over whichever terms are actually measured.
@@ -1051,9 +1079,10 @@ window.ReportSections = (function () {
       num += m[k] * IDENTITY_WEIGHTS[k];
       den += IDENTITY_WEIGHTS[k];
     });
-    m.score      = den ? Math.round((num / den) * 10) / 10 : null;
-    m.basedOn    = den ? Math.round((den / 1) * 100) / 100 : 0;
-    m.termsUsed  = Object.keys(IDENTITY_WEIGHTS).filter(function (k) { return m[k] != null; });
+    m.score     = den ? Math.round((num / den) * 10) / 10 : null;
+    m.termsUsed = Object.keys(IDENTITY_WEIGHTS).filter(function (k) { return m[k] != null; });
+    m.hasGraph  = !!g && total > 0;
+    m.hasAudit  = attempts > 0;
 
     return m;
   }
@@ -1108,23 +1137,43 @@ window.ReportSections = (function () {
 
     var groups = [];
 
+    // Only what this integration emits. Every item below is omitted rather than
+    // shown empty when its source is not configured for the tenant.
     if (id) {
-      groups.push('<div class="cc-group">' +
-        '<div class="cc-gh">Identity &mdash; Managed Office 365</div>' +
-        '<div class="cc-items">' +
-          ccItem('MFA-satisfied sign-ins', id.mfaRate, { unit: '%', target: 95 }) +
-          ccItem('Conditional Access coverage', id.caCoverage, { unit: '%', target: 95 }) +
-          ccItem('Modern auth coverage', id.modernAuth, { unit: '%', target: 99 }) +
-          ccItem('Risky users handled', id.riskHandled, { unit: '%', target: 90 }) +
-          ccItem('Compliant-device sign-ins', id.deviceCompliant, { unit: '%', target: 90 }) +
-          ccItem('Legacy auth sign-ins', id.legacyAuth, { lowerIsBetter: true }) +
-          ccItem('Users flagged at risk', id.riskyUsers, { lowerIsBetter: true }) +
-          // Neither of these is a defect count, so neither is coloured as one:
-          // a Conditional Access failure is a policy block working as intended,
-          // and some failed sign-ins are expected in any population.
-          ccItem('Conditional Access blocks', id.caFailures, {}) +
-          ccItem('Failed sign-ins', id.failedLogins, {}) +
-        '</div></div>');
+      var items = [];
+
+      if (id.hasGraph) {
+        items.push(ccItem('Modern auth coverage', id.modernAuth, { unit: '%', target: 99 }));
+        items.push(ccItem('Legacy auth sign-ins', id.legacyAuth, { lowerIsBetter: true }));
+      }
+      if (id.riskyUsers != null) {
+        items.push(ccItem('Users flagged at risk', id.riskyUsers, { lowerIsBetter: true }));
+      }
+      if (id.riskHandled != null) {
+        items.push(ccItem('Risky users handled', id.riskHandled, { unit: '%', target: 90 }));
+        items.push(ccItem('Risks still open', id.riskOpen, { lowerIsBetter: true }));
+      }
+      if (id.hasAudit) {
+        items.push(ccItem('Sign-in success rate', id.signInSuccess, { unit: '%', target: 95 }));
+        // Not a defect count: some failures are expected in any population.
+        items.push(ccItem('Failed sign-ins', id.failedLogins, {}));
+      }
+      if (id.sprayIps != null) {
+        items.push(ccItem('Password-spray sources', id.sprayIps, { lowerIsBetter: true }));
+      }
+      if (id.caFailures != null) {
+        // A policy block is the control working, so this is informational.
+        items.push(ccItem('Conditional Access blocks', id.caFailures, {}));
+      }
+      if (id.adminOps != null)     items.push(ccItem('Admin operations', id.adminOps, {}));
+      if (id.mailboxRules != null) items.push(ccItem('Mailbox rule changes', id.mailboxRules, { lowerIsBetter: true, warnAbove: 5 }));
+      if (id.dlpEvents != null)    items.push(ccItem('DLP events', id.dlpEvents, { lowerIsBetter: true }));
+
+      if (items.length) {
+        groups.push('<div class="cc-group">' +
+          '<div class="cc-gh">Identity &amp; Data &mdash; Managed Office 365</div>' +
+          '<div class="cc-items">' + items.join('') + '</div></div>');
+      }
     }
 
     if (ep) {
@@ -1139,22 +1188,16 @@ window.ReportSections = (function () {
         '</div></div>');
     }
 
+    if (!groups.length) return null;
     var window = ep && ep.windowDays ? ep.windowDays : null;
-    var missing = id && id.termsUsed
-      ? Object.keys(IDENTITY_WEIGHTS).filter(function (k) { return id.termsUsed.indexOf(k) === -1; })
-      : [];
 
     return '<div class="cc-grid">' + groups.join('') + '</div>' +
       '<div class="rag-note">' +
         'Drawn from the Managed Office 365 and Managed EDR telemetry' +
         (window ? ' over a trailing ' + window + '-day window' : '') + '. ' +
-        'Identity percentages are measured across the sign-ins that carry each ' +
-        'field. These are sign-in outcomes, not directory configuration: they show ' +
-        'whether MFA and Conditional Access <i>took effect</i>, not how many accounts ' +
-        'are enrolled.' +
-        (missing.length
-          ? ' Not available from this tenant’s log fields: ' + esc(missing.join(', ')) + '.'
-          : '') +
+        'These are observed outcomes, not directory configuration: MFA enrolment ' +
+        'and Conditional Access policy coverage are not carried by either feed and ' +
+        'are therefore not reported.' +
       '</div>';
   }
 
