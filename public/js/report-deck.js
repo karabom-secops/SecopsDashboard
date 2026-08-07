@@ -38,7 +38,29 @@ window.ReportDeck = (function () {
 /* Without this Chrome emits a trailing blank page after the final slide. */
 '.slide:last-of-type{page-break-after:auto;break-after:auto}',
 
-/* header */
+/* ── content pages ─────────────────────────────────────────────────────────
+   Sections are packed onto these by measurement after layout, so a short
+   section no longer reserves a whole page. */
+'.page{position:relative;overflow:hidden;width:' + SLIDE_W + ';height:' + SLIDE_H + ';',
+'  background:#fff;padding:14mm 15mm 11mm;display:flex;flex-direction:column;',
+'  page-break-after:always;break-after:page;page-break-inside:avoid;break-inside:avoid}',
+'.page:last-of-type{page-break-after:auto;break-after:auto}',
+'.pg-head{flex:0 0 auto;display:flex;justify-content:flex-end;min-height:11mm}',
+'.pg-logo{height:11mm;width:auto}',
+'.pg-body{flex:1 1 auto;min-height:0;overflow:hidden;padding-top:3mm}',
+'.pg-foot{flex:0 0 auto;display:flex;align-items:center;gap:3mm;font-size:8.5pt;',
+'  color:' + P.DECK_FOOT + ';padding-top:4mm}',
+'.pg-num{flex:0 0 auto}',
+
+/* a section within a page */
+'.sec{page-break-inside:avoid;break-inside:avoid;margin-bottom:9mm}',
+'.sec:last-child{margin-bottom:0}',
+'.sec-title{font-size:18pt;font-weight:800;color:' + P.DECK_BLUE + ';line-height:1.05;',
+'  letter-spacing:-.2pt;margin:0}',
+'.sec-rule{height:2pt;background:' + P.DECK_BLUE + ';margin-top:2.5mm}',
+'.sec-body{padding-top:4mm}',
+
+/* header (cover only) */
 '.sl-head{display:flex;justify-content:space-between;align-items:flex-start;flex:0 0 auto;gap:10mm}',
 '.sl-title{font-size:22pt;font-weight:800;color:' + P.DECK_BLUE + ';line-height:1.05;letter-spacing:-.2pt}',
 '.sl-rule{height:2.5pt;background:' + P.DECK_BLUE + ';margin-top:3.5mm}',
@@ -250,9 +272,9 @@ window.ReportDeck = (function () {
 '.print-btn.close-btn{background:' + P.DECK_DARK + '}',
 
 '@media screen{body{background:#DFE3E8;padding:16px 0}',
-'  .slide{box-shadow:0 2px 22px rgba(0,0,0,.18);margin:0 auto 16px}}',
+'  .slide,.page{box-shadow:0 2px 22px rgba(0,0,0,.18);margin:0 auto 16px}}',
 '@media print{body{background:#fff;padding:0}',
-'  .slide{box-shadow:none;margin:0}',
+'  .slide,.page{box-shadow:none;margin:0}',
 '  .print-btn-bar{display:none !important}',
 '  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}}',
   ].join('\n');
@@ -296,12 +318,64 @@ window.ReportDeck = (function () {
   }
 
   /** Wrap a body fragment in a full content slide. */
+  /**
+   * One report section. Sections no longer own a page each — several short ones
+   * share a page, packed by measurement once the document has laid out (see
+   * PAGINATE_JS). A section that is taller than a page keeps a page to itself.
+   */
   function slide(opts) {
-    var ctx = opts.ctx || {};
-    return '<div class="slide">' +
-        slideHeader(opts.title, ctx.logoDataUri) +
-        '<div class="sl-body">' + opts.body + '</div>' +
-        slideFooter(opts.pageNo, ctx.dateStr) +
+    return '<section class="sec">' +
+        '<h2 class="sec-title">' + esc(opts.title) + '</h2>' +
+        '<div class="sec-rule"></div>' +
+        '<div class="sec-body">' + opts.body + '</div>' +
+      '</section>';
+  }
+
+  /**
+   * Packs sections into fixed A4 pages after layout.
+   *
+   * Measured rather than estimated: heights depend on fonts and wrapping, which
+   * cannot be known when the HTML is built. Each section is appended to the
+   * current page and moved to a new one if it overflows, so page numbers stay
+   * truthful and no page is left two-thirds empty.
+   */
+  function paginateScript(ctx) {
+    return '<script>(function(){\n' +
+      'var src=document.getElementById("rp-src"),out=document.getElementById("rp-out");\n' +
+      'if(!src||!out)return;\n' +
+      'var HEAD=' + JSON.stringify(pageHead(ctx.logoDataUri)) + ';\n' +
+      'var FOOT=' + JSON.stringify(pageFootTemplate(ctx)) + ';\n' +
+      'function newPage(){var p=document.createElement("div");p.className="page";\n' +
+      '  p.innerHTML=HEAD+\'<div class="pg-body"></div>\'+FOOT;out.appendChild(p);return p;}\n' +
+      'var page=newPage(),body=page.querySelector(".pg-body");\n' +
+      'var secs=Array.prototype.slice.call(src.children);\n' +
+      'secs.forEach(function(sec){\n' +
+      '  body.appendChild(sec);\n' +
+      '  if(body.scrollHeight>body.clientHeight+1&&body.children.length>1){\n' +
+      '    page=newPage();body=page.querySelector(".pg-body");body.appendChild(sec);\n' +
+      '  }\n' +
+      '});\n' +
+      'src.parentNode.removeChild(src);\n' +
+      // Cover is page 1, so content pages start at 2.
+      'var pages=out.querySelectorAll(".page");\n' +
+      'for(var i=0;i<pages.length;i++){\n' +
+      '  var n=pages[i].querySelector(".pg-num");if(n)n.textContent=String(i+2);\n' +
+      '}\n' +
+      '})();<\/script>';
+  }
+
+  function pageHead(logoDataUri) {
+    return '<div class="pg-head">' +
+      (logoDataUri ? '<img class="pg-logo" src="' + logoDataUri + '" alt="Reflex">' : '') +
+      '</div>';
+  }
+
+  function pageFootTemplate(ctx) {
+    return '<div class="pg-foot">' +
+        '<span class="sl-dots"><i class="sl-dot"></i><i class="sl-dot"></i><i class="sl-dot lg"></i></span>' +
+        '<span>' + esc(ctx.dateStr || '') + '</span>' +
+        '<span class="sl-foot-rule"></span>' +
+        '<span class="pg-num"></span>' +
       '</div>';
   }
 
@@ -397,7 +471,12 @@ window.ReportDeck = (function () {
         '<button class="print-btn" onclick="window.print()">Print / Save as PDF</button>' +
         '<button class="print-btn close-btn" onclick="window.close()">Close</button>' +
       '</div>\n' +
-      slidesHtml.join('\n') +
+      // slidesHtml[0] is the cover and keeps a page to itself; the rest are
+      // sections that get packed onto pages by paginateScript().
+      slidesHtml[0] + '\n' +
+      '<div id="rp-src" hidden>' + slidesHtml.slice(1).join('\n') + '</div>\n' +
+      '<div id="rp-out"></div>\n' +
+      paginateScript(ctx) +
       '\n</body>\n</html>';
   }
 
