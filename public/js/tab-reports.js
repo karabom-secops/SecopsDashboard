@@ -34,6 +34,8 @@ window.ReportsTab = (function () {
       return 'api/reports/metrics?period=' + encodeURIComponent(ctx.period) + tenantParam('&');
     },
     secureScore:      function () { return 'api/secure-score' + tenantParam('?'); },
+    // Prior-month component scores, for the trend and maturity sections.
+    secureScoreHistory: function () { return 'api/secure-score/history' + tenantParam('?'); },
     // Same endpoint the Awareness tab uses, so the deck cannot drift from it.
     awareness:        function () { return 'api/awareness' + tenantParam('?'); },
     mdr:              function () { return 'api/mdr' + tenantParam('?'); },
@@ -110,17 +112,27 @@ window.ReportsTab = (function () {
       sections[s.id] = cb ? cb.checked : true;
     });
     var overrides = {};
-    TILES.forEach(function (t) {
-      var el = document.getElementById('rpt-ov-' + t.id);
-      if (el && el.value.trim()) overrides[t.id] = el.value.trim();
+    allOverrideIds().forEach(function (id) {
+      var el = document.getElementById('rpt-ov-' + id);
+      if (el && el.value.trim()) overrides[id] = el.value.trim();
     });
     return {
       sections:  sections,
       overrides: overrides,
       narrative: (document.getElementById('rpt-narrative') || {}).value || '',
+      assurance: (document.getElementById('rpt-assurance') || {}).value || '',
       author:    (document.getElementById('rpt-author')    || {}).value || '',
       period:    (document.getElementById('rpt-period')    || {}).value || '',
     };
+  }
+
+  /** Overview tiles plus every attested metric, which share the override store. */
+  function allOverrideIds() {
+    var ids = TILES.map(function (t) { return t.id; });
+    (window.ReportSections.MANUAL_METRICS || []).forEach(function (g) {
+      g.items.forEach(function (it) { ids.push(it.id); });
+    });
+    return ids;
   }
 
   function periodLabel(period) {
@@ -198,6 +210,36 @@ window.ReportsTab = (function () {
           '<div class="rpt-tile-derived">Derived: <b>' + S.esc(derived == null ? 'no data' : derived) + '</b></div>' +
           '<input type="text" class="rpt-tile-override" id="rpt-ov-' + t.id + '" ' +
                  'value="' + S.esc(value) + '" placeholder="' + S.esc(t.hint) + '">' +
+        '</div>';
+    }).join('');
+  }
+
+  /**
+   * Attested metrics: figures no integration can supply, grouped as a short
+   * checklist. Blank means "not measured" and the deck omits the metric rather
+   * than printing a misleading zero.
+   */
+  function renderManualMetrics(prefs) {
+    var host = document.getElementById('rpt-manual');
+    if (!host) return;
+    var tiles  = (_metrics && _metrics.tiles) || {};
+    var groups = window.ReportSections.MANUAL_METRICS || [];
+
+    host.innerHTML = groups.map(function (g) {
+      return '<div class="rpt-mgroup">' +
+          '<div class="rpt-mgh">' + S.esc(g.group) + '</div>' +
+          '<div class="rpt-mitems">' +
+            g.items.map(function (it) {
+              var info   = tiles[it.id] || {};
+              var stored = prefs.overrides && prefs.overrides[it.id];
+              var value  = stored != null ? stored : (info.override != null ? info.override : '');
+              return '<label class="rpt-mfield">' +
+                  '<span class="rpt-mlabel">' + S.esc(it.label) + '</span>' +
+                  '<input type="text" id="rpt-ov-' + it.id + '" ' +
+                         'value="' + S.esc(value) + '" placeholder="' + S.esc(it.hint) + '">' +
+                '</label>';
+            }).join('') +
+          '</div>' +
         '</div>';
     }).join('');
   }
@@ -280,7 +322,9 @@ window.ReportsTab = (function () {
       fetchJson(DATA_SOURCES.secureScore()),
     ]);
     _metrics = mergeSecureScore(pair[0], pair[1]);
-    renderTiles(loadPrefs());
+    var p = loadPrefs();
+    renderTiles(p);
+    renderManualMetrics(p);
 
     var warns = (_metrics && _metrics.warnings) || [];
     if (!pair[1] || pair[1].score == null) {
@@ -295,8 +339,8 @@ window.ReportsTab = (function () {
 
     var payload = { period: period, overrides: {} };
     if (isSuperAdmin()) payload.tenantId = selectedTenantId();
-    TILES.forEach(function (t) {
-      payload.overrides[t.id] = overrides[t.id] != null ? overrides[t.id] : null;
+    allOverrideIds().forEach(function (id) {
+      payload.overrides[id] = overrides[id] != null ? overrides[id] : null;
     });
 
     try {
@@ -398,6 +442,7 @@ window.ReportsTab = (function () {
         year:        now.getFullYear(),
         tenantId:    selectedTenantId(),
         narrative:   prefs.narrative,
+        assurance:   prefs.assurance,
         overrides:   prefs.overrides,
         data:        data,
         logoDataUri: await S.logoToDataUri(),
@@ -457,6 +502,33 @@ window.ReportsTab = (function () {
     });
   }
 
+  async function redraftAssurance() {
+    var period = (document.getElementById('rpt-period') || {}).value || '';
+    var ctx = { period: period, tenantId: selectedTenantId() };
+    var data = await fetchNeeded(
+      ['execRisk', 'businessImpact', 'maturityTrend'], ctx);
+    var el = document.getElementById('rpt-assurance');
+    if (!el) return;
+
+    // The attested figures live in the form, not the server response, so fold
+    // the typed overrides in before drafting.
+    var prefs = currentPrefs();
+    if (data.metrics && data.metrics.tiles) {
+      Object.keys(prefs.overrides).forEach(function (id) {
+        if (data.metrics.tiles[id]) data.metrics.tiles[id].override = prefs.overrides[id];
+        else data.metrics.tiles[id] = { derived: null, source: 'manual', override: prefs.overrides[id] };
+      });
+    }
+
+    el.value = window.ReportSections.draftAssurance({
+      clientName:  clientName(),
+      periodLabel: periodLabel(period),
+      period:      period,
+      tenantId:    selectedTenantId(),
+      data:        data,
+    });
+  }
+
   function reset() {
     try { localStorage.removeItem(storageKey()); } catch (_) {}
     _rendered = false;
@@ -477,6 +549,9 @@ window.ReportsTab = (function () {
 
       var narrEl = document.getElementById('rpt-narrative');
       if (narrEl) narrEl.value = prefs.narrative || '';
+
+      var assurEl = document.getElementById('rpt-assurance');
+      if (assurEl) assurEl.value = prefs.assurance || '';
 
       renderSectionToggles(prefs);
 
@@ -505,6 +580,12 @@ window.ReportsTab = (function () {
         redraftNarrative().finally(function () { draft.disabled = false; });
       };
 
+      var draftA = document.getElementById('rpt-redraft-assurance-btn');
+      if (draftA) draftA.onclick = function () {
+        draftA.disabled = true;
+        redraftAssurance().finally(function () { draftA.disabled = false; });
+      };
+
       // Switching client switches the localStorage bucket too, so re-apply that
       // client's saved toggles and narrative alongside the new metrics.
       var clientEl = document.getElementById('rpt-client');
@@ -513,6 +594,8 @@ window.ReportsTab = (function () {
         renderSectionToggles(p);
         var n = document.getElementById('rpt-narrative');
         if (n) n.value = p.narrative || '';
+        var a = document.getElementById('rpt-assurance');
+        if (a) a.value = p.assurance || '';
         refreshMetrics();
       };
 

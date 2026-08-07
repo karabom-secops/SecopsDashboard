@@ -3640,3 +3640,13 @@ body.login-page {
 .nav-empty .side-menu,
 .nav-empty .nav-burger { display: none !important; }
 .nav-empty #dashboard  { margin-left: 0; }
+
+/* Reports tab — attested metric entry */
+.rpt-manual { display: flex; flex-direction: column; gap: 0.9rem; margin-bottom: 0.4rem; }
+.rpt-mgroup { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 0.8rem 1rem 1rem; }
+.rpt-mgh { font-weight: 700; color: var(--logo-blue); font-size: 0.86rem; margin-bottom: 0.6rem; }
+.rpt-mitems { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.7rem 1rem; }
+.rpt-mfield { display: flex; flex-direction: column; gap: 0.25rem; }
+.rpt-mlabel { font-size: 0.78rem; color: var(--muted); }
+.rpt-mfield input { width: 100%; padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 0.86rem; }
+.rpt-mfield input:focus { outline: none; border-color: var(--logo-cyan); }

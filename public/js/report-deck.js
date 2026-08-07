@@ -135,6 +135,75 @@ window.ReportDeck = (function () {
 '.tk-desc{color:' + P.DECK_MAROON + '}',
 '.tk-when{color:' + P.DECK_MUTED + ';white-space:nowrap;font-size:8.5pt}',
 
+/* ── executive risk assurance ──────────────────────────────────────────────
+   All sized for the 180mm portrait measure (210mm less 15mm padding a side). */
+
+/* RAG table */
+'.dt.rag tbody td{padding:2.6mm 2mm}',
+'.rag-area{font-weight:600;color:' + P.DECK_INK + '}',
+'.rag-basis{font-size:7.5pt;color:' + P.DECK_MUTED + ';margin-top:.6mm}',
+'.rag-pill{display:inline-block;color:#fff;font-size:8pt;font-weight:700;',
+'  border-radius:1mm;padding:.9mm 2.4mm;white-space:nowrap}',
+'.rag-yes{color:#1E7B45;font-weight:700}',
+'.rag-no{color:#C0392B;font-weight:700}',
+'.rag-unknown{color:' + P.DECK_MUTED + ';font-style:italic;font-size:8.5pt}',
+'.rag-note{margin-top:3.5mm;font-size:8.5pt;color:' + P.DECK_MUTED + ';line-height:1.45}',
+
+/* business impact — 3 across the 180mm measure keeps the labels on one or two lines */
+'.bi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5mm}',
+'.bi-cell{background:#F7F9FB;border-radius:1.5mm;border-left:1.4mm solid #BFBFBF;',
+'  padding:5mm;min-height:25mm;display:flex;flex-direction:column;justify-content:center}',
+'.bi-cell.ok{border-left-color:#2E9E5B}',
+'.bi-v{font-size:24pt;font-weight:800;color:' + P.DECK_INK + ';line-height:1}',
+'.bi-v.nd{font-size:11pt;font-weight:600;color:#A6A6A6;font-style:italic}',
+'.bi-l{margin-top:2.5mm;font-size:9pt;color:' + P.DECK_MUTED + ';line-height:1.35}',
+'.bi-att{display:block;font-size:7pt;text-transform:uppercase;letter-spacing:.4pt;',
+'  color:#8C8C8C;margin-top:.8mm}',
+
+/* vulnerability exposure */
+'.sev-dot{display:inline-block;width:2.2mm;height:2.2mm;border-radius:50%;vertical-align:middle}',
+'.sev-sla{display:block;font-size:7pt;color:' + P.DECK_MUTED + '}',
+'.ov-bad{color:#C0392B;font-weight:700}',
+'.ve-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:6mm;margin-top:5mm}',
+'.ve-fact{background:#F7F9FB;border-radius:1.5mm;padding:4mm 4mm;text-align:center}',
+'.ve-fv{font-size:18pt;font-weight:800;color:' + P.DECK_INK + ';line-height:1}',
+'.ve-fl{margin-top:1.6mm;font-size:8.5pt;color:' + P.DECK_MUTED + '}',
+
+/* control coverage — one group per row; three metrics across is 60mm each */
+'.cc-grid{display:flex;flex-direction:column;gap:5mm}',
+'.cc-gh{font-size:10.5pt;font-weight:700;color:' + P.DECK_BLUE + ';margin-bottom:2.4mm;',
+'  border-bottom:.5pt solid #D6E4F0;padding-bottom:1.2mm}',
+'.cc-items{display:grid;grid-template-columns:repeat(3,1fr);gap:5mm}',
+'.cc-item{min-width:0}',
+'.cc-v{font-size:16pt;font-weight:800;line-height:1}',
+'.cc-l{margin-top:1.4mm;font-size:8.5pt;color:' + P.DECK_MUTED + ';line-height:1.3}',
+'.cc-t{display:block;font-size:7.5pt;color:#A6A6A6}',
+
+/* threat landscape */
+'.tl-wrap{display:grid;grid-template-columns:1fr 54mm;gap:8mm;align-items:start}',
+'.tl-bars{display:flex;flex-direction:column;gap:3.5mm}',
+'.tl-row{display:grid;grid-template-columns:42mm 1fr 11mm;align-items:center;gap:3mm}',
+'.tl-name{font-size:9.5pt;color:' + P.DECK_INK + '}',
+'.tl-track{height:5mm;background:#E6ECF2;border-radius:1mm;overflow:hidden}',
+'.tl-fill{height:100%;background:' + P.DECK_BLUE + ';border-radius:1mm}',
+'.tl-n{font-size:11pt;font-weight:700;color:' + P.DECK_INK + ';text-align:right}',
+'.tl-side{background:#F7F9FB;border-radius:1.5mm;padding:6mm 5mm;text-align:center}',
+'.tl-total{font-size:30pt;font-weight:800;color:' + P.DECK_BLUE + ';line-height:1}',
+'.tl-total-l{font-size:8.5pt;color:' + P.DECK_MUTED + ';margin-top:1.5mm}',
+'.tl-sev{margin-top:5mm;text-align:left;font-size:9pt;color:' + P.DECK_INK + '}',
+'.tl-sev-row{display:flex;align-items:center;gap:2.5mm;padding:1.2mm 0}',
+'.tl-sev-n{margin-left:auto;font-weight:700}',
+
+/* assurance statement */
+'.as-wrap{height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 2mm}',
+'.as-quote{font-size:14pt;line-height:1.65;color:' + P.DECK_INK + ';',
+'  border-left:2mm solid ' + P.DECK_BLUE + ';padding-left:8mm}',
+'.as-sign{margin-top:14mm;padding-left:10mm}',
+'.as-rule{width:64mm;height:.6pt;background:#BFBFBF;margin-bottom:3mm}',
+'.as-by{font-size:12pt;font-weight:700;color:' + P.DECK_INK + '}',
+'.as-role{font-size:9.5pt;color:' + P.DECK_MUTED + ';margin-top:.8mm}',
+'.as-date{font-size:9.5pt;color:' + P.DECK_MUTED + ';margin-top:.4mm}',
+
 /* remediation tracker — stacked in portrait. Two side-by-side 4-column tables
    would each get ~85mm of the 180mm measure and wrap to unreadable slivers;
    portrait has the vertical room to run them one above the other instead. */

@@ -1845,12 +1845,27 @@
       <button type="button" class="btn btn-secondary" id="rpt-awsync-btn">Refresh from Arctic Wolf</button>
     </div>
 
+    <h3 class="rpt-sub">Attested metrics</h3>
+    <p class="rpt-help">Figures no integration can supply yet — control coverage, breach and
+      materiality determinations. Saved per client and period, so next month pre-fills.
+      Leave blank for "not measured"; the report omits blanks rather than printing zero.</p>
+    <div class="rpt-manual" id="rpt-manual"></div>
+
     <h3 class="rpt-sub">Observations narrative</h3>
     <p class="rpt-help">One bullet per line. Edit freely before generating.</p>
     <textarea id="rpt-narrative" class="rpt-narrative" rows="7"
               placeholder="One observation per line…"></textarea>
     <div>
       <button type="button" class="btn btn-secondary" id="rpt-redraft-btn">Re-draft from data</button>
+    </div>
+
+    <h3 class="rpt-sub">Board assurance statement</h3>
+    <p class="rpt-help">Closes the report. Auto-drafted from the data, but review it before
+      generating — it is an attestation, not an automated statement.</p>
+    <textarea id="rpt-assurance" class="rpt-narrative" rows="6"
+              placeholder="Based on security monitoring, vulnerability assessments…"></textarea>
+    <div>
+      <button type="button" class="btn btn-secondary" id="rpt-redraft-assurance-btn">Re-draft from data</button>
     </div>
   </section>
 

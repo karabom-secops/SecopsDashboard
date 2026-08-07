@@ -367,13 +367,81 @@ window.ReportSections = (function () {
     // breakdown on the Overview slide.
     var html =
       '<div style="margin-bottom:7mm">' +
-        awarenessTable('Last 3 Sessions', sessions, totals.sessions, allTime.sessions) +
+        // Caption follows the row count rather than hard-coding one: the cap is
+        // MAX_AWARENESS_ROWS, and a client with fewer campaigns must not be
+        // shown a heading promising more than the table lists.
+        awarenessTable('Last ' + sessions.length + ' Session' + (sessions.length === 1 ? '' : 's'),
+                       sessions, totals.sessions, allTime.sessions) +
       '</div>' +
       '<div>' +
-        awarenessTable('Last 3 Quizzes', quizzes, totals.quizzes, allTime.quizzes) +
+        awarenessTable('Last ' + quizzes.length + ' Quiz' + (quizzes.length === 1 ? '' : 'zes'),
+                       quizzes, totals.quizzes, allTime.quizzes) +
       '</div>';
 
     return html;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Executive risk policy
+  //
+  // These thresholds are what turn raw scores into board-facing statements
+  // ("outside appetite", "overdue", "SLA compliance"). They are deliberately in
+  // one block so the policy can be changed in a single place and so nobody has
+  // to guess where a RAG rating came from.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** Days from first_seen_at within which a finding of each severity must be fixed. */
+  var VULN_SLA_DAYS = { Critical: 7, High: 30, Medium: 90, Low: 180 };
+
+  /** Target score per domain. A domain below target is outside appetite. */
+  var MATURITY_TARGETS = {
+    vulnerabilities:  80,
+    awareness:        90,
+    incidentResponse: 90,
+    overall:          75,
+  };
+
+  /** An open risk at or above this score puts its area outside appetite. */
+  var RISK_APPETITE_SCORE = 15;
+
+  /**
+   * RAG rating measured against the area's own target, not an absolute band.
+   *
+   * Both the rating and the within-appetite column must come from the same
+   * comparison, otherwise the table can say "Low risk" and "outside appetite"
+   * on the same row — which is exactly the sort of thing that costs a report
+   * its credibility with an executive audience. Low is true if and only if the
+   * area is at or above target.
+   */
+  function ragFor(score, target) {
+    if (score == null) return { label: 'Unknown', tone: '#8C8C8C' };
+    var gap = score - (target == null ? 75 : target);
+    if (gap >= 0)  return { label: 'Low',    tone: '#2E9E5B' };
+    if (gap >= -10) return { label: 'Medium', tone: '#f39c12' };
+    return { label: 'High', tone: '#e74c3c' };
+  }
+
+  /** Compare two scores into a trend word. */
+  function trendFor(current, previous) {
+    if (current == null || previous == null) return { label: 'No prior data', mark: '' };
+    var delta = current - previous;
+    if (delta > 3)  return { label: 'Improving',  mark: '▲', tone: '#2E9E5B' };
+    if (delta < -3) return { label: 'Increasing', mark: '▼', tone: '#e74c3c' };
+    return { label: 'Stable', mark: '→', tone: '#8C8C8C' };
+  }
+
+  /** Whole days between a timestamp and now. */
+  function ageDays(ts) {
+    if (!ts) return null;
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return null;
+    return Math.floor((Date.now() - d.getTime()) / 86400000);
+  }
+
+  /** Normalise a vuln severity label to a VULN_SLA_DAYS key. */
+  function sevKey(risk) {
+    var t = titleCase(risk);
+    return VULN_SLA_DAYS[t] !== undefined ? t : null;
   }
 
   // ── Remediation Tracker ───────────────────────────────────────────────────
@@ -575,6 +643,645 @@ window.ReportSections = (function () {
     }
 
     return pages;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Executive risk assurance sections
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** Effective tile value as a number, or null when neither set nor derived. */
+  function tileNum(ctx, id) {
+    var raw = tileValue(((ctx.data.metrics || {}).tiles) || {}, id);
+    if (raw == null || raw === '') return null;
+    var n = parseFloat(String(raw).replace(/[^0-9.\-]/g, ''));
+    return isNaN(n) ? null : n;
+  }
+
+  /** Component scores from /api/secure-score, rounded. */
+  function componentScores(ctx) {
+    var c = (ctx.data.secureScore || {}).components || {};
+    function s(k) {
+      return c[k] && c[k].score != null ? Math.round(Number(c[k].score)) : null;
+    }
+    return {
+      vulnerabilities:  s('vulnerabilities'),
+      awareness:        s('awareness'),
+      incidentResponse: s('incidentResponse'),
+      overall: (ctx.data.secureScore || {}).score != null
+        ? Math.round(Number(ctx.data.secureScore.score)) : null,
+    };
+  }
+
+  /** The prior month's component scores from /api/secure-score/history. */
+  function previousScores(ctx) {
+    var h = ctx.data.secureScoreHistory;
+    var rows = Array.isArray(h) ? h : (h && h.history) || [];
+    // History is newest-first; [0] is the current month, [1] the comparison.
+    var prev = rows[1];
+    if (!prev) return {};
+    return {
+      vulnerabilities:  prev.vulnScore      != null ? Math.round(prev.vulnScore)      : null,
+      awareness:        prev.awarenessScore != null ? Math.round(prev.awarenessScore) : null,
+      incidentResponse: prev.mdrScore       != null ? Math.round(prev.mdrScore)       : null,
+      overall:          prev.score          != null ? Math.round(prev.score)          : null,
+    };
+  }
+
+  // ── Executive Risk Assessment ─────────────────────────────────────────────
+
+  function riskAreas(ctx) {
+    var now  = componentScores(ctx);
+    var prev = previousScores(ctx);
+
+    return [
+      { label: 'Vulnerability Exposure',      score: now.vulnerabilities,  prev: prev.vulnerabilities,
+        target: MATURITY_TARGETS.vulnerabilities,  basis: 'Secure Score component' },
+      { label: 'User Behaviour',              score: now.awareness,        prev: prev.awareness,
+        target: MATURITY_TARGETS.awareness,        basis: 'Awareness completion' },
+      { label: 'Incident Response Capability', score: now.incidentResponse, prev: prev.incidentResponse,
+        target: MATURITY_TARGETS.incidentResponse, basis: 'Resolution rate & speed' },
+      { label: 'Identity Security',           score: tileNum(ctx, 'mfaCoverage'),      prev: null,
+        target: 95, basis: 'MFA coverage (attested)' },
+      { label: 'Endpoint Protection',         score: tileNum(ctx, 'edrDeployment'),    prev: null,
+        target: 95, basis: 'EDR deployment (attested)' },
+    ];
+  }
+
+  function renderExecRisk(ctx) {
+    var areas = riskAreas(ctx);
+    if (!areas.some(function (a) { return a.score != null; })) return null;
+
+    var openRisks    = ((ctx.data.vulnFindings || {}).risks) || [];
+    var aboveAppetite = openRisks.filter(function (r) {
+      return r.stage !== 'closed' && Number(r.risk_score) >= RISK_APPETITE_SCORE;
+    }).length;
+
+    var rows = areas.map(function (a) {
+      var rag   = ragFor(a.score, a.target);
+      var trend = trendFor(a.score, a.prev);
+      var within = a.score == null ? null : a.score >= a.target;
+      return {
+        area: a.label,
+        basis: a.basis,
+        risk: rag,
+        score: a.score,
+        target: a.target,
+        trend: trend,
+        within: within,
+      };
+    });
+
+    return '<table class="dt rag">' +
+        '<thead><tr>' +
+          '<th style="width:30%">Risk Area</th>' +
+          '<th style="width:16%">Current Risk</th>' +
+          '<th class="num" style="width:14%">Score / Target</th>' +
+          '<th style="width:20%">Trend</th>' +
+          '<th style="width:20%">Within Appetite</th>' +
+        '</tr></thead><tbody>' +
+        rows.map(function (r) {
+          return '<tr>' +
+              '<td><div class="rag-area">' + esc(r.area) + '</div>' +
+                  '<div class="rag-basis">' + esc(r.basis) + '</div></td>' +
+              '<td><span class="rag-pill" style="background:' + r.risk.tone + '">' +
+                  esc(r.risk.label) + '</span></td>' +
+              '<td class="num">' + (r.score == null ? '—' : r.score + ' / ' + r.target) + '</td>' +
+              '<td><span style="color:' + (r.trend.tone || '#8C8C8C') + '">' +
+                  esc(r.trend.mark) + '</span> ' + esc(r.trend.label) + '</td>' +
+              '<td>' + (r.within == null
+                ? '<span class="rag-unknown">Not measured</span>'
+                : (r.within ? '<span class="rag-yes">Yes</span>'
+                            : '<span class="rag-no">No</span>')) + '</td>' +
+            '</tr>';
+        }).join('') +
+      '</tbody></table>' +
+      '<div class="rag-note">' +
+        'Within appetite means the area is at or above its target score. ' +
+        (aboveAppetite
+          ? esc(String(aboveAppetite)) + ' open risk' + (aboveAppetite === 1 ? '' : 's') +
+            ' currently score ' + RISK_APPETITE_SCORE + ' or above on the risk register.'
+          : 'No open risk currently scores ' + RISK_APPETITE_SCORE + ' or above.') +
+      '</div>';
+  }
+
+  // ── Business Impact Summary ───────────────────────────────────────────────
+
+  function renderBusinessImpact(ctx) {
+    var incidents = ((ctx.data.vulnFindings || {}).incidents) || [];
+    var period    = ctx.period;
+
+    function inPeriod(i) { return monthOf(i.opened_at) === period; }
+    function countType(t) {
+      return incidents.filter(function (i) { return inPeriod(i) && i.incident_type === t; }).length;
+    }
+
+    var securityIncidents = incidents.filter(inPeriod).length;
+    var mdrTickets = ((ctx.data.mdr || {}).tickets || []).filter(function (t) {
+      return monthOf(t.createdAt) === period;
+    }).length;
+
+    var rows = [
+      { label: 'Confirmed Breaches',           value: tileNum(ctx, 'confirmedBreaches'), attested: true },
+      { label: 'Security Incidents',           value: Math.max(securityIncidents, mdrTickets) },
+      { label: 'Material Incidents',           value: tileNum(ctx, 'materialIncidents'), attested: true },
+      { label: 'Business Downtime (hrs)',      value: tileNum(ctx, 'downtimeHours'),     attested: true },
+      { label: 'Data Loss Events',             value: countType('data_breach') },
+      { label: 'Privileged Account Compromise', value: countType('unauthorized_access') },
+      { label: 'Ransomware Events',            value: countType('malware_ransomware') },
+    ];
+
+    if (!rows.some(function (r) { return r.value != null; })) return null;
+
+    return '<div class="bi-grid">' +
+        rows.map(function (r) {
+          var shown = r.value == null ? 'Not measured' : String(r.value);
+          var zero  = r.value === 0;
+          return '<div class="bi-cell' + (zero ? ' ok' : '') + '">' +
+              '<div class="bi-v' + (r.value == null ? ' nd' : '') + '">' + esc(shown) + '</div>' +
+              '<div class="bi-l">' + esc(r.label) +
+                (r.attested ? '<span class="bi-att">attested</span>' : '') +
+              '</div>' +
+            '</div>';
+        }).join('') +
+      '</div>' +
+      '<div class="rag-note">Figures marked <b>attested</b> are confirmed by the security team; ' +
+        'the remainder are counted automatically from incident records.</div>';
+  }
+
+  // ── Top Cyber Risks (risk register) ───────────────────────────────────────
+
+  var MAX_TOP_RISKS = 6;
+
+  function renderTopRisks(ctx) {
+    var risks = ((ctx.data.vulnFindings || {}).risks) || [];
+    var open  = risks.filter(function (r) { return r.stage !== 'closed'; });
+    if (!open.length) return null;
+
+    open.sort(function (a, b) { return (Number(b.risk_score) || 0) - (Number(a.risk_score) || 0); });
+
+    return D.dataTable({
+      cols: [
+        { label: 'Risk', key: 'title', width: '36%',
+          raw: function (r) { return esc(truncate(r.title || '(untitled)', 62)); } },
+        { label: 'Rating', key: 'risk_score', width: '13%',
+          raw: function (r) {
+            var s = Number(r.risk_score) || 0;
+            var band = s >= 20 ? { l: 'Critical', t: '#c0392b' }
+                     : s >= 15 ? { l: 'High',     t: '#e74c3c' }
+                     : s >= 8  ? { l: 'Medium',   t: '#f39c12' }
+                               : { l: 'Low',      t: '#2E9E5B' };
+            return '<span class="rag-pill" style="background:' + band.t + '">' +
+                   esc(band.l) + ' ' + s + '</span>';
+          } },
+        { label: 'Owner', key: 'owner', width: '22%',
+          raw: function (r) { return esc(truncate(r.owner || 'Unassigned', 30)); } },
+        { label: 'Stage', key: 'stage', width: '15%',
+          raw: function (r) { return esc(titleCase(r.stage || '')); } },
+        { label: 'Target Closure', key: 'due_date', width: '14%', cls: 'num',
+          raw: function (r) { return esc(fmtShortDate(r.due_date)); } },
+      ],
+      rows: open.slice(0, MAX_TOP_RISKS),
+    }) + (open.length > MAX_TOP_RISKS
+      ? '<div class="rem-more">+ ' + (open.length - MAX_TOP_RISKS) + ' further open risks on the register</div>'
+      : '');
+  }
+
+  // ── Vulnerability Exposure Dashboard ──────────────────────────────────────
+
+  var VULN_OPEN_STATUSES = { open: 1, 'in-progress': 1 };
+
+  function renderVulnExposure(ctx) {
+    var findings = ((ctx.data.vulnFindings || {}).vulns) || [];
+    if (!findings.length) return null;
+
+    var order = ['Critical', 'High', 'Medium', 'Low'];
+    var buckets = {};
+    order.forEach(function (s) {
+      buckets[s] = { severity: s, open: 0, overdue: 0, accepted: 0, ageSum: 0, ageN: 0 };
+    });
+
+    var oldest = null;
+    var withinSla = 0, slaTotal = 0;
+
+    findings.forEach(function (f) {
+      var k = sevKey(f.risk);
+      if (!k) return;
+      var b = buckets[k];
+
+      if (f.status === 'accepted') { b.accepted++; return; }
+      if (!VULN_OPEN_STATUSES[f.status]) return;
+
+      b.open++;
+      var age = ageDays(f.firstSeenAt);
+      if (age != null) {
+        b.ageSum += age; b.ageN++;
+        slaTotal++;
+        if (age > VULN_SLA_DAYS[k]) b.overdue++; else withinSla++;
+        if (!oldest || age > oldest.age) oldest = { age: age, name: f.name, severity: k };
+      }
+    });
+
+    var rows = order.map(function (s) {
+      var b = buckets[s];
+      b.avgAge = b.ageN ? Math.round(b.ageSum / b.ageN) : null;
+      return b;
+    });
+
+    var totals = rows.reduce(function (a, b) {
+      return { open: a.open + b.open, overdue: a.overdue + b.overdue, accepted: a.accepted + b.accepted };
+    }, { open: 0, overdue: 0, accepted: 0 });
+
+    if (!totals.open && !totals.accepted) return null;
+
+    var slaPct = slaTotal ? Math.round((withinSla / slaTotal) * 1000) / 10 : null;
+
+    var table = D.dataTable({
+      cols: [
+        { label: 'Severity', key: 'severity', width: '22%',
+          raw: function (r) {
+            return '<span class="sev-dot" style="background:' + severityTone(r.severity) + '"></span> ' +
+                   esc(r.severity) +
+                   '<span class="sev-sla">' + VULN_SLA_DAYS[r.severity] + 'd SLA</span>';
+          } },
+        { label: 'Open',          key: 'open',     width: '15%', cls: 'num' },
+        { label: 'Overdue',       key: 'overdue',  width: '15%', cls: 'num',
+          raw: function (r) {
+            return r.overdue
+              ? '<span class="ov-bad">' + r.overdue + '</span>'
+              : '0';
+          } },
+        { label: 'Risk Accepted', key: 'accepted', width: '18%', cls: 'num' },
+        { label: 'Avg Age (days)', key: 'avgAge',  width: '18%', cls: 'num',
+          raw: function (r) { return r.avgAge == null ? '—' : String(r.avgAge); } },
+      ],
+      rows: rows,
+      totalRows: [{ _label: 'Total', open: totals.open, overdue: totals.overdue, accepted: totals.accepted }],
+    });
+
+    var facts = [
+      { l: 'SLA compliance', v: slaPct == null ? '—' : slaPct + ' %' },
+      { l: 'Oldest outstanding', v: oldest ? oldest.age + ' days' : '—' },
+      { l: 'Risk accepted', v: String(totals.accepted) },
+    ];
+
+    return table +
+      '<div class="ve-facts">' +
+        facts.map(function (f) {
+          return '<div class="ve-fact"><div class="ve-fv">' + esc(f.v) + '</div>' +
+                 '<div class="ve-fl">' + esc(f.l) + '</div></div>';
+        }).join('') +
+      '</div>' +
+      (oldest
+        ? '<div class="rag-note">Oldest outstanding: ' + esc(truncate(oldest.name, 80)) +
+          ' (' + esc(oldest.severity) + ', ' + oldest.age + ' days). ' +
+          'SLA measured from first detection.</div>'
+        : '');
+  }
+
+  function severityTone(s) {
+    return { Critical: '#c0392b', High: '#e74c3c', Medium: '#f39c12', Low: '#2E9E5B' }[s] || '#8C8C8C';
+  }
+
+  // ── Cyber Defence Coverage ────────────────────────────────────────────────
+
+  var CONTROL_GROUPS = [
+    { group: 'Identity', items: [
+      { id: 'mfaCoverage',               label: 'MFA coverage',              unit: '%', target: 95 },
+      { id: 'conditionalAccessCoverage', label: 'Conditional Access',        unit: '%', target: 90 },
+      { id: 'privilegedReviews',         label: 'Privileged accounts reviewed', unit: '%', target: 100 },
+    ] },
+    { group: 'Endpoints', items: [
+      { id: 'endpointCoverage',   label: 'Endpoint coverage',   unit: '%', target: 98 },
+      { id: 'edrDeployment',      label: 'EDR deployment',      unit: '%', target: 98 },
+      { id: 'unsupportedDevices', label: 'Unsupported devices', unit: '',  lowerIsBetter: true },
+    ] },
+    { group: 'Servers', items: [
+      { id: 'patchCompliance',          label: 'Patch compliance',        unit: '%', target: 95 },
+      { id: 'criticalServerCompliance', label: 'Critical servers patched', unit: '%', target: 98 },
+    ] },
+    { group: 'Email & Data', items: [
+      { id: 'phishingBlocked',        label: 'Phishing blocked',    unit: '%', target: 99 },
+      { id: 'dlpAlerts',              label: 'DLP alerts',          unit: '',  lowerIsBetter: true },
+      { id: 'dataExposureIncidents',  label: 'Data exposure events', unit: '', lowerIsBetter: true },
+    ] },
+  ];
+
+  /**
+   * Everything the Reports tab renders an input for. Grouped so the form reads
+   * as a short attestation checklist rather than a wall of boxes.
+   */
+  var MANUAL_METRIC_FIELDS = [
+    { group: 'Business impact', items: [
+      { id: 'confirmedBreaches', label: 'Confirmed breaches',   hint: '0' },
+      { id: 'materialIncidents', label: 'Material incidents',   hint: '0' },
+      { id: 'downtimeHours',     label: 'Business downtime',    hint: 'hours' },
+    ] },
+    { group: 'Detection performance', items: [
+      { id: 'mttd', label: 'Mean time to detect', hint: 'minutes' },
+    ] },
+  ].concat(CONTROL_GROUPS.map(function (g) {
+    return {
+      group: g.group,
+      items: g.items.map(function (it) {
+        return { id: it.id, label: it.label, hint: it.unit === '%' ? '%' : 'count' };
+      }),
+    };
+  }));
+
+  function renderControlCoverage(ctx) {
+    var any = false;
+    var html = CONTROL_GROUPS.map(function (g) {
+      var cells = g.items.map(function (it) {
+        var v = tileNum(ctx, it.id);
+        if (v != null) any = true;
+
+        var tone = '#8C8C8C';
+        if (v != null && it.target != null) {
+          tone = v >= it.target ? '#2E9E5B' : (v >= it.target - 10 ? '#f39c12' : '#e74c3c');
+        } else if (v != null && it.lowerIsBetter) {
+          tone = v === 0 ? '#2E9E5B' : '#f39c12';
+        }
+
+        return '<div class="cc-item">' +
+            '<div class="cc-v" style="color:' + (v == null ? '#A6A6A6' : tone) + '">' +
+              (v == null ? 'Not measured' : esc(String(v) + it.unit)) +
+            '</div>' +
+            '<div class="cc-l">' + esc(it.label) +
+              (it.target != null ? '<span class="cc-t">target ' + it.target + it.unit + '</span>' : '') +
+            '</div>' +
+          '</div>';
+      }).join('');
+
+      return '<div class="cc-group"><div class="cc-gh">' + esc(g.group) + '</div>' +
+             '<div class="cc-items">' + cells + '</div></div>';
+    }).join('');
+
+    if (!any) return null;
+    return '<div class="cc-grid">' + html + '</div>' +
+      '<div class="rag-note">Control coverage is attested by the security team each month; ' +
+      'these figures are not yet fed by a platform integration.</div>';
+  }
+
+  // ── Threat Landscape ──────────────────────────────────────────────────────
+
+  var THREAT_LABELS = {
+    phishing:            'Phishing',
+    malware_ransomware:  'Malware / Ransomware',
+    data_breach:         'Data Breach',
+    insider_threat:      'Insider Threat',
+    ddos:                'Denial of Service',
+    unauthorized_access: 'Unauthorised Access',
+    other:               'Other',
+  };
+
+  function renderThreatLandscape(ctx) {
+    var incidents = ((ctx.data.vulnFindings || {}).incidents) || [];
+    var inPeriod = incidents.filter(function (i) { return monthOf(i.opened_at) === ctx.period; });
+    if (!inPeriod.length) return null;
+
+    var counts = {};
+    inPeriod.forEach(function (i) {
+      var k = i.incident_type || 'other';
+      counts[k] = (counts[k] || 0) + 1;
+    });
+
+    var rows = Object.keys(counts)
+      .map(function (k) { return { type: THREAT_LABELS[k] || titleCase(k), count: counts[k] }; })
+      .sort(function (a, b) { return b.count - a.count; });
+
+    var max = rows[0].count;
+    var total = inPeriod.length;
+
+    // Severity split gives the "how serious" dimension the raw volume lacks.
+    var bySev = {};
+    inPeriod.forEach(function (i) {
+      var s = titleCase(i.severity || 'medium');
+      bySev[s] = (bySev[s] || 0) + 1;
+    });
+
+    return '<div class="tl-wrap">' +
+        '<div class="tl-bars">' +
+          rows.map(function (r) {
+            return '<div class="tl-row">' +
+                '<div class="tl-name">' + esc(r.type) + '</div>' +
+                '<div class="tl-track"><div class="tl-fill" style="width:' +
+                  Math.round((r.count / max) * 100) + '%"></div></div>' +
+                '<div class="tl-n">' + r.count + '</div>' +
+              '</div>';
+          }).join('') +
+        '</div>' +
+        '<div class="tl-side">' +
+          '<div class="tl-total">' + total + '</div>' +
+          '<div class="tl-total-l">incidents this period</div>' +
+          '<div class="tl-sev">' +
+            ['Critical', 'High', 'Medium', 'Low'].filter(function (s) { return bySev[s]; })
+              .map(function (s) {
+                return '<div class="tl-sev-row">' +
+                    '<span class="sev-dot" style="background:' + severityTone(s) + '"></span>' +
+                    esc(s) + '<span class="tl-sev-n">' + bySev[s] + '</span>' +
+                  '</div>';
+              }).join('') +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // ── Detection & Response KPIs ─────────────────────────────────────────────
+
+  /** Target hours to resolution by ticket severity. */
+  var MDR_SLA_HOURS = { HIGH: 4, MEDIUM: 24, LOW: 72 };
+  var SLA_TARGET_PCT = 95;
+
+  function renderIrKpis(ctx) {
+    var tickets = ((ctx.data.mdr || {}).tickets) || [];
+    var period  = ctx.period;
+
+    // /api/mdr aliases its columns to camelCase — see the ticket query in server.js.
+    var raised   = tickets.filter(function (t) { return monthOf(t.createdAt) === period; });
+    var resolved = tickets.filter(function (t) {
+      return t.resolvedAt && monthOf(t.resolvedAt) === period;
+    });
+
+    var hours = [];
+    var slaMet = 0, slaTotal = 0;
+    resolved.forEach(function (t) {
+      var a = new Date(t.createdAt), b = new Date(t.resolvedAt);
+      if (isNaN(a.getTime()) || isNaN(b.getTime())) return;
+      var h = (b.getTime() - a.getTime()) / 3600000;
+      if (h < 0) return;
+      hours.push(h);
+      var target = MDR_SLA_HOURS[(t.severity || 'MEDIUM').toUpperCase()];
+      if (target != null) { slaTotal++; if (h <= target) slaMet++; }
+    });
+
+    if (!raised.length && !resolved.length) return null;
+
+    hours.sort(function (a, b) { return a - b; });
+    var mttr   = hours.length ? hours.reduce(function (s, h) { return s + h; }, 0) / hours.length : null;
+    var median = hours.length ? hours[Math.floor(hours.length / 2)] : null;
+    var slaPct = slaTotal ? Math.round((slaMet / slaTotal) * 1000) / 10 : null;
+    var mttd   = tileNum(ctx, 'mttd');
+    var resRate = raised.length ? Math.round((resolved.length / raised.length) * 1000) / 10 : null;
+
+    function hrs(v) {
+      if (v == null) return '—';
+      return v < 1 ? Math.round(v * 60) + ' min' : (Math.round(v * 10) / 10) + ' hrs';
+    }
+
+    var rows = [
+      { kpi: 'Mean time to detect (MTTD)',  target: '—',                    actual: mttd == null ? 'Not measured' : mttd + ' min', ok: null },
+      { kpi: 'Mean time to respond (MTTR)', target: '—',                    actual: hrs(mttr), ok: null },
+      { kpi: 'Median time to respond',      target: '—',                    actual: hrs(median), ok: null },
+      { kpi: 'Resolution SLA achievement',  target: SLA_TARGET_PCT + ' %',  actual: slaPct == null ? '—' : slaPct + ' %',
+        ok: slaPct == null ? null : slaPct >= SLA_TARGET_PCT },
+      { kpi: 'Tickets raised',              target: '—',                    actual: String(raised.length), ok: null },
+      { kpi: 'Tickets resolved',            target: '—',                    actual: String(resolved.length), ok: null },
+      { kpi: 'Resolution rate',             target: '—',                    actual: resRate == null ? '—' : resRate + ' %', ok: null },
+    ];
+
+    return D.dataTable({
+      cols: [
+        { label: 'KPI',    key: 'kpi',    width: '46%' },
+        { label: 'Target', key: 'target', width: '18%', cls: 'num' },
+        { label: 'Actual', key: 'actual', width: '36%', cls: 'num',
+          raw: function (r) {
+            if (r.ok === null) return esc(r.actual);
+            return '<span class="' + (r.ok ? 'rag-yes' : 'rag-no') + '">' + esc(r.actual) + '</span>';
+          } },
+      ],
+      rows: rows,
+    }) +
+    '<div class="rag-note">Response time is measured from ticket creation to resolution. ' +
+      'SLA targets: High ' + MDR_SLA_HOURS.HIGH + ' hrs, Medium ' + MDR_SLA_HOURS.MEDIUM +
+      ' hrs, Low ' + MDR_SLA_HOURS.LOW + ' hrs. ' +
+      'MTTD requires a detection timestamp that the ticket feed does not currently carry.</div>';
+  }
+
+  // ── Security Maturity Trend ───────────────────────────────────────────────
+
+  function renderMaturityTrend(ctx) {
+    var now  = componentScores(ctx);
+    var prev = previousScores(ctx);
+    if (now.overall == null) return null;
+
+    var prevLabel = periodName(shiftPeriod(ctx.period, -1));
+    var thisLabel = periodName(ctx.period);
+
+    var domains = [
+      { label: 'Vulnerability Management', key: 'vulnerabilities',  target: MATURITY_TARGETS.vulnerabilities },
+      { label: 'Security Awareness',       key: 'awareness',        target: MATURITY_TARGETS.awareness },
+      { label: 'Incident Response',        key: 'incidentResponse', target: MATURITY_TARGETS.incidentResponse },
+      { label: 'Secure Score',             key: 'overall',          target: MATURITY_TARGETS.overall },
+    ];
+
+    var rows = domains.map(function (d) {
+      var cur = now[d.key], was = prev[d.key];
+      var t = trendFor(cur, was);
+      return {
+        domain: d.label, prev: was, cur: cur, target: d.target, trend: t,
+        gap: cur == null ? null : cur - d.target,
+      };
+    });
+
+    return D.dataTable({
+      cols: [
+        { label: 'Domain', key: 'domain', width: '32%' },
+        { label: prevLabel || 'Previous', key: 'prev', width: '13%', cls: 'num',
+          raw: function (r) { return r.prev == null ? '—' : String(r.prev); } },
+        { label: thisLabel || 'Current', key: 'cur', width: '13%', cls: 'num',
+          raw: function (r) { return r.cur == null ? '—' : '<b>' + r.cur + '</b>'; } },
+        { label: 'Target', key: 'target', width: '12%', cls: 'num' },
+        { label: 'Gap', key: 'gap', width: '12%', cls: 'num',
+          raw: function (r) {
+            if (r.gap == null) return '—';
+            return r.gap >= 0
+              ? '<span class="rag-yes">+' + r.gap + '</span>'
+              : '<span class="rag-no">' + r.gap + '</span>';
+          } },
+        { label: 'Trend', key: 'trend', width: '18%',
+          raw: function (r) {
+            return '<span style="color:' + (r.trend.tone || '#8C8C8C') + '">' + esc(r.trend.mark) +
+                   '</span> ' + esc(r.trend.label);
+          } },
+      ],
+      rows: rows,
+    }) +
+    '<div class="rag-note">Gap is the distance from the agreed target score. ' +
+      'A positive gap means the domain is at or above target.</div>';
+  }
+
+  // ── Board Assurance Statement ─────────────────────────────────────────────
+
+  /**
+   * Draft the CISO assurance paragraph from the data. Editable before generation,
+   * exactly like the Observations narrative — the wording is a starting point,
+   * not an automated attestation.
+   */
+  function draftAssurance(ctx) {
+    var now       = componentScores(ctx);
+    var prev      = previousScores(ctx);
+    var client    = ctx.clientName || 'the organisation';
+    var label     = ctx.periodLabel || 'the reporting period';
+    var breaches  = tileNum(ctx, 'confirmedBreaches');
+    var material  = tileNum(ctx, 'materialIncidents');
+
+    var parts = [];
+
+    parts.push('Based on security monitoring, vulnerability assessment, MDR operations and ' +
+      'awareness programme metrics, ' +
+      (breaches === 0 || breaches == null
+        ? 'there is no evidence of material compromise at ' + client + ' during ' + label + '.'
+        : 'there ' + (breaches === 1 ? 'was 1 confirmed breach' : 'were ' + breaches + ' confirmed breaches') +
+          ' at ' + client + ' during ' + label + '.'));
+
+    if (material != null && material > 0) {
+      parts.push(material + ' incident' + (material === 1 ? '' : 's') +
+        ' met the materiality threshold and ' + (material === 1 ? 'was' : 'were') +
+        ' escalated to executive management.');
+    }
+
+    var belowTarget = [];
+    if (now.vulnerabilities != null && now.vulnerabilities < MATURITY_TARGETS.vulnerabilities) belowTarget.push('vulnerability management');
+    if (now.awareness != null && now.awareness < MATURITY_TARGETS.awareness) belowTarget.push('security awareness');
+    if (now.incidentResponse != null && now.incidentResponse < MATURITY_TARGETS.incidentResponse) belowTarget.push('incident response');
+
+    if (belowTarget.length) {
+      parts.push('Cyber risk remains elevated in ' + listPhrase(belowTarget) +
+        '; compensating controls remain in effect and remediation is underway.');
+    }
+
+    if (now.overall != null) {
+      var t = trendFor(now.overall, prev.overall);
+      var dir = t.label === 'Improving' ? 'improving'
+              : t.label === 'Increasing' ? 'deteriorating' : 'stable';
+      parts.push('Overall risk posture is ' + dir + ' at ' + now.overall + ' out of 100 and ' +
+        (now.overall >= MATURITY_TARGETS.overall
+          ? 'is within the target threshold of ' + MATURITY_TARGETS.overall + '.'
+          : 'remains below the target threshold of ' + MATURITY_TARGETS.overall + '.'));
+    }
+
+    return parts.join(' ');
+  }
+
+  function listPhrase(items) {
+    if (items.length === 1) return items[0];
+    return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1];
+  }
+
+  function renderAssurance(ctx) {
+    var text = (ctx.assurance || '').trim();
+    if (!text) return null;
+
+    var author = ctx.author || '';
+    return '<div class="as-wrap">' +
+        '<div class="as-quote">' + esc(text) + '</div>' +
+        '<div class="as-sign">' +
+          '<div class="as-rule"></div>' +
+          (author ? '<div class="as-by">' + esc(author) + '</div>' : '') +
+          '<div class="as-role">On behalf of the Managed Security Service</div>' +
+          '<div class="as-date">' + esc(ctx.periodLabel || '') + '</div>' +
+        '</div>' +
+      '</div>';
   }
 
   // ── Recommendations ───────────────────────────────────────────────────────
@@ -805,9 +1512,43 @@ window.ReportSections = (function () {
       requires: ['secureScore'],                 render: renderRecommendations },
   ];
 
-  REGISTRY.draftObservations = draftObservations;
-  REGISTRY.scoreBand         = scoreBand;
-  REGISTRY.tileValue         = tileValue;
+  // Executive risk assurance sections. Ordered so the board-level view comes
+  // first and the assurance statement closes the deck; SECTIONS above supplies
+  // the operational detail in between.
+  var EXEC_SECTIONS = [
+    { id: 'execRisk',     label: 'Executive Risk Assessment',      group: 'Executive',
+      requires: ['secureScore'],                 render: renderExecRisk,        order: 'lead' },
+    { id: 'businessImpact', label: 'Business Impact Summary',      group: 'Executive',
+      requires: [],                              render: renderBusinessImpact,  order: 'lead' },
+    { id: 'topRisks',     label: 'Top Cyber Risks',                group: 'Executive',
+      requires: ['vulnFindings'],                render: renderTopRisks,        order: 'lead' },
+    { id: 'vulnExposure', label: 'Vulnerability Exposure',         group: 'Executive',
+      requires: ['vulnFindings'],                render: renderVulnExposure,    order: 'lead' },
+    { id: 'controlCoverage', label: 'Cyber Defence Coverage',      group: 'Executive',
+      requires: [],                              render: renderControlCoverage, order: 'lead' },
+    { id: 'threatLandscape', label: 'Threat Landscape',            group: 'Executive',
+      requires: ['vulnFindings'],                render: renderThreatLandscape, order: 'lead' },
+    { id: 'irKpis',       label: 'Detection & Response KPIs',      group: 'Executive',
+      requires: ['mdr'],                         render: renderIrKpis,          order: 'lead' },
+    { id: 'maturityTrend', label: 'Security Maturity Trend',       group: 'Executive',
+      requires: ['secureScore'],                 render: renderMaturityTrend,   order: 'lead' },
+    { id: 'assurance',    label: 'Board Assurance Statement',      group: 'Executive',
+      requires: [],                              render: renderAssurance,       order: 'tail' },
+  ];
 
-  return REGISTRY;
+  // Executive sections bracket the operational ones: risk assurance up front,
+  // the board statement last. Slide order is registry order.
+  var ORDERED = []
+    .concat(EXEC_SECTIONS.filter(function (s) { return s.order === 'lead'; }))
+    .concat(REGISTRY)
+    .concat(EXEC_SECTIONS.filter(function (s) { return s.order === 'tail'; }));
+
+  ORDERED.draftObservations = draftObservations;
+  ORDERED.draftAssurance    = draftAssurance;
+  ORDERED.scoreBand         = scoreBand;
+  ORDERED.tileValue         = tileValue;
+  ORDERED.CONTROL_GROUPS    = CONTROL_GROUPS;
+  ORDERED.MANUAL_METRICS    = MANUAL_METRIC_FIELDS;
+
+  return ORDERED;
 })();
