@@ -700,10 +700,8 @@ window.ReportSections = (function () {
         target: MATURITY_TARGETS.awareness,        basis: 'Awareness completion' },
       { label: 'Incident Response Capability', score: now.incidentResponse, prev: prev.incidentResponse,
         target: MATURITY_TARGETS.incidentResponse, basis: 'Resolution rate & speed' },
-      // 99, not 100: an absolute-zero-legacy target would leave this row reading
-      // "outside appetite" almost permanently and stop carrying information.
-      { label: 'Identity Security',           score: (identityMetrics(ctx) || {}).modernAuth, prev: null,
-        target: 99, basis: 'Modern auth coverage (Office 365)' },
+      { label: 'Identity Security',           score: (identityMetrics(ctx) || {}).score, prev: null,
+        target: 90, basis: 'MFA, Conditional Access, modern auth & risk handling' },
       { label: 'Endpoint Protection',         score: (endpointMetrics(ctx) || {}).agentCurrency, prev: null,
         target: 98, basis: 'EDR agent currency' },
     ];
@@ -968,12 +966,47 @@ window.ReportSections = (function () {
   }
 
   /**
+   * Share of a tally matching `match`, as a percentage of the rows that carry
+   * the field at all.
+   *
+   * Returns null — "not measured" — when the tally is empty, because an empty
+   * terms aggregation means the field is missing from the index mapping. Using
+   * total sign-ins as the denominator instead would silently score an
+   * unmapped field as 0%, which on an identity slide reads as a catastrophic
+   * finding rather than as missing data.
+   */
+  function tallyShare(rows, match) {
+    if (!Array.isArray(rows) || !rows.length) return null;
+    var denom = 0, hit = 0;
+    rows.forEach(function (r) {
+      var n = Number(r.count) || 0;
+      denom += n;
+      if (match(String(r.label || '').toLowerCase())) hit += n;
+    });
+    if (!denom) return null;
+    return Math.round((hit / denom) * 1000) / 10;
+  }
+
+  /**
+   * Weights for the Identity Security composite. Each term is a measured ratio;
+   * any term that is unavailable drops out and the rest are re-normalised, so a
+   * partial signal still scores rather than dragging the result down.
+   */
+  var IDENTITY_WEIGHTS = {
+    mfaRate:      0.40,
+    caCoverage:   0.25,
+    modernAuth:   0.20,
+    riskHandled:  0.15,
+  };
+
+  /**
    * Identity posture from the Managed Office 365 tab (/api/o365/summary).
    *
-   * MFA and Conditional Access *coverage* are tenant configuration, which this
-   * telemetry does not carry — it records sign-in events. Modern-auth coverage
-   * is the closest genuine control-effectiveness measure available: the share
-   * of sign-ins not using legacy protocols, which cannot enforce MFA.
+   * MFA and Conditional Access *registration* coverage are tenant configuration
+   * and are not in this telemetry — it records sign-in events. What is
+   * measurable from events: how many sign-ins actually satisfied MFA, how many
+   * had a Conditional Access policy evaluated at all, how many avoided legacy
+   * protocols, and whether flagged users were subsequently dealt with.
    */
   function identityMetrics(ctx) {
     var o = ctx.data.o365 || {};
@@ -982,16 +1015,47 @@ window.ReportSections = (function () {
     if (!g && !d) return null;
 
     var signins = (g && g.signins) || {};
+    var risky   = (g && g.riskyUsers) || {};
     var legacy  = (signins.legacyAuth && signins.legacyAuth.total) || 0;
     var total   = signins.total || 0;
 
-    return {
-      modernAuth:  total ? pct(total - legacy, total) : null,
-      legacyAuth:  total ? legacy : null,
-      caFailures:  signins.caFailures != null ? signins.caFailures : null,
-      riskyUsers:  g && g.riskyUsers ? g.riskyUsers.distinct : null,
+    var m = {
+      // Sign-ins that required and satisfied multi-factor authentication.
+      mfaRate: tallyShare(signins.authRequirement, function (l) {
+        return l.indexOf('multifactor') !== -1;
+      }),
+      // Sign-ins a Conditional Access policy actually evaluated. 'notApplied'
+      // is the real coverage gap: no policy looked at that sign-in.
+      caCoverage: tallyShare(signins.caStatus, function (l) {
+        return l !== 'notapplied' && l !== 'not applied';
+      }),
+      modernAuth: total ? pct(total - legacy, total) : null,
+      // Flagged users that were remediated or dismissed rather than left open.
+      riskHandled: tallyShare(risky.byState, function (l) {
+        return l === 'remediated' || l === 'dismissed' || l === 'confirmedsafe';
+      }),
+      deviceCompliant: tallyShare(signins.deviceCompliance, function (l) {
+        return l === 'true' || l === '1';
+      }),
+
+      legacyAuth:   total ? legacy : null,
+      caFailures:   signins.caFailures != null ? signins.caFailures : null,
+      riskyUsers:   risky.distinct != null ? risky.distinct : null,
       failedLogins: d && d.signins ? d.signins.failed : null,
     };
+
+    // Weighted composite over whichever terms are actually measured.
+    var num = 0, den = 0;
+    Object.keys(IDENTITY_WEIGHTS).forEach(function (k) {
+      if (m[k] == null) return;
+      num += m[k] * IDENTITY_WEIGHTS[k];
+      den += IDENTITY_WEIGHTS[k];
+    });
+    m.score      = den ? Math.round((num / den) * 10) / 10 : null;
+    m.basedOn    = den ? Math.round((den / 1) * 100) / 100 : 0;
+    m.termsUsed  = Object.keys(IDENTITY_WEIGHTS).filter(function (k) { return m[k] != null; });
+
+    return m;
   }
 
   /** Endpoint posture from the Managed EDR tab (/api/edr/summary). */
@@ -1048,7 +1112,11 @@ window.ReportSections = (function () {
       groups.push('<div class="cc-group">' +
         '<div class="cc-gh">Identity &mdash; Managed Office 365</div>' +
         '<div class="cc-items">' +
+          ccItem('MFA-satisfied sign-ins', id.mfaRate, { unit: '%', target: 95 }) +
+          ccItem('Conditional Access coverage', id.caCoverage, { unit: '%', target: 95 }) +
           ccItem('Modern auth coverage', id.modernAuth, { unit: '%', target: 99 }) +
+          ccItem('Risky users handled', id.riskHandled, { unit: '%', target: 90 }) +
+          ccItem('Compliant-device sign-ins', id.deviceCompliant, { unit: '%', target: 90 }) +
           ccItem('Legacy auth sign-ins', id.legacyAuth, { lowerIsBetter: true }) +
           ccItem('Users flagged at risk', id.riskyUsers, { lowerIsBetter: true }) +
           // Neither of these is a defect count, so neither is coloured as one:
@@ -1072,13 +1140,21 @@ window.ReportSections = (function () {
     }
 
     var window = ep && ep.windowDays ? ep.windowDays : null;
+    var missing = id && id.termsUsed
+      ? Object.keys(IDENTITY_WEIGHTS).filter(function (k) { return id.termsUsed.indexOf(k) === -1; })
+      : [];
+
     return '<div class="cc-grid">' + groups.join('') + '</div>' +
       '<div class="rag-note">' +
         'Drawn from the Managed Office 365 and Managed EDR telemetry' +
         (window ? ' over a trailing ' + window + '-day window' : '') + '. ' +
-        'MFA and Conditional Access <i>coverage</i> are tenant configuration rather than ' +
-        'sign-in telemetry, so modern-auth coverage is reported in their place: the share ' +
-        'of sign-ins not using legacy protocols, which cannot enforce MFA.' +
+        'Identity percentages are measured across the sign-ins that carry each ' +
+        'field. These are sign-in outcomes, not directory configuration: they show ' +
+        'whether MFA and Conditional Access <i>took effect</i>, not how many accounts ' +
+        'are enrolled.' +
+        (missing.length
+          ? ' Not available from this tenant’s log fields: ' + esc(missing.join(', ')) + '.'
+          : '') +
       '</div>';
   }
 
