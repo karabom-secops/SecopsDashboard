@@ -672,18 +672,40 @@ window.ReportSections = (function () {
     };
   }
 
-  /** The prior month's component scores from /api/secure-score/history. */
+  /**
+   * The reporting period's preceding month, from /api/secure-score/history.
+   *
+   * Selected by month key rather than by array position: the history covers
+   * whichever months have data, so index 1 is not reliably the month before the
+   * period being reported on. If that exact month is absent, fall back to the
+   * most recent month that precedes it.
+   *
+   * Component scores are null on 'derived' rows — awareness and incident-response
+   * inputs are overwritten by each upload, so past months genuinely have none
+   * until stored snapshots accumulate.
+   */
   function previousScores(ctx) {
     var h = ctx.data.secureScoreHistory;
     var rows = Array.isArray(h) ? h : (h && h.history) || [];
-    // History is newest-first; [0] is the current month, [1] the comparison.
-    var prev = rows[1];
+    var want = shiftPeriod(ctx.period, -1);
+    if (!rows.length || !want) return {};
+
+    var prev = null;
+    rows.forEach(function (r) {
+      var k = r.monthKey || r.month_key;
+      if (!k || k > want) return;
+      if (!prev || k > (prev.monthKey || prev.month_key)) prev = r;
+    });
     if (!prev) return {};
+
+    var n = function (v) { return v == null ? null : Math.round(v); };
     return {
-      vulnerabilities:  prev.vulnScore      != null ? Math.round(prev.vulnScore)      : null,
-      awareness:        prev.awarenessScore != null ? Math.round(prev.awarenessScore) : null,
-      incidentResponse: prev.mdrScore       != null ? Math.round(prev.mdrScore)       : null,
-      overall:          prev.score          != null ? Math.round(prev.score)          : null,
+      monthKey:         prev.monthKey || prev.month_key,
+      source:           prev.source || 'derived',
+      vulnerabilities:  n(prev.vulnScore),
+      awareness:        n(prev.awarenessScore),
+      incidentResponse: n(prev.mdrScore),
+      overall:          n(prev.score),
     };
   }
 
@@ -1391,7 +1413,13 @@ window.ReportSections = (function () {
       rows: rows,
     }) +
     '<div class="rag-note">Gap is the distance from the agreed target score. ' +
-      'A positive gap means the domain is at or above target.</div>';
+      'A positive gap means the domain is at or above target.' +
+      (prev.source === 'derived'
+        ? ' Per-domain comparisons begin once monthly snapshots accumulate: ' +
+          'awareness and incident-response inputs are replaced by each upload, ' +
+          'so earlier months can only be reconstructed for vulnerabilities.'
+        : '') +
+    '</div>';
   }
 
   // ── Board Assurance Statement ─────────────────────────────────────────────

@@ -22,7 +22,7 @@ const { parseVulnFile, computeVulnSummary, computeDueDate } = require('./lib/vul
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
 const XLSX = require('xlsx');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
-const { calculateSecureScore, generateRecommendations } = require('./lib/secure-score');
+const { calculateSecureScore, calculateVulnScore, generateRecommendations } = require('./lib/secure-score');
 const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils');
 const arcticWolfAdapter = require('./lib/integrations/arctic-wolf');
 const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
@@ -4406,9 +4406,59 @@ app.post('/api/reports/metrics/sync', async (req, res) => {
  * Get the latest Secure Score for the current tenant.
  * Calculates on-the-fly from latest vuln/awareness/mdr data.
  */
+/**
+ * Superadmins have no tenant on the session, so both score routes must accept
+ * ?tenantId= the way every other tenant-scoped route does. Without this the
+ * Reports tab gets a 400 for superadmins even though it sends the parameter.
+ */
+function resolveScoreTenant(req) {
+  if (req.session.role === 'superadmin') {
+    const tid = parseInt(req.query.tenantId, 10);
+    return (isNaN(tid) || tid < 1) ? null : tid;
+  }
+  return req.session.tenantId || null;
+}
+
+/**
+ * Persist a daily snapshot of the score and its components.
+ *
+ * Scores are computed on the fly from whatever data is currently loaded, so
+ * without this there is no way to ever answer "what was awareness last month" —
+ * the inputs are overwritten by the next upload. One row per tenant per day;
+ * re-running on the same day updates it. Best-effort: a snapshot failure must
+ * never fail the request that produced the score.
+ */
+async function snapshotSecureScore(tenantId, score) {
+  try {
+    const c = score.components || {};
+    const n = v => (v == null ? null : Math.max(0, Math.min(100, Math.round(v))));
+    await pool.query(
+      `INSERT INTO secure_scores
+         (tenant_id, score_date, composite_score, vuln_score, awareness_score, mdr_score, calculated_at)
+       VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, NOW())
+       ON CONFLICT (tenant_id, score_date) DO UPDATE
+         SET composite_score = EXCLUDED.composite_score,
+             vuln_score      = EXCLUDED.vuln_score,
+             awareness_score = EXCLUDED.awareness_score,
+             mdr_score       = EXCLUDED.mdr_score,
+             calculated_at   = NOW()`,
+      [
+        tenantId,
+        n(score.score),
+        n((c.vulnerabilities  || {}).score),
+        n((c.awareness        || {}).score),
+        n((c.incidentResponse || {}).score),
+      ]
+    );
+  } catch (err) {
+    // Table may not be migrated yet — the score itself is unaffected.
+    console.warn('[secure-score] snapshot skipped —', err.message);
+  }
+}
+
 app.get('/api/secure-score', requireAuth, async (req, res) => {
   try {
-    const tenantId = req.session.tenantId;
+    const tenantId = resolveScoreTenant(req);
     if (!tenantId) {
       return res.status(400).json({ error: 'No tenant context.' });
     }
@@ -4507,6 +4557,16 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       },
       recommendations,
     });
+
+    // After responding: today's components become tomorrow's history.
+    snapshotSecureScore(tenantId, {
+      score: composite,
+      components: {
+        vulnerabilities:  { score: vulnScore },
+        awareness:        { score: awarenessScore },
+        incidentResponse: { score: mdrScore },
+      },
+    });
   } catch (err) {
     return serverError(res, err);
   }
@@ -4516,9 +4576,28 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
  * GET /api/secure-score/history
  * Get historical Secure Score trend (last 90 days by fetching latest scan each month).
  */
+/**
+ * GET /api/secure-score/history
+ *
+ * Returns NEWEST-FIRST: history[0] is the most recent month, history[1] the one
+ * before it. Callers index on that (see generateExcoReport's delta and the
+ * report deck's trend arrows).
+ *
+ * Two kinds of row:
+ *   source: 'snapshot' — a real stored measurement from secure_scores, with
+ *                        genuine per-component scores for that month.
+ *   source: 'derived'  — reconstructed from that month's vuln_scans row. Only
+ *                        the vulnerability component is real for these; the
+ *                        awareness and incident-response inputs no longer exist
+ *                        for past months, so those components are null rather
+ *                        than back-filled with today's values.
+ *
+ * Snapshots only accumulate from the first time a score is viewed, so early
+ * months will be 'derived' until history builds up.
+ */
 app.get('/api/secure-score/history', requireAuth, async (req, res) => {
   try {
-    const tenantId = req.session.tenantId;
+    const tenantId = resolveScoreTenant(req);
     if (!tenantId) {
       return res.status(400).json({ error: 'No tenant context.' });
     }
@@ -4557,16 +4636,59 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
       if (mr.rows.length > 0) latestMdrData = { upload: mr.rows[0] };
     } catch (_) { /* table may not exist yet */ }
 
-    const history = vulnTrendRows.map(row => {
+    // Real stored measurements: the last snapshot taken in each month.
+    let snapshots = [];
+    try {
+      const snapRes = await pool.query(
+        `SELECT DISTINCT ON (to_char(score_date, 'YYYY-MM'))
+                to_char(score_date, 'YYYY-MM') AS month_key,
+                composite_score, vuln_score, awareness_score, mdr_score
+           FROM secure_scores
+          WHERE tenant_id = $1
+          ORDER BY to_char(score_date, 'YYYY-MM') DESC, score_date DESC
+          LIMIT 12`,
+        [tenantId]
+      );
+      snapshots = snapRes.rows;
+    } catch (_) { /* table not migrated — fall back to derived months only */ }
+
+    const byMonth = new Map();
+
+    // Derived first, so a real snapshot for the same month overwrites it.
+    vulnTrendRows.forEach(row => {
       const { composite } = calculateSecureScore(
         { summary: row.summary },
         latestAwarenessData,
         latestMdrData
       );
-      return { monthKey: row.month_key, score: composite };
+      byMonth.set(row.month_key, {
+        monthKey:       row.month_key,
+        score:          composite,
+        // Only the vulnerability input is genuinely from this month.
+        vulnScore:      calculateVulnScore({ summary: row.summary }),
+        awarenessScore: null,
+        mdrScore:       null,
+        source:         'derived',
+      });
     });
 
-    res.json({ tenantId, history: history.reverse() });
+    snapshots.forEach(s => {
+      byMonth.set(s.month_key, {
+        monthKey:       s.month_key,
+        score:          s.composite_score,
+        vulnScore:      s.vuln_score,
+        awarenessScore: s.awareness_score,
+        mdrScore:       s.mdr_score,
+        source:         'snapshot',
+      });
+    });
+
+    // Newest first — every consumer indexes [0] as current, [1] as previous.
+    const history = [...byMonth.values()]
+      .sort((a, b) => (a.monthKey < b.monthKey ? 1 : -1))
+      .slice(0, 12);
+
+    res.json({ tenantId, history });
   } catch (err) {
     return serverError(res, err);
   }
