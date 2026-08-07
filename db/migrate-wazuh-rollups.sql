@@ -1,7 +1,7 @@
 -- Wazuh Rollups Migration
 -- Run once: psql -d secops -f migrate-wazuh-rollups.sql
 --
--- The Managed NDR and Managed Office 365 screens live-query the Wazuh Indexer
+-- The Managed NDR and Managed Identity screens live-query the Wazuh Indexer
 -- for short ranges. The indexer typically only keeps 30-90 days (ISM policy),
 -- so a nightly job also snapshots daily rollups here for long-term trending and
 -- for the client report deck.

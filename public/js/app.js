@@ -46,7 +46,7 @@
     'secure-score': 'Secure Score',
     edr:        'Managed EDR',
     ndr:        'Managed NDR',
-    o365:       'Managed Office 365',
+    o365:       'Managed Identity',
     'mdr-pricing': 'MDR Pricing',
     reports:    'Reports',
     admin:      'Admin',

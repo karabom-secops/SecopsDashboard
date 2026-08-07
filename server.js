@@ -2568,7 +2568,7 @@ setTimeout(() => { runEdrSyncs().catch(err => console.error('[integrations] sent
 setInterval(() => { runEdrSyncs().catch(err => console.error('[integrations] sentinelone sync crashed —', err.message)); }, EDR_SYNC_INTERVAL_MS);
 
 // ── Wazuh daily rollups (hourly tick, snapshots complete days) ──────────────
-// The Managed NDR and Managed O365 tabs read the indexer live for short ranges,
+// The Managed NDR and Managed Identity tabs read the indexer live for short ranges,
 // so this job exists only to keep long-range trends alive past the indexer's
 // retention. It ticks hourly rather than daily because daysNeedingSnapshot()
 // always re-runs yesterday: the Office 365 Management Activity API delivers
@@ -2612,7 +2612,7 @@ async function runWazuhRollups() {
 setTimeout(() => { runWazuhRollups().catch(err => console.error('[integrations] wazuh rollup crashed —', err.message)); }, 90 * 1000);
 setInterval(() => { runWazuhRollups().catch(err => console.error('[integrations] wazuh rollup crashed —', err.message)); }, WAZUH_ROLLUP_INTERVAL_MS);
 
-// ── Managed NDR & Managed Office 365 (Wazuh) data routes ───────────────────
+// ── Managed NDR & Managed Identity (Wazuh) data routes ───────────────────
 
 function resolveWazuhTenant(req) {
   if (req.session.role === 'superadmin') {
@@ -2759,7 +2759,7 @@ app.get('/api/ndr/summary', requireAuth, async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
-/** GET /api/o365/summary?days=30 — Managed Office 365 panels */
+/** GET /api/o365/summary?days=30 — Managed Identity panels */
 app.get('/api/o365/summary', requireAuth, async (req, res) => {
   try {
     res.json(await wazuhScreenFor(req, 'o365'));

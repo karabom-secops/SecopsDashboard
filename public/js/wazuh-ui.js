@@ -1,5 +1,5 @@
 /* wazuh-ui.js — shared rendering helpers for the Wazuh-backed tabs
-   (Managed NDR and Managed Office 365).
+   (Managed NDR and Managed Identity).
 
    The two screens draw different panels but share the same contract with the
    API: every panel arrives as an envelope { available, data, reason,

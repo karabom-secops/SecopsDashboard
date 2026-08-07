@@ -36,7 +36,7 @@ window.ReportsTab = (function () {
     secureScore:      function () { return 'api/secure-score' + tenantParam('?'); },
     // Prior-month component scores, for the trend and maturity sections.
     secureScoreHistory: function () { return 'api/secure-score/history' + tenantParam('?'); },
-    // Managed EDR / Managed Office 365 back the Cyber Defence Coverage slide.
+    // Managed EDR / Managed Identity back the Cyber Defence Coverage slide.
     // Both take a trailing day window rather than a calendar month, so ask for
     // enough days to span the reporting period (see edrWindowDays).
     edr:  function (ctx) { return 'api/edr/summary?days='  + edrWindowDays(ctx) + tenantParam('&'); },

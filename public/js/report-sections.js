@@ -692,13 +692,13 @@ window.ReportSections = (function () {
   /** Name the signals the Identity score actually used, so the basis is honest. */
   function identityBasis(ctx) {
     var id = identityMetrics(ctx);
-    if (!id || !id.termsUsed || !id.termsUsed.length) return 'Office 365 sign-in telemetry';
+    if (!id || !id.termsUsed || !id.termsUsed.length) return 'Managed Identity telemetry';
     var names = {
       modernAuth:    'modern auth',
       riskHandled:   'risk handling',
       signInSuccess: 'sign-in success',
     };
-    return id.termsUsed.map(function (k) { return names[k]; }).join(', ') + ' (Office 365)';
+    return id.termsUsed.map(function (k) { return names[k]; }).join(', ') + ' (Managed Identity)';
   }
 
   function riskAreas(ctx) {
@@ -1021,7 +1021,7 @@ window.ReportSections = (function () {
   var RISK_HANDLED_STATES = { remediated: 1, dismissed: 1, confirmedsafe: 1 };
 
   /**
-   * Identity posture from the Managed Office 365 tab (/api/o365/summary).
+   * Identity posture from the Managed Identity tab (/api/o365/summary).
    *
    * MFA and Conditional Access *registration* coverage are tenant configuration
    * and are not in this telemetry — it records sign-in events. What is
@@ -1171,7 +1171,7 @@ window.ReportSections = (function () {
 
       if (items.length) {
         groups.push('<div class="cc-group">' +
-          '<div class="cc-gh">Identity &amp; Data &mdash; Managed Office 365</div>' +
+          '<div class="cc-gh">Managed Identity</div>' +
           '<div class="cc-items">' + items.join('') + '</div></div>');
       }
     }
@@ -1193,7 +1193,7 @@ window.ReportSections = (function () {
 
     return '<div class="cc-grid">' + groups.join('') + '</div>' +
       '<div class="rag-note">' +
-        'Drawn from the Managed Office 365 and Managed EDR telemetry' +
+        'Drawn from the Managed Identity and Managed EDR telemetry' +
         (window ? ' over a trailing ' + window + '-day window' : '') + '. ' +
         'These are observed outcomes, not directory configuration: MFA enrolment ' +
         'and Conditional Access policy coverage are not carried by either feed and ' +

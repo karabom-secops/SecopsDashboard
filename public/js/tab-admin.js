@@ -780,7 +780,7 @@
       id:       'wazuh',
       name:     'Wazuh Indexer',
       icon:     '🛰️',
-      desc:     'SIEM log source — FortiGate firewall, Office 365 and Microsoft Graph events feeding Managed NDR and Managed O365.',
+      desc:     'SIEM log source — FortiGate firewall, Office 365 and Microsoft Graph events feeding Managed NDR and Managed Identity.',
       urlLabel: 'Indexer URL',
       urlHint:  'e.g. https://wazuh.yourdomain.com:9200',
       wazuhFields: true, // basic-auth username, timezone and per-source scoping
@@ -839,7 +839,7 @@
   /**
    * Which log sources the last connection test found arriving. Shown on the card
    * so the operator sees immediately what will and won't populate the Managed
-   * NDR / Managed O365 screens, rather than discovering it as an empty chart.
+   * NDR / Managed Identity screens, rather than discovering it as an empty chart.
    */
   function renderDetected(cfg) {
     const d = cfg && cfg.config_json && cfg.config_json.detected;

@@ -1,4 +1,4 @@
-/* tab-o365.js — Managed Office 365: O365 and Microsoft Graph activity via Wazuh.
+/* tab-o365.js — Managed Identity: O365 and Microsoft Graph activity via Wazuh.
 
    Two independent halves. The `office365` wodle only needs an Azure app with
    Management Activity API access; `ms-graph` needs a separate registration with
