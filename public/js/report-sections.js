@@ -649,6 +649,23 @@ window.ReportSections = (function () {
   // Executive risk assurance sections
   // ══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * Optional analyst commentary beneath a section, typed on the Reports tab.
+   *
+   * Rendered verbatim (escaped, with line breaks preserved) and omitted entirely
+   * when empty, so an unused box never leaves a blank panel on the page.
+   */
+  function sectionComment(ctx, id) {
+    var text = ((ctx.comments || {})[id] || '').trim();
+    if (!text) return '';
+    return '<div class="sec-comment">' +
+        '<div class="sec-comment-label">Commentary</div>' +
+        '<div class="sec-comment-body">' +
+          esc(text).replace(/\r?\n/g, '<br>') +
+        '</div>' +
+      '</div>';
+  }
+
   /** Effective tile value as a number, or null when neither set nor derived. */
   function tileNum(ctx, id) {
     var raw = tileValue(((ctx.data.metrics || {}).tiles) || {}, id);
@@ -795,7 +812,8 @@ window.ReportSections = (function () {
           ? esc(String(aboveAppetite)) + ' open risk' + (aboveAppetite === 1 ? '' : 's') +
             ' currently score ' + RISK_APPETITE_SCORE + ' or above on the risk register.'
           : 'No open risk currently scores ' + RISK_APPETITE_SCORE + ' or above.') +
-      '</div>';
+      '</div>' +
+      sectionComment(ctx, 'execRisk');
   }
 
   // ── Business Impact Summary ───────────────────────────────────────────────
@@ -850,7 +868,8 @@ window.ReportSections = (function () {
       '</div>' +
       '<div class="rag-note">Counted from Incident Response records for ' +
         esc(ctx.periodLabel || 'the period') + '. A confirmed breach is a data-breach ' +
-        'incident worked to closure; material means critical or high severity.</div>';
+        'incident worked to closure; material means critical or high severity.</div>' +
+      sectionComment(ctx, 'businessImpact');
   }
 
   // ── Top Cyber Risks (risk register) ───────────────────────────────────────

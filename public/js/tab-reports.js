@@ -126,9 +126,45 @@ window.ReportsTab = (function () {
       overrides: overrides,
       narrative: (document.getElementById('rpt-narrative') || {}).value || '',
       assurance: (document.getElementById('rpt-assurance') || {}).value || '',
+      comments:  readComments(),
       author:    (document.getElementById('rpt-author')    || {}).value || '',
       period:    (document.getElementById('rpt-period')    || {}).value || '',
     };
+  }
+
+  /**
+   * Sections that take an analyst commentary block beneath their content.
+   * Adding one here is all that is needed — the textarea, persistence and the
+   * rendered block are all driven off this list.
+   */
+  var COMMENTABLE = [
+    { id: 'execRisk',       label: 'Executive Risk Assessment' },
+    { id: 'businessImpact', label: 'Business Impact Summary' },
+  ];
+
+  function readComments() {
+    var out = {};
+    COMMENTABLE.forEach(function (c) {
+      var el = document.getElementById('rpt-comment-' + c.id);
+      if (el && el.value.trim()) out[c.id] = el.value;
+    });
+    return out;
+  }
+
+  function renderCommentBoxes(prefs) {
+    var host = document.getElementById('rpt-comments');
+    if (!host) return;
+    var saved = prefs.comments || {};
+
+    host.innerHTML = COMMENTABLE.map(function (c) {
+      return '<label class="rpt-cfield">' +
+          '<span class="rpt-clabel">' + S.esc(c.label) + '</span>' +
+          '<textarea id="rpt-comment-' + c.id + '" rows="3" ' +
+                    'placeholder="Optional commentary shown beneath this section…">' +
+            S.esc(saved[c.id] || '') +
+          '</textarea>' +
+        '</label>';
+    }).join('');
   }
 
   /**
@@ -433,6 +469,7 @@ window.ReportsTab = (function () {
         tenantId:    selectedTenantId(),
         narrative:   prefs.narrative,
         assurance:   prefs.assurance,
+        comments:    prefs.comments || {},
         overrides:   prefs.overrides,
         data:        data,
         logoDataUri: await S.logoToDataUri(),
@@ -543,6 +580,8 @@ window.ReportsTab = (function () {
       var assurEl = document.getElementById('rpt-assurance');
       if (assurEl) assurEl.value = prefs.assurance || '';
 
+      renderCommentBoxes(prefs);
+
       renderSectionToggles(prefs);
 
       await populateClients(prefs);
@@ -586,6 +625,7 @@ window.ReportsTab = (function () {
         if (n) n.value = p.narrative || '';
         var a = document.getElementById('rpt-assurance');
         if (a) a.value = p.assurance || '';
+        renderCommentBoxes(p);
         refreshMetrics();
       };
 

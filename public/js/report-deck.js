@@ -171,6 +171,13 @@ window.ReportDeck = (function () {
 '.rag-unknown{color:' + P.DECK_MUTED + ';font-style:italic;font-size:8.5pt}',
 '.rag-note{margin-top:3.5mm;font-size:8.5pt;color:' + P.DECK_MUTED + ';line-height:1.45}',
 
+/* analyst commentary beneath a section */
+'.sec-comment{margin-top:4mm;background:#F7F9FB;border-left:1.6mm solid ' + P.DECK_BLUE + ';',
+'  border-radius:1.5mm;padding:4mm 5mm}',
+'.sec-comment-label{font-size:7.5pt;font-weight:700;letter-spacing:.5pt;text-transform:uppercase;',
+'  color:' + P.DECK_BLUE + ';margin-bottom:1.6mm}',
+'.sec-comment-body{font-size:10pt;color:' + P.DECK_INK + ';line-height:1.5}',
+
 /* business impact — 3 across the 180mm measure keeps the labels on one or two lines */
 '.bi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5mm}',
 '.bi-cell{background:#F7F9FB;border-radius:1.5mm;border-left:1.4mm solid #BFBFBF;',
