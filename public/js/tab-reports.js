@@ -46,6 +46,12 @@ window.ReportsTab = (function () {
     mdr:              function () { return 'api/mdr' + tenantParam('?'); },
     vulnSummary:      function () { return 'api/vulns/latest-summary' + tenantParam('?'); },
     vulnFindings:     function () { return 'api/remediation-tracker' + tenantParam('?'); },
+    // 12 months of severity counts, for the Vulnerability Dashboard trend.
+    vulnTrends:       function () { return 'api/vulns/trends' + tenantParam('?'); },
+    // GRC self-assessment: total, framework and per-section scores + answers.
+    grcAssessment:    function () { return 'api/grc/assessment' + tenantParam('?'); },
+    // The question bank is global — no tenant parameter.
+    grcQuestions:     function () { return 'api/grc/questions'; },
   };
 
   /**
@@ -126,6 +132,7 @@ window.ReportsTab = (function () {
       overrides: overrides,
       narrative: (document.getElementById('rpt-narrative') || {}).value || '',
       assurance: (document.getElementById('rpt-assurance') || {}).value || '',
+      execSummary: (document.getElementById('rpt-exec-summary') || {}).value || '',
       comments:  readComments(),
       author:    (document.getElementById('rpt-author')    || {}).value || '',
       period:    (document.getElementById('rpt-period')    || {}).value || '',
@@ -133,20 +140,32 @@ window.ReportsTab = (function () {
   }
 
   /**
-   * Sections that take an analyst commentary block beneath their content.
-   * Adding one here is all that is needed — the textarea, persistence and the
-   * rendered block are all driven off this list.
+   * Commentary is registry-driven: a section opts in with `commentable: true`.
+   *
+   * Boxes are only rendered for sections currently switched on, so `_comments`
+   * holds the authoritative text. Reading straight from the DOM would silently
+   * discard a note the moment its section was toggled off.
    */
-  var COMMENTABLE = [
-    { id: 'execRisk',       label: 'Executive Risk Assessment' },
-    { id: 'businessImpact', label: 'Business Impact Summary' },
-  ];
+  var _comments = {};
+
+  function commentableSections() {
+    return window.ReportSections.filter(function (s) {
+      if (!s.commentable) return false;
+      var cb = document.getElementById('rpt-sec-' + s.id);
+      return !cb || cb.checked;
+    });
+  }
 
   function readComments() {
+    // Live DOM values win; anything not on screen keeps its stored text.
+    commentableSections().forEach(function (s) {
+      var el = document.getElementById('rpt-comment-' + s.id);
+      if (el) _comments[s.id] = el.value;
+    });
+
     var out = {};
-    COMMENTABLE.forEach(function (c) {
-      var el = document.getElementById('rpt-comment-' + c.id);
-      if (el && el.value.trim()) out[c.id] = el.value;
+    Object.keys(_comments).forEach(function (id) {
+      if (String(_comments[id] || '').trim()) out[id] = _comments[id];
     });
     return out;
   }
@@ -154,17 +173,32 @@ window.ReportsTab = (function () {
   function renderCommentBoxes(prefs) {
     var host = document.getElementById('rpt-comments');
     if (!host) return;
-    var saved = prefs.comments || {};
 
-    host.innerHTML = COMMENTABLE.map(function (c) {
+    if (prefs && prefs.comments) {
+      Object.keys(prefs.comments).forEach(function (id) {
+        if (_comments[id] === undefined) _comments[id] = prefs.comments[id];
+      });
+    }
+
+    var list = commentableSections();
+    if (!list.length) { host.innerHTML = ''; return; }
+
+    host.innerHTML = list.map(function (s) {
       return '<label class="rpt-cfield">' +
-          '<span class="rpt-clabel">' + S.esc(c.label) + '</span>' +
-          '<textarea id="rpt-comment-' + c.id + '" rows="3" ' +
+          '<span class="rpt-clabel">' + s.n + '. ' + S.esc(s.label) + '</span>' +
+          '<textarea id="rpt-comment-' + s.id + '" rows="3" ' +
                     'placeholder="Optional commentary shown beneath this section…">' +
-            S.esc(saved[c.id] || '') +
+            S.esc(_comments[s.id] || '') +
           '</textarea>' +
         '</label>';
     }).join('');
+
+    // Keep the store in step as the user types, so a later re-render (a section
+    // toggled, a client switched) never loses in-progress text.
+    list.forEach(function (s) {
+      var el = document.getElementById('rpt-comment-' + s.id);
+      if (el) el.oninput = function () { _comments[s.id] = el.value; };
+    });
   }
 
   /**
@@ -236,7 +270,7 @@ window.ReportsTab = (function () {
                   '<input type="checkbox" id="rpt-sec-' + s.id + '"' + (on ? ' checked' : '') + '>' +
                   '<span class="int-toggle-slider"></span>' +
                 '</span>' +
-                '<span class="rpt-section-name">' + S.esc(s.label) + '</span>' +
+                '<span class="rpt-section-name">' + s.n + '. ' + S.esc(s.label) + '</span>' +
               '</label>';
           }).join('') +
         '</div>';
@@ -469,6 +503,7 @@ window.ReportsTab = (function () {
         tenantId:    selectedTenantId(),
         narrative:   prefs.narrative,
         assurance:   prefs.assurance,
+        execSummary: prefs.execSummary,
         comments:    prefs.comments || {},
         overrides:   prefs.overrides,
         data:        data,
@@ -518,7 +553,8 @@ window.ReportsTab = (function () {
   async function redraftNarrative() {
     var period = (document.getElementById('rpt-period') || {}).value || '';
     var ctx = { period: period, tenantId: selectedTenantId() };
-    var data = await fetchNeeded(['overview', 'awareness', 'tickets', 'vulns'], ctx);
+    var data = await fetchNeeded(
+      ['execSummary', 'humanRisk', 'threatLandscape', 'vulnDashboard'], ctx);
     var el = document.getElementById('rpt-narrative');
     if (!el) return;
     el.value = window.ReportSections.draftObservations({
@@ -533,7 +569,7 @@ window.ReportsTab = (function () {
     var period = (document.getElementById('rpt-period') || {}).value || '';
     var ctx = { period: period, tenantId: selectedTenantId() };
     var data = await fetchNeeded(
-      ['execRisk', 'businessImpact', 'maturityTrend'], ctx);
+      ['execRisk', 'businessImpact', 'assuranceDashboard'], ctx);
     var el = document.getElementById('rpt-assurance');
     if (!el) return;
 
@@ -551,6 +587,22 @@ window.ReportsTab = (function () {
       clientName:  clientName(),
       periodLabel: periodLabel(period),
       period:      period,
+      tenantId:    selectedTenantId(),
+      data:        data,
+    });
+  }
+
+  async function redraftExecSummary() {
+    var period = (document.getElementById('rpt-period') || {}).value || '';
+    var ctx = { period: period, tenantId: selectedTenantId() };
+    var data = await fetchNeeded(
+      ['execSummary', 'assuranceDashboard', 'businessImpact', 'humanRisk'], ctx);
+    var el = document.getElementById('rpt-exec-summary');
+    if (!el) return;
+    el.value = window.ReportSections.draftExecSummary({
+      clientName:  clientName(),
+      period:      period,
+      periodLabel: periodLabel(period),
       tenantId:    selectedTenantId(),
       data:        data,
     });
@@ -579,6 +631,9 @@ window.ReportsTab = (function () {
 
       var assurEl = document.getElementById('rpt-assurance');
       if (assurEl) assurEl.value = prefs.assurance || '';
+
+      var execEl = document.getElementById('rpt-exec-summary');
+      if (execEl) execEl.value = prefs.execSummary || '';
 
       renderCommentBoxes(prefs);
 
@@ -609,6 +664,12 @@ window.ReportsTab = (function () {
         redraftNarrative().finally(function () { draft.disabled = false; });
       };
 
+      var draftE = document.getElementById('rpt-redraft-exec-btn');
+      if (draftE) draftE.onclick = function () {
+        draftE.disabled = true;
+        redraftExecSummary().finally(function () { draftE.disabled = false; });
+      };
+
       var draftA = document.getElementById('rpt-redraft-assurance-btn');
       if (draftA) draftA.onclick = function () {
         draftA.disabled = true;
@@ -625,6 +686,9 @@ window.ReportsTab = (function () {
         if (n) n.value = p.narrative || '';
         var a = document.getElementById('rpt-assurance');
         if (a) a.value = p.assurance || '';
+        var e = document.getElementById('rpt-exec-summary');
+        if (e) e.value = p.execSummary || '';
+        _comments = {};
         renderCommentBoxes(p);
         refreshMetrics();
       };

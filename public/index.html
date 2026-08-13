@@ -1845,10 +1845,21 @@
       <button type="button" class="btn btn-secondary" id="rpt-awsync-btn">Refresh from Arctic Wolf</button>
     </div>
 
-    <h3 class="rpt-sub">Section commentary</h3>
-    <p class="rpt-help">Optional analyst notes printed beneath these sections. Leave blank
-      to omit the block entirely. Saved per client.</p>
-    <div class="rpt-comments" id="rpt-comments"></div>
+    <h3 class="rpt-sub">Executive summary</h3>
+    <p class="rpt-help">Opens the report, beneath the headline figures. Auto-drafted from the
+      data — review it before generating. Separate paragraphs with a blank line.</p>
+    <textarea id="rpt-exec-summary" class="rpt-narrative" rows="7"
+              placeholder="The overall security posture for…"></textarea>
+    <div>
+      <button type="button" class="btn btn-secondary" id="rpt-redraft-exec-btn">Re-draft from data</button>
+    </div>
+
+    <details class="rpt-comments-acc">
+      <summary>Section commentary (optional)</summary>
+      <p class="rpt-help">Analyst notes printed beneath a section. Leave blank to omit the
+        block entirely. Saved per client; switching a section off keeps its text.</p>
+      <div class="rpt-comments" id="rpt-comments"></div>
+    </details>
 
     <h3 class="rpt-sub">Observations narrative</h3>
     <p class="rpt-help">One bullet per line. Edit freely before generating.</p>

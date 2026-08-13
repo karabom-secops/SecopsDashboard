@@ -171,6 +171,67 @@ window.ReportDeck = (function () {
 '.rag-unknown{color:' + P.DECK_MUTED + ';font-style:italic;font-size:8.5pt}',
 '.rag-note{margin-top:3.5mm;font-size:8.5pt;color:' + P.DECK_MUTED + ';line-height:1.45}',
 
+/* ── stacked blocks within one folded section ──────────────────────────── */
+'.sec-block{margin-bottom:6mm}',
+'.sec-block:last-child{margin-bottom:0}',
+'.sec-sub{font-size:10.5pt;font-weight:700;color:' + P.DECK_BLUE + ';margin:0 0 2.4mm;',
+'  border-bottom:.5pt solid #D6E4F0;padding-bottom:1.2mm}',
+
+/* executive summary prose */
+'.es-prose{font-size:11pt;line-height:1.55;color:' + P.DECK_INK + '}',
+'.es-prose p{margin-bottom:3.5mm}',
+'.es-prose p:last-child{margin-bottom:0}',
+
+/* compact count tiles, for the KPI strips on folded pages */
+'.bi-grid.tight{gap:4mm}',
+'.bi-grid.tight .bi-cell{min-height:18mm;padding:3.5mm 4mm}',
+'.bi-grid.tight .bi-v{font-size:17pt}',
+'.bi-grid.tight .bi-l{margin-top:1.6mm;font-size:8.5pt}',
+
+/* ── risk heat map (5x5 likelihood x impact) ───────────────────────────────
+   Cell colour is set inline: it is data, not styling, and a graded matrix has
+   no sensible palette class. */
+'.hm-wrap{display:grid;grid-template-columns:7mm 1fr;gap:2mm;align-items:stretch}',
+'.hm-ylab{writing-mode:vertical-rl;transform:rotate(180deg);text-align:center;',
+'  font-size:8.5pt;font-weight:700;color:' + P.DECK_MUTED + '}',
+'.hm-main{min-width:0}',
+'.hm-grid{display:grid;grid-template-columns:9mm repeat(5,1fr);grid-auto-rows:15mm;gap:1mm}',
+'.hm-rl{display:flex;align-items:center;justify-content:center;font-size:8pt;',
+'  font-weight:700;color:' + P.DECK_MUTED + '}',
+'.hm-cell{border-radius:1mm;display:flex;flex-direction:column;align-items:center;',
+'  justify-content:center;color:#fff;min-width:0;padding:1mm;overflow:hidden}',
+'.hm-n{font-size:13pt;font-weight:800;line-height:1}',
+'.hm-xaxis{display:grid;grid-template-columns:9mm repeat(5,1fr);gap:1mm;margin-top:1.2mm}',
+'.hm-xl{text-align:center;font-size:8pt;font-weight:700;color:' + P.DECK_MUTED + '}',
+'.hm-xtitle{text-align:center;font-size:8.5pt;font-weight:700;color:' + P.DECK_MUTED + ';',
+'  margin-top:1.5mm}',
+'.hm-legend{display:flex;gap:5mm;justify-content:center;margin-top:3.5mm;font-size:8.5pt;',
+'  color:' + P.DECK_MUTED + '}',
+'.hm-key{display:flex;align-items:center;gap:1.6mm}',
+'.hm-sw{width:3.4mm;height:3.4mm;border-radius:.8mm;display:inline-block}',
+
+/* ── 12-month severity trend. Segment height and colour are both data. ──── */
+'.tr-chart{display:grid;grid-template-columns:repeat(12,1fr);gap:1.5mm;height:34mm;',
+'  align-items:end}',
+'.tr-col{display:flex;flex-direction:column;justify-content:flex-end;height:100%;',
+'  overflow:hidden}',
+'.tr-seg{width:100%}',
+'.tr-xaxis{display:grid;grid-template-columns:repeat(12,1fr);gap:1.5mm;margin-top:1.4mm}',
+'.tr-xl{text-align:center;font-size:7pt;color:' + P.DECK_MUTED + '}',
+
+/* ── GRC control attestation rows ──────────────────────────────────────── */
+'.gc-list{display:flex;flex-direction:column;gap:2.5mm}',
+'.gc-item{display:grid;grid-template-columns:1fr 24mm;gap:3mm;align-items:center;',
+'  background:#F7F9FB;border-radius:1.5mm;border-left:1.6mm solid #BFBFBF;padding:3mm 4mm}',
+'.gc-ref{display:block;font-size:7.5pt;font-weight:700;letter-spacing:.3pt;',
+'  color:' + P.DECK_MUTED + ';margin-bottom:.6mm}',
+'.gc-q{font-size:9.5pt;color:' + P.DECK_INK + ';line-height:1.35}',
+'.gc-a{text-align:right}',
+
+/* score bar inside a table cell (compliance domain table) */
+'.sb-bar{height:2.4mm;border-radius:1.2mm;background:#E6ECF2;overflow:hidden}',
+'.sb-fill{height:100%;border-radius:1.2mm}',
+
 /* analyst commentary beneath a section */
 '.sec-comment{margin-top:4mm;background:#F7F9FB;border-left:1.6mm solid ' + P.DECK_BLUE + ';',
 '  border-radius:1.5mm;padding:4mm 5mm}',

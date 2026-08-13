@@ -23,6 +23,9 @@ const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = req
 const XLSX = require('xlsx');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
 const {
+  calculateGrcScore, calculateFrameworkScores, calculateSectionScores,
+} = require('./lib/grc-score');
+const {
   calculateSecureScore, calculateVulnScore, calculateAwarenessScore,
   calculateMdrScore, generateRecommendations,
 } = require('./lib/secure-score');
@@ -2893,59 +2896,10 @@ function resolveGrcTenant(req, source) {
   return { tenantId: req.session.tenantId };
 }
 
-function calculateGrcScore(answers, questions) {
-  const weightPoints = { critical: 5, high: 3, medium: 2, low: 1 };
-  let totalPossible = 0, totalEarned = 0;
-  const answerMap = {};
-  answers.forEach(a => { answerMap[String(a.questionId)] = a.answer; });
-  questions.forEach(q => {
-    const pts = weightPoints[q.weight] || 2;
-    const ans = answerMap[String(q.id)];
-    if (!ans || ans === 'na') return;
-    totalPossible += pts;
-    if (ans === 'yes')     totalEarned += pts;
-    if (ans === 'partial') totalEarned += pts * 0.5;
-  });
-  return totalPossible > 0 ? Math.round((totalEarned / totalPossible) * 100) : 0;
-}
-
-/**
- * calculateFrameworkScores — same weighted scoring as calculateGrcScore, but
- * grouped by framework (NIST_CSF, CIS_V8) via grc_question_frameworks rows
- * instead of by section. A question with no framework mapping is excluded
- * from every framework's score.
- */
-function calculateFrameworkScores(answers, questions, frameworkRows) {
-  const weightPoints = { critical: 5, high: 3, medium: 2, low: 1 };
-  const answerMap = {};
-  answers.forEach(a => { answerMap[String(a.questionId)] = a.answer; });
-  const qMap = {};
-  questions.forEach(q => { qMap[q.id] = q; });
-
-  const frameworks = {};
-  frameworkRows.forEach(r => {
-    if (!frameworks[r.framework]) frameworks[r.framework] = { possible: 0, earned: 0, seen: new Set() };
-    const bucket = frameworks[r.framework];
-    if (bucket.seen.has(r.question_id)) return; // count each question once per framework
-    bucket.seen.add(r.question_id);
-
-    const q = qMap[r.question_id];
-    if (!q) return;
-    const ans = answerMap[String(q.id)];
-    if (!ans || ans === 'na') return;
-    const pts = weightPoints[q.weight] || 2;
-    bucket.possible += pts;
-    if (ans === 'yes')     bucket.earned += pts;
-    if (ans === 'partial') bucket.earned += pts * 0.5;
-  });
-
-  const scores = {};
-  Object.keys(frameworks).forEach(fw => {
-    const { possible, earned } = frameworks[fw];
-    scores[fw] = possible > 0 ? Math.round((earned / possible) * 100) : null;
-  });
-  return scores;
-}
+// GRC scoring lives in lib/grc-score.js — calculateGrcScore,
+// calculateFrameworkScores and calculateSectionScores are imported at the top of
+// this file. Keeping one implementation is what stops a domain score in the
+// board report disagreeing with the same domain on the GRC tab.
 
 /**
  * autoPopulateRisksFromGrc — for every 'no' answer on a spreadsheet-sourced
@@ -3025,7 +2979,11 @@ app.get('/api/grc/assessment', requireAuth, async (req, res) => {
       'SELECT id, grc_score, assessed_at FROM grc_assessments WHERE tenant_id = $1',
       [tenantId]
     );
-    if (asmtRes.rows.length === 0) return res.json({ assessment: null, answers: [] });
+    // Same keys in both branches — a consumer should not have to null-check the
+    // envelope as well as the assessment inside it.
+    if (asmtRes.rows.length === 0) {
+      return res.json({ assessment: null, answers: [], frameworkScores: {}, sectionScores: {} });
+    }
 
     const answersRes = await pool.query(
       'SELECT question_id, answer, notes FROM grc_answers WHERE assessment_id = $1',
@@ -3033,13 +2991,16 @@ app.get('/api/grc/assessment', requireAuth, async (req, res) => {
     );
 
     const [qResult, fwResult] = await Promise.all([
-      pool.query('SELECT id, weight FROM grc_questions'),
+      pool.query('SELECT id, weight, section FROM grc_questions'),
       pool.query('SELECT question_id, framework, control_id, control_title FROM grc_question_frameworks'),
     ]);
     const answers = answersRes.rows.map(a => ({ questionId: a.question_id, answer: a.answer }));
     const frameworkScores = calculateFrameworkScores(answers, qResult.rows, fwResult.rows);
+    const sectionScores   = calculateSectionScores(answers, qResult.rows);
 
-    res.json({ assessment: asmtRes.rows[0], answers: answersRes.rows, frameworkScores });
+    res.json({
+      assessment: asmtRes.rows[0], answers: answersRes.rows, frameworkScores, sectionScores,
+    });
   } catch (err) {
     return serverError(res, err);
   }

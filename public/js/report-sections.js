@@ -344,7 +344,7 @@ window.ReportSections = (function () {
     });
   }
 
-  function renderAwareness(ctx) {
+  function awarenessBlock(ctx) {
     var a = ctx.data.awareness;
     if (!a) return null;
 
@@ -590,7 +590,7 @@ window.ReportSections = (function () {
       '</div>';
   }
 
-  function renderRemediation(ctx) {
+  function remediationPages(ctx) {
     var data = ctx.data.vulnFindings;
     if (!data) return null;
 
@@ -758,9 +758,7 @@ window.ReportSections = (function () {
     ];
   }
 
-  function renderExecRisk(ctx) {
-    var areas = riskAreas(ctx);
-    if (!areas.some(function (a) { return a.score != null; })) return null;
+  function riskAreaTable(ctx, areas) {
 
     var openRisks    = ((ctx.data.vulnFindings || {}).risks) || [];
     var aboveAppetite = openRisks.filter(function (r) {
@@ -914,7 +912,7 @@ window.ReportSections = (function () {
 
   var VULN_OPEN_STATUSES = { open: 1, 'in-progress': 1 };
 
-  function renderVulnExposure(ctx) {
+  function vulnExposureBlock(ctx) {
     var findings = ((ctx.data.vulnFindings || {}).vulns) || [];
     if (!findings.length) return null;
 
@@ -1171,18 +1169,20 @@ window.ReportSections = (function () {
       '</div>';
   }
 
-  function renderControlCoverage(ctx) {
-    var id  = identityMetrics(ctx);
-    var ep  = endpointMetrics(ctx);
-    if (!id && !ep) return null;
+  /**
+   * The identity half of the old Cyber Defence Coverage section, as a standalone
+   * `.cc-group`. Returns '' when no identity telemetry is configured.
+   *
+   * Only what the integration actually emits: every item is omitted rather than
+   * shown empty when its source is missing for the tenant.
+   */
+  function identityCoverageGroup(ctx) {
+    var id = identityMetrics(ctx);
+    if (!id) return '';
 
-    var groups = [];
+    var items = [];
 
-    // Only what this integration emits. Every item below is omitted rather than
-    // shown empty when its source is not configured for the tenant.
-    if (id) {
-      var items = [];
-
+    {
       if (id.hasGraph) {
         items.push(ccItem('Modern auth coverage', id.modernAuth, { unit: '%', target: 99 }));
         items.push(ccItem('Legacy auth sign-ins', id.legacyAuth, { lowerIsBetter: true }));
@@ -1210,15 +1210,20 @@ window.ReportSections = (function () {
       if (id.mailboxRules != null) items.push(ccItem('Mailbox rule changes', id.mailboxRules, { lowerIsBetter: true, warnAbove: 5 }));
       if (id.dlpEvents != null)    items.push(ccItem('DLP events', id.dlpEvents, { lowerIsBetter: true }));
 
-      if (items.length) {
-        groups.push('<div class="cc-group">' +
-          '<div class="cc-gh">Managed Identity</div>' +
-          '<div class="cc-items">' + items.join('') + '</div></div>');
-      }
     }
 
-    if (ep) {
-      groups.push('<div class="cc-group">' +
+    if (!items.length) return '';
+    return '<div class="cc-group">' +
+        '<div class="cc-gh">Managed Identity</div>' +
+        '<div class="cc-items">' + items.join('') + '</div>' +
+      '</div>';
+  }
+
+  /** The endpoint half, as a standalone `.cc-group`. '' when EDR is absent. */
+  function endpointCoverageGroup(ctx) {
+    var ep = endpointMetrics(ctx);
+    if (!ep) return '';
+    return '<div class="cc-group">' +
         '<div class="cc-gh">Endpoints &mdash; Managed EDR</div>' +
         '<div class="cc-items">' +
           ccItem('Endpoints protected', ep.protected, {}) +
@@ -1226,20 +1231,30 @@ window.ReportSections = (function () {
           ccItem('Agents online', ep.online, { unit: '%', target: 95 }) +
           ccItem('Not reporting', ep.stale, { lowerIsBetter: true }) +
           ccItem('Endpoints with active threats', ep.infected, { lowerIsBetter: true }) +
-        '</div></div>');
-    }
+        '</div>' +
+      '</div>';
+  }
 
-    if (!groups.length) return null;
+  /**
+   * The honesty footnote for either coverage group: these are observed sign-in
+   * and agent outcomes, not directory configuration.
+   */
+  function coverageNote(ctx) {
+    var ep = endpointMetrics(ctx);
     var window = ep && ep.windowDays ? ep.windowDays : null;
-
-    return '<div class="cc-grid">' + groups.join('') + '</div>' +
-      '<div class="rag-note">' +
+    return '<div class="rag-note">' +
         'Drawn from the Managed Identity and Managed EDR telemetry' +
         (window ? ' over a trailing ' + window + '-day window' : '') + '. ' +
         'These are observed outcomes, not directory configuration: MFA enrolment ' +
         'and Conditional Access policy coverage are not carried by either feed and ' +
         'are therefore not reported.' +
       '</div>';
+  }
+
+  function renderControlCoverage(ctx) {
+    var groups = [identityCoverageGroup(ctx), endpointCoverageGroup(ctx)].filter(Boolean);
+    if (!groups.length) return null;
+    return '<div class="cc-grid">' + groups.join('') + '</div>' + coverageNote(ctx);
   }
 
   // ── Threat Landscape ──────────────────────────────────────────────────────
@@ -1279,7 +1294,7 @@ window.ReportSections = (function () {
       bySev[s] = (bySev[s] || 0) + 1;
     });
 
-    return '<div class="tl-wrap">' +
+    var bars = '<div class="tl-wrap">' +
         '<div class="tl-bars">' +
           rows.map(function (r) {
             return '<div class="tl-row">' +
@@ -1303,7 +1318,16 @@ window.ReportSections = (function () {
               }).join('') +
           '</div>' +
         '</div>' +
-      '</div>';
+      '</div>' +
+      sectionComment(ctx, 'threatLandscape');
+
+    // The ticket list is the operational evidence behind the bars above. It is
+    // a second body rather than an appendix: together they would overflow, and
+    // measured pagination makes the split free.
+    var tickets = ticketsBlock(ctx);
+    if (!tickets) return bars;
+
+    return [bars, subHead('MDR tickets raised during ' + periodName(ctx.period)) + tickets];
   }
 
   // ── Detection & Response KPIs ─────────────────────────────────────────────
@@ -1312,7 +1336,7 @@ window.ReportSections = (function () {
   var MDR_SLA_HOURS = { HIGH: 4, MEDIUM: 24, LOW: 72 };
   var SLA_TARGET_PCT = 95;
 
-  function renderIrKpis(ctx) {
+  function irKpiBlock(ctx) {
     var tickets = ((ctx.data.mdr || {}).tickets) || [];
     var period  = ctx.period;
 
@@ -1384,7 +1408,7 @@ window.ReportSections = (function () {
 
   // ── Security Maturity Trend ───────────────────────────────────────────────
 
-  function renderMaturityTrend(ctx) {
+  function maturityBlock(ctx) {
     var now  = componentScores(ctx);
     var prev = previousScores(ctx);
     if (now.overall == null) return null;
@@ -1494,6 +1518,78 @@ window.ReportSections = (function () {
     return parts.join(' ');
   }
 
+  /**
+   * Draft the Executive Summary prose. Editable before generation, exactly like
+   * the Observations narrative and the assurance statement — a starting point,
+   * not an automated attestation.
+   *
+   * Paragraphs are separated by blank lines; renderExecSummary splits on those.
+   */
+  function draftExecSummary(ctx) {
+    var client = ctx.clientName || 'the organisation';
+    var label  = ctx.periodLabel || 'the reporting period';
+    var now    = componentScores(ctx);
+    var prev   = previousScores(ctx);
+    var paras  = [];
+
+    // 1. Where the posture stands and which way it is moving.
+    if (now.overall != null) {
+      var t = trendFor(now.overall, prev.overall);
+      var dir = t.label === 'Improving' ? 'improved'
+              : t.label === 'Increasing' ? 'declined' : 'held steady';
+      paras.push('The overall security posture for ' + client + ' stands at ' + now.overall +
+        ' out of 100 for ' + label + ', having ' + dir +
+        (prev.overall != null ? ' from ' + prev.overall + ' the previous month' : '') + '. ' +
+        (now.overall >= MATURITY_TARGETS.overall
+          ? 'This is at or above the agreed target of ' + MATURITY_TARGETS.overall + '.'
+          : 'The agreed target is ' + MATURITY_TARGETS.overall + '.'));
+    }
+
+    // 2. What actually happened to the business.
+    var incidents = ((ctx.data.vulnFindings || {}).incidents || []).filter(function (i) {
+      return monthOf(i.opened_at) === ctx.period;
+    });
+    var material = incidents.filter(function (i) {
+      var s = String(i.severity || '').toLowerCase();
+      return s === 'critical' || s === 'high';
+    }).length;
+
+    if (incidents.length) {
+      paras.push(incidents.length + ' security incident' + (incidents.length === 1 ? ' was' : 's were') +
+        ' recorded during the period, of which ' + material +
+        (material === 1 ? ' was' : ' were') + ' of critical or high severity. ' +
+        (material ? 'Each was investigated and worked to closure.'
+                  : 'None met the threshold for material business impact.'));
+    } else {
+      paras.push('No security incidents were recorded for ' + client + ' during ' + label + '.');
+    }
+
+    // 3. The dominant exposure, named rather than implied.
+    var behind = [];
+    if (now.vulnerabilities  != null && now.vulnerabilities  < MATURITY_TARGETS.vulnerabilities)  behind.push('vulnerability management');
+    if (now.awareness        != null && now.awareness        < MATURITY_TARGETS.awareness)        behind.push('security awareness');
+    if (now.incidentResponse != null && now.incidentResponse < MATURITY_TARGETS.incidentResponse) behind.push('incident response');
+
+    var above = ((ctx.data.vulnFindings || {}).risks || []).filter(function (r) {
+      return r.stage !== 'closed' && Number(r.risk_score) >= RISK_APPETITE_SCORE;
+    }).length;
+
+    if (behind.length || above) {
+      paras.push(
+        (behind.length
+          ? 'The principal exposure remains ' + listPhrase(behind) + ', which ' +
+            (behind.length === 1 ? 'sits' : 'sit') + ' below target. '
+          : '') +
+        (above
+          ? above + ' open risk' + (above === 1 ? '' : 's') + ' currently sit' +
+            (above === 1 ? 's' : '') + ' above the agreed appetite and require a funded ' +
+            'decision from the board.'
+          : 'No open risk currently sits above the agreed appetite.'));
+    }
+
+    return paras.join('\n\n');
+  }
+
   function listPhrase(items) {
     if (items.length === 1) return items[0];
     return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1];
@@ -1529,7 +1625,7 @@ window.ReportSections = (function () {
     info:   '#1077C7',
   };
 
-  function renderRecommendations(ctx) {
+  function recommendationsBlock(ctx) {
     var recs = (ctx.data.secureScore || {}).recommendations;
     if (!Array.isArray(recs) || !recs.length) return null;
 
@@ -1617,7 +1713,7 @@ window.ReportSections = (function () {
     return lines.join('\n');
   }
 
-  function renderObservations(ctx) {
+  function observationBullets(ctx) {
     var text = (ctx.narrative || '').trim();
     if (!text) return null;
     var items = text.split(/\n+/)
@@ -1631,7 +1727,7 @@ window.ReportSections = (function () {
 
   // ── Slide 5: Tickets Activity ─────────────────────────────────────────────
 
-  function renderTickets(ctx) {
+  function ticketsBlock(ctx) {
     var mdr = ctx.data.mdr || {};
     var tickets = (mdr.tickets || []).slice();
     if (!tickets.length) return null;
@@ -1675,7 +1771,7 @@ window.ReportSections = (function () {
     Low:      '#2E9E5B',
   };
 
-  function renderVulns(ctx) {
+  function topFindingsBlock(ctx) {
     var summary  = vulnSummaryFor(ctx);
     var tracker  = ctx.data.vulnFindings || {};
     var findings = (tracker.vulns || []).filter(function (f) {
@@ -1724,65 +1820,974 @@ window.ReportSections = (function () {
 
   // ── Registry ──────────────────────────────────────────────────────────────
 
-  var REGISTRY = [
-    { id: 'overview',     label: 'Managed Cybersecurity Overview', group: 'Stats',
-      requires: ['metrics'],                     render: renderOverview },
-    // `metrics` is not required — it only supplies an optional override for the
-    // Secure Score gauge, and the section must still render without it.
-    { id: 'awareness',    label: 'Managed Security Awareness',     group: 'Awareness',
-      requires: ['awareness'],                   render: renderAwareness },
-    { id: 'observations', label: 'Observations',                   group: 'MDR Tickets',
-      requires: [],                              render: renderObservations },
-    { id: 'tickets',      label: 'Tickets Activity',               group: 'MDR Tickets',
-      requires: ['mdr'],                         render: renderTickets },
-    { id: 'vulns',        label: 'Vulnerabilities',                group: 'Vulnerabilities',
-      requires: ['vulnSummary', 'vulnFindings'], render: renderVulns },
-    { id: 'remediation',  label: 'Remediation Tracker',            group: 'Vulnerabilities',
-      requires: ['vulnFindings'],                render: renderRemediation },
-    { id: 'recommendations', label: 'Recommendations',             group: 'Stats',
-      requires: ['secureScore'],                 render: renderRecommendations },
-  ];
 
-  // Executive risk assurance sections. Ordered so the board-level view comes
-  // first and the assurance statement closes the deck; SECTIONS above supplies
-  // the operational detail in between.
-  var EXEC_SECTIONS = [
-    { id: 'execRisk',     label: 'Executive Risk Assessment',      group: 'Executive',
+  // ── Thin wrappers over the extracted blocks ──────────────────────────────
+  // The blocks above are composed directly by the folded sections; these keep
+  // the one-block-per-section shape the registry still expects.
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // GRC self-assessment
+  //
+  // Scores come from lib/grc-score.js via /api/grc/assessment — the deck never
+  // does the weight maths itself, so a domain score here always matches the
+  // same domain on the GRC tab.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  var GRC_ANSWER_TONES  = { yes: '#2E9E5B', partial: '#f39c12', no: '#e74c3c', na: '#8C8C8C' };
+  var GRC_ANSWER_LABELS = { yes: 'Yes', partial: 'Partial', no: 'No', na: 'N/A' };
+
+  // Controls looked up by ITR id — stable, spreadsheet-sourced identifiers.
+  var THIRD_PARTY_ITR = ['ITR-041', 'ITR-042', 'ITR-024'];
+  var RESILIENCE_ITR  = ['ITR-038', 'ITR-039', 'ITR-040'];
+
+  // Domains looked up by name. This is a documented coupling: renaming a
+  // grc_questions.section value makes these read "Not assessed" rather than
+  // throwing, so prefer ITR ids wherever both would work.
+  var GRC_IDENTITY_SECTIONS   = ['Identity & Access', 'Privileged Access'];
+  var GRC_PEOPLE_SECTION      = 'People & Awareness';
+  var GRC_RESILIENCE_SECTIONS = ['Backup & Recovery', 'Business Continuity'];
+  var GRC_THIRD_PARTY_SECTION = 'Third Party & Supply Chain';
+
+  /** The GRC payload, or null when no assessment has been completed. */
+  function grcData(ctx) {
+    var g = ctx.data.grcAssessment;
+    return g && g.assessment ? g : null;
+  }
+
+  /**
+   * Question bank indexed by ITR id and by section, with answers folded in.
+   * Memoised on ctx — five sections read it and the bank is ~200 rows.
+   */
+  function grcIndex(ctx) {
+    if (ctx._grcIndex !== undefined) return ctx._grcIndex;
+
+    var q = ctx.data.grcQuestions;
+    var g = grcData(ctx);
+    if (!q || !q.sections || !g) { ctx._grcIndex = null; return null; }
+
+    var byItr = {}, bySection = {}, answers = {};
+    (g.answers || []).forEach(function (a) {
+      var id = a.question_id != null ? a.question_id : a.questionId;
+      if (id != null) answers[String(id)] = a;
+    });
+    Object.keys(q.sections).forEach(function (name) {
+      bySection[name] = q.sections[name] || [];
+      bySection[name].forEach(function (qq) {
+        if (qq.external_risk_id) byItr[qq.external_risk_id] = qq;
+      });
+    });
+
+    ctx._grcIndex = { byItr: byItr, bySection: bySection, answers: answers };
+    return ctx._grcIndex;
+  }
+
+  /** { q, answer, notes } for an ITR id, or null when it isn't in the bank. */
+  function grcControl(ctx, itrId) {
+    var ix = grcIndex(ctx);
+    if (!ix) return null;
+    var q = ix.byItr[itrId];
+    if (!q) return null;
+    var a = ix.answers[String(q.id)] || {};
+    return { q: q, answer: a.answer || null, notes: a.notes || '' };
+  }
+
+  /** { score, answered, total } straight off the server, or null. */
+  function grcSectionScore(ctx, name) {
+    var g = grcData(ctx);
+    if (!g) return null;
+    return (g.sectionScores || {})[name] || null;
+  }
+
+  /** Controls in `sections` answered 'no' or 'partial', worst weight first. */
+  function grcGaps(ctx, sections, limit) {
+    var ix = grcIndex(ctx);
+    if (!ix) return [];
+    var rank = { critical: 0, high: 1, medium: 2, low: 3 };
+    var out = [];
+
+    sections.forEach(function (name) {
+      (ix.bySection[name] || []).forEach(function (q) {
+        var a = (ix.answers[String(q.id)] || {}).answer;
+        if (a === 'no' || a === 'partial') out.push({ q: q, answer: a });
+      });
+    });
+
+    out.sort(function (a, b) {
+      var ra = rank[a.q.weight] == null ? 9 : rank[a.q.weight];
+      var rb = rank[b.q.weight] == null ? 9 : rank[b.q.weight];
+      return ra - rb;
+    });
+    return limit == null ? out : out.slice(0, limit);
+  }
+
+  /** One control attestation row. */
+  function gcItem(ctrl) {
+    var a     = ctrl.answer;
+    var tone  = a ? (GRC_ANSWER_TONES[a] || '#8C8C8C') : '#BFBFBF';
+    var label = a ? (GRC_ANSWER_LABELS[a] || titleCase(a)) : 'Not assessed';
+
+    return '<div class="gc-item" style="border-left-color:' + tone + '">' +
+        '<div>' +
+          '<span class="gc-ref">' + esc(ctrl.q.external_risk_id || '') +
+            (ctrl.q.itoo_ref ? ' &middot; ' + esc(ctrl.q.itoo_ref) : '') +
+          '</span>' +
+          '<span class="gc-q">' + esc(truncate(ctrl.q.text || '', 150)) + '</span>' +
+        '</div>' +
+        '<div class="gc-a">' +
+          '<span class="rag-pill" style="background:' + tone + '">' + esc(label) + '</span>' +
+        '</div>' +
+      '</div>';
+  }
+
+  /** A named GRC domain as a .cmp-card progress bar. '' when the domain is absent. */
+  function grcDomainCard(ctx, name) {
+    var s = grcSectionScore(ctx, name);
+    if (!s) return '';
+    var has  = s.score != null;
+    var band = has ? scoreBand(s.score) : null;
+
+    return '<div class="cmp-card">' +
+        '<div class="cmp-head">' +
+          '<span class="cmp-t">' + esc(name) + '</span>' +
+          '<span class="cmp-w">' + s.answered + '/' + s.total + '</span>' +
+        '</div>' +
+        '<div class="cmp-bar">' +
+          '<div class="cmp-fill" style="width:' + (has ? s.score : 0) + '%;background:' +
+            (has ? band.color : '#D9D9D9') + '"></div>' +
+        '</div>' +
+        '<div class="cmp-score">' + (has ? s.score + '/100' : 'Not assessed') + '</div>' +
+      '</div>';
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Chart primitives
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Heat-map cell tone. Deliberately the same bands as the Top Cyber Risks
+   * rating pill, because risk_score is likelihood x impact — the matrix and the
+   * table must never disagree about what "High" means.
+   */
+  function heatTone(score) {
+    if (score >= 20) return '#c0392b';
+    if (score >= 15) return '#e74c3c';
+    if (score >= 10) return '#e67e22';
+    if (score >= 5)  return '#f39c12';
+    return '#2E9E5B';
+  }
+
+  /** Open risks bucketed into the 5x5 matrix. */
+  function heatBuckets(risks) {
+    var cells = {}, plotted = 0, skipped = 0;
+
+    (risks || []).forEach(function (r) {
+      if (r.stage === 'closed') return;
+      var l = Number(r.likelihood), i = Number(r.impact);
+      if (!(l >= 1 && l <= 5) || !(i >= 1 && i <= 5)) { skipped++; return; }
+      cells[l + ':' + i] = (cells[l + ':' + i] || 0) + 1;
+      plotted++;
+    });
+
+    return { cells: cells, plotted: plotted, skipped: skipped };
+  }
+
+  function heatMapGrid(buckets) {
+    var rows = '';
+    // Likelihood 5 at the top so the worst corner is top-right, as a risk
+    // matrix is conventionally drawn.
+    for (var l = 5; l >= 1; l--) {
+      rows += '<div class="hm-rl">' + l + '</div>';
+      for (var i = 1; i <= 5; i++) {
+        var n = buckets.cells[l + ':' + i] || 0;
+        rows += '<div class="hm-cell" style="background:' + heatTone(l * i) +
+                ';opacity:' + (n ? 1 : 0.22) + '">' +
+                (n ? '<span class="hm-n">' + n + '</span>' : '') +
+              '</div>';
+      }
+    }
+
+    var xl = '<div></div>';
+    for (var x = 1; x <= 5; x++) xl += '<div class="hm-xl">' + x + '</div>';
+
+    var legend = [
+      { l: 'Low (1-4)',       t: heatTone(1) },
+      { l: 'Moderate (5-9)',  t: heatTone(5) },
+      { l: 'High (10-14)',    t: heatTone(10) },
+      { l: 'Severe (15-19)',  t: heatTone(15) },
+      { l: 'Critical (20+)',  t: heatTone(20) },
+    ].map(function (k) {
+      return '<span class="hm-key"><i class="hm-sw" style="background:' + k.t + '"></i>' +
+             esc(k.l) + '</span>';
+    }).join('');
+
+    return '<div class="hm-wrap">' +
+        '<div class="hm-ylab">Likelihood</div>' +
+        '<div class="hm-main">' +
+          '<div class="hm-grid">' + rows + '</div>' +
+          '<div class="hm-xaxis">' + xl + '</div>' +
+          '<div class="hm-xtitle">Impact</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="hm-legend">' + legend + '</div>';
+  }
+
+  /** 12-month stacked severity columns from /api/vulns/trends. */
+  function vulnTrendChart(rows) {
+    if (!Array.isArray(rows) || !rows.length) return '';
+
+    var order = ['critical', 'high', 'medium', 'low'];
+    var tones = { critical: SEV_TONES.Critical, high: SEV_TONES.High,
+                  medium: SEV_TONES.Medium, low: SEV_TONES.Low };
+
+    // Oldest first, last 12, so the chart reads left to right chronologically.
+    var series = rows.slice().sort(function (a, b) {
+      return String(a.monthKey) < String(b.monthKey) ? -1 : 1;
+    }).slice(-12);
+
+    var max = 0;
+    series.forEach(function (r) {
+      var t = order.reduce(function (a, k) { return a + (Number(r[k]) || 0); }, 0);
+      if (t > max) max = t;
+    });
+    if (!max) return '';
+
+    var cols = series.map(function (r) {
+      var segs = order.map(function (k) {
+        var v = Number(r[k]) || 0;
+        if (!v) return '';
+        return '<div class="tr-seg" style="height:' + ((v / max) * 100) + '%;background:' +
+               tones[k] + '"></div>';
+      }).join('');
+      return '<div class="tr-col">' + segs + '</div>';
+    }).join('');
+
+    var labels = series.map(function (r) {
+      return '<div class="tr-xl">' + esc(String(r.monthKey || '').slice(5)) + '</div>';
+    }).join('');
+
+    var legend = order.map(function (k) {
+      return '<span class="hm-key"><i class="hm-sw" style="background:' + tones[k] + '"></i>' +
+             titleCase(k) + '</span>';
+    }).join('');
+
+    return '<div class="tr-chart">' + cols + '</div>' +
+      '<div class="tr-xaxis">' + labels + '</div>' +
+      '<div class="hm-legend">' + legend + '</div>';
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Human risk
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Phishing simulation outcomes. `clicked_at` is the only behavioural signal
+   * in the awareness feed — everything else is completion tracking.
+   */
+  function phishingMetrics(sessions) {
+    var sims = (sessions || []).filter(function (s) {
+      return s.session_type === 'Phishing Simulation';
+    });
+    var remed = (sessions || []).filter(function (s) {
+      return s.session_type === 'Phishing Remediation Session';
+    });
+    if (!sims.length && !remed.length) return null;
+
+    var clicked = sims.filter(function (s) { return !!s.clicked_at; }).length;
+    return {
+      sent:      sims.length,
+      clicked:   clicked,
+      clickPct:  sims.length ? completionPct(clicked, sims.length) : null,
+      assigned:  remed.length,
+      completed: remed.filter(function (s) { return s.status === 'Complete'; }).length,
+    };
+  }
+
+  /** The last N phishing campaigns, grouped by send date and title. */
+  function phishingCampaigns(sessions, limit) {
+    var buckets = {}, order = [];
+
+    (sessions || []).forEach(function (s) {
+      if (s.session_type !== 'Phishing Simulation' || !s.sent_date) return;
+      var day = String(s.sent_date).slice(0, 10);
+      var key = day + '||' + (s.title || '');
+      if (!buckets[key]) {
+        buckets[key] = { sentDate: day, title: s.title || '(untitled)', sent: 0, clicked: 0 };
+        order.push(key);
+      }
+      buckets[key].sent++;
+      if (s.clicked_at) buckets[key].clicked++;
+    });
+
+    return order.map(function (k) { return buckets[k]; })
+      .sort(function (a, b) { return a.sentDate < b.sentDate ? 1 : -1; })
+      .slice(0, limit || 3)
+      .map(function (c) { c.clickPct = completionPct(c.clicked, c.sent); return c; });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Executive decisions
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Decisions the board actually has to take, derived from breached thresholds
+   * rather than authored. Ordered by how overdue the decision is.
+   */
+  function deriveDecisions(ctx) {
+    var data  = ctx.data.vulnFindings || {};
+    var risks = (data.risks || []).filter(function (r) { return r.stage !== 'closed'; });
+    var out   = [];
+    var today = new Date().toISOString().slice(0, 10);
+
+    var overdue = risks.filter(function (r) { return r.due_date && String(r.due_date).slice(0, 10) < today; });
+    if (overdue.length) {
+      out.push({ area: 'Overdue risk remediation', tone: 'high', impact: 'Major',
+        text: overdue.length + ' risk' + (overdue.length === 1 ? ' has' : 's have') +
+              ' passed the agreed target closure date. Confirm revised dates with the ' +
+              'accountable owners or accept the extended exposure.' });
+    }
+
+    var above = risks.filter(function (r) { return Number(r.risk_score) >= RISK_APPETITE_SCORE; });
+    if (above.length) {
+      out.push({ area: 'Risks above appetite', tone: 'high', impact: 'Major',
+        text: above.length + ' open risk' + (above.length === 1 ? ' sits' : 's sit') +
+              ' at or above the agreed appetite of ' + RISK_APPETITE_SCORE +
+              '. Each requires funded mitigation or a documented acceptance.' });
+    }
+
+    var pastSla = (data.vulns || []).filter(function (v) {
+      if (!VULN_OPEN_STATUSES[v.status]) return false;
+      var k = sevKey(v.risk);
+      var age = ageDays(v.firstSeenAt);
+      return k && age != null && age > VULN_SLA_DAYS[k];
+    });
+    if (pastSla.length) {
+      out.push({ area: 'Vulnerability remediation window', tone: 'medium', impact: 'Moderate',
+        text: pastSla.length + ' finding' + (pastSla.length === 1 ? ' is' : 's are') +
+              ' past the remediation SLA for their severity. Authorise a maintenance ' +
+              'window or accept the residual exposure.' });
+    }
+
+    var now    = componentScores(ctx);
+    var behind = [];
+    if (now.vulnerabilities  != null && now.vulnerabilities  < MATURITY_TARGETS.vulnerabilities)  behind.push('vulnerability management');
+    if (now.awareness        != null && now.awareness        < MATURITY_TARGETS.awareness)        behind.push('security awareness');
+    if (now.incidentResponse != null && now.incidentResponse < MATURITY_TARGETS.incidentResponse) behind.push('incident response');
+    if (behind.length) {
+      out.push({ area: 'Investment to reach target', tone: 'medium', impact: 'Moderate',
+        text: listPhrase(behind) + ' ' + (behind.length === 1 ? 'is' : 'are') +
+              ' below the agreed target score. Approve the investment needed to close ' +
+              'the gap, or agree a revised target.' });
+    }
+
+    var unowned = risks.filter(function (r) { return !String(r.owner || '').trim(); });
+    if (unowned.length) {
+      out.push({ area: 'Unassigned risk ownership', tone: 'low', impact: 'Governance',
+        text: unowned.length + ' open risk' + (unowned.length === 1 ? ' has' : 's have') +
+              ' no accountable owner. Assign ownership so remediation can be tracked.' });
+    }
+
+    return out;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // The 15 board sections
+  //
+  // Several fold in what used to be separate sections. Where a folded body would
+  // exceed the ~225mm a page can hold, the renderer returns an ARRAY of bodies:
+  // measured pagination packs them without wasting a page, and a body that is
+  // alone on a page and still too tall is silently cropped.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function subHead(text) {
+    return '<div class="sec-sub">' + esc(text) + '</div>';
+  }
+
+  function block(inner) {
+    return '<div class="sec-block">' + inner + '</div>';
+  }
+
+  // ── 1. Executive Summary ──────────────────────────────────────────────────
+
+  function renderExecSummary(ctx) {
+    var now   = componentScores(ctx);
+    var prev  = previousScores(ctx);
+    var data  = ctx.data.vulnFindings || {};
+    var risks = (data.risks || []).filter(function (r) { return r.stage !== 'closed'; });
+    var sum   = vulnSummaryFor(ctx);
+
+    var incidents = (data.incidents || []).filter(function (i) {
+      return monthOf(i.opened_at) === ctx.period;
+    }).length;
+
+    var crit = sum ? (Number(sum.critical) || 0) + (Number(sum.high) || 0) : null;
+    var above = risks.filter(function (r) {
+      return Number(r.risk_score) >= RISK_APPETITE_SCORE;
+    }).length;
+
+    // Awareness completion across the whole programme, not just this month.
+    var aw = ctx.data.awareness;
+    var awPct = null;
+    if (aw && (aw.sessions || []).length) {
+      var t = allTimeTotals(aw.sessions, 'Awareness Session');
+      if (t.assigned) awPct = t.completionPct;
+    }
+
+    // Resolution SLA achievement over tickets resolved in the period.
+    var slaPct = null;
+    var tickets = ((ctx.data.mdr || {}).tickets || []).filter(function (t2) {
+      return t2.resolvedAt && monthOf(t2.resolvedAt) === ctx.period;
+    });
+    if (tickets.length) {
+      var met = 0, total = 0;
+      tickets.forEach(function (t2) {
+        var target = MDR_SLA_HOURS[(t2.severity || 'MEDIUM').toUpperCase()];
+        if (target == null) return;
+        var h = (new Date(t2.resolvedAt) - new Date(t2.createdAt)) / 3600000;
+        if (h < 0) return;
+        total++;
+        if (h <= target) met++;
+      });
+      if (total) slaPct = pct(met, total);
+    }
+
+    var band = now.overall != null ? scoreBand(now.overall) : null;
+    var t2   = trendFor(now.overall, prev.overall);
+
+    var tiles = [
+      { v: now.overall == null ? null : now.overall + '/100',
+        l: 'Secure Score' + (band ? ' &middot; ' + band.label : '') +
+           (t2.mark ? ' ' + t2.mark : '') },
+      { v: crit == null ? null : String(crit), l: 'Critical &amp; high vulnerabilities open' },
+      { v: String(incidents),                   l: 'Security incidents this period' },
+      { v: slaPct == null ? null : slaPct + '%', l: 'MDR resolution SLA met' },
+      { v: awPct == null ? null : awPct + '%',   l: 'Awareness completion' },
+      { v: String(above),                        l: 'Open risks above appetite' },
+    ];
+
+    var prose = String(ctx.execSummary || '').trim();
+    if (!prose && !tiles.some(function (t3) { return t3.v != null; })) return null;
+
+    var html = '<div class="bi-grid tight">' +
+      tiles.map(function (t3) {
+        return '<div class="bi-cell">' +
+            '<div class="bi-v' + (t3.v == null ? ' nd' : '') + '">' +
+              (t3.v == null ? 'No data' : esc(t3.v)) + '</div>' +
+            '<div class="bi-l">' + t3.l + '</div>' +
+          '</div>';
+      }).join('') +
+    '</div>';
+
+    if (prose) {
+      html += '<div class="es-prose" style="margin-top:5mm">' +
+        prose.split(/\n\s*\n/).map(function (p) {
+          return '<p>' + esc(p.trim()).replace(/\r?\n/g, '<br>') + '</p>';
+        }).join('') +
+      '</div>';
+    }
+
+    // The Observations narrative keeps its input and its draft function; it just
+    // no longer owns a section of its own.
+    var obs = observationBullets(ctx);
+    if (obs) html += subHead('Observations') + obs;
+
+    return html + sectionComment(ctx, 'execSummary');
+  }
+
+  // ── 2. Cybersecurity Assurance Dashboard ──────────────────────────────────
+
+  function renderAssuranceDashboard(ctx) {
+    var maturity = maturityBlock(ctx);
+    var kpis     = irKpiBlock(ctx);
+    var endpoint = endpointCoverageGroup(ctx);
+    if (!maturity && !kpis && !endpoint) return null;
+
+    var bodies = [];
+    var first  = '';
+    if (maturity) first += block(subHead('Maturity against target') + maturity);
+    if (kpis)     first += block(subHead('Detection and response') + kpis);
+    if (first)    bodies.push(first);
+
+    if (endpoint) {
+      bodies.push(subHead('Endpoint protection') +
+        '<div class="cc-grid">' + endpoint + '</div>' + coverageNote(ctx));
+    }
+
+    if (!bodies.length) return null;
+    bodies[bodies.length - 1] += sectionComment(ctx, 'assuranceDashboard');
+    return bodies.length === 1 ? bodies[0] : bodies;
+  }
+
+  // ── 3. Cyber Risk Heat Map ────────────────────────────────────────────────
+
+  function renderRiskHeatMap(ctx) {
+    var b = heatBuckets((ctx.data.vulnFindings || {}).risks);
+    if (!b.plotted) return null;
+
+    return heatMapGrid(b) +
+      '<div class="rag-note">' +
+        b.plotted + ' open risk' + (b.plotted === 1 ? '' : 's') + ' plotted by ' +
+        'likelihood and impact, each scored 1&ndash;5. Cell colour follows the ' +
+        'product of the two, the same rating used on the Top Cyber Risks register.' +
+        (b.skipped
+          ? ' ' + b.skipped + ' further open risk' + (b.skipped === 1 ? ' is' : 's are') +
+            ' not plotted because no likelihood or impact has been recorded.'
+          : '') +
+      '</div>' +
+      sectionComment(ctx, 'heatMap');
+  }
+
+  // ── 6. Risk Appetite Dashboard ────────────────────────────────────────────
+
+  function renderRiskAppetite(ctx) {
+    var areas = riskAreas(ctx);
+    if (!areas.some(function (a) { return a.score != null; })) return null;
+
+    var risks = ((ctx.data.vulnFindings || {}).risks || []).filter(function (r) {
+      return r.stage !== 'closed';
+    });
+    var above   = risks.filter(function (r) { return Number(r.risk_score) >= RISK_APPETITE_SCORE; }).length;
+    var outside = areas.filter(function (a) { return a.score != null && a.score < a.target; }).length;
+
+    var tiles = '<div class="bi-grid tight">' +
+        '<div class="bi-cell' + (above ? '' : ' ok') + '">' +
+          '<div class="bi-v">' + above + '</div>' +
+          '<div class="bi-l">Risks above appetite</div></div>' +
+        '<div class="bi-cell' + (outside ? '' : ' ok') + '">' +
+          '<div class="bi-v">' + outside + '</div>' +
+          '<div class="bi-l">Domains below target</div></div>' +
+        '<div class="bi-cell">' +
+          '<div class="bi-v">' + RISK_APPETITE_SCORE + '</div>' +
+          '<div class="bi-l">Appetite threshold (likelihood &times; impact)</div></div>' +
+      '</div>';
+
+    return tiles + '<div style="margin-top:5mm">' + riskAreaTable(ctx, areas) + '</div>';
+  }
+
+  // ── 9. Third-Party Risk Dashboard ─────────────────────────────────────────
+
+  function renderThirdPartyRisk(ctx) {
+    if (!grcData(ctx)) return null;
+
+    var controls = THIRD_PARTY_ITR.map(function (id) { return grcControl(ctx, id); })
+                                  .filter(Boolean);
+    if (!controls.length) return null;
+
+    var ids = {};
+    controls.forEach(function (c) { ids[c.q.id] = true; });
+    var linked = ((ctx.data.vulnFindings || {}).risks || []).filter(function (r) {
+      return r.stage !== 'closed' && ids[r.grc_question_id];
+    });
+    var failing = controls.filter(function (c) { return c.answer === 'no'; }).length;
+    var score   = grcSectionScore(ctx, GRC_THIRD_PARTY_SECTION);
+
+    var html = '<div class="bi-grid tight">' +
+        '<div class="bi-cell">' +
+          '<div class="bi-v' + (score && score.score != null ? '' : ' nd') + '">' +
+            (score && score.score != null ? score.score + '/100' : 'Not assessed') + '</div>' +
+          '<div class="bi-l">Supplier security domain</div></div>' +
+        '<div class="bi-cell' + (failing ? '' : ' ok') + '">' +
+          '<div class="bi-v">' + failing + '</div>' +
+          '<div class="bi-l">Controls not in place</div></div>' +
+        '<div class="bi-cell' + (linked.length ? '' : ' ok') + '">' +
+          '<div class="bi-v">' + linked.length + '</div>' +
+          '<div class="bi-l">Open risks on the register</div></div>' +
+      '</div>' +
+      '<div class="gc-list" style="margin-top:5mm">' +
+        controls.map(gcItem).join('') +
+      '</div>';
+
+    if (linked.length) {
+      html += subHead('Linked risks') + D.dataTable({
+        cols: [
+          { label: 'Risk', key: 'title', width: '46%',
+            raw: function (r) { return esc(truncate(r.title || '', 60)); } },
+          { label: 'Rating', key: 'risk_score', width: '14%', cls: 'num' },
+          { label: 'Owner', key: 'owner', width: '24%',
+            raw: function (r) { return esc(truncate(r.owner || 'Unassigned', 26)); } },
+          { label: 'Target', key: 'due_date', width: '16%', cls: 'num',
+            raw: function (r) { return esc(fmtShortDate(r.due_date)); } },
+        ],
+        rows: linked.slice(0, 5),
+      });
+    }
+
+    return html +
+      '<div class="rag-note">' +
+        'Third-party exposure is assessed from the supplier-security controls in the ' +
+        'self-assessment and the risk-register entries linked to them. The platform ' +
+        'holds no vendor inventory, so this is a control-attestation view rather than ' +
+        'a per-vendor risk score.' +
+      '</div>';
+  }
+
+  // ── 10. Identity and Access Risk Dashboard ────────────────────────────────
+
+  function renderIdentityRisk(ctx) {
+    var telemetry = identityCoverageGroup(ctx);
+    var hasGrc    = !!grcData(ctx);
+    if (!telemetry && !hasGrc) return null;
+
+    var bodies = [];
+
+    if (telemetry) {
+      bodies.push('<div class="cc-grid">' + telemetry + '</div>' + coverageNote(ctx));
+    }
+
+    if (hasGrc) {
+      var cards = GRC_IDENTITY_SECTIONS.map(function (n) { return grcDomainCard(ctx, n); })
+                                       .filter(Boolean).join('');
+      var gaps  = grcGaps(ctx, GRC_IDENTITY_SECTIONS, MAX_IDENTITY_GAPS);
+      var grcHtml = '';
+      if (cards) {
+        grcHtml += subHead('Access control self-assessment') +
+          '<div class="cmp-row" style="grid-template-columns:repeat(2,1fr)">' + cards + '</div>';
+      }
+      if (gaps.length) {
+        grcHtml += '<div class="gc-list" style="margin-top:4mm">' +
+          gaps.map(gcItem).join('') + '</div>';
+      }
+      if (grcHtml) bodies.push(grcHtml);
+    }
+
+    if (!bodies.length) return null;
+    return bodies.length === 1 ? bodies[0] : bodies;
+  }
+
+  // ── 11. Vulnerability Dashboard ───────────────────────────────────────────
+
+  function renderVulnDashboard(ctx) {
+    var bodies = [];
+
+    var exposure = vulnExposureBlock(ctx);
+    if (exposure) bodies.push(exposure);
+
+    var trend    = vulnTrendChart(ctx.data.vulnTrends);
+    var findings = topFindingsBlock(ctx);
+    var second   = '';
+    if (trend)    second += block(subHead('Severity trend, last 12 months') + trend);
+    if (findings) second += block(findings);
+    if (second)   bodies.push(second);
+
+    var pages = remediationPages(ctx);
+    if (pages) bodies = bodies.concat(Array.isArray(pages) ? pages : [pages]);
+
+    if (!bodies.length) return null;
+    return bodies.length === 1 ? bodies[0] : bodies;
+  }
+
+  // ── 12. Human Risk Dashboard ──────────────────────────────────────────────
+
+  function renderHumanRisk(ctx) {
+    var a = ctx.data.awareness;
+    if (!a || !(a.sessions || []).length) return null;
+
+    var sessions = a.sessions;
+    var sess = allTimeTotals(sessions, 'Awareness Session');
+    var quiz = allTimeTotals(sessions, 'Quiz');
+    var ph   = phishingMetrics(sessions);
+
+    var tiles = [
+      { v: sess.assigned ? sess.completionPct + '%' : null, l: 'Session completion', ok: sess.completionPct >= 70 },
+      { v: quiz.assigned ? quiz.completionPct + '%' : null, l: 'Quiz completion',    ok: quiz.completionPct >= 70 },
+      { v: ph && ph.clickPct != null ? ph.clickPct + '%' : null, l: 'Phishing click rate', ok: ph && ph.clicked === 0 },
+      { v: ph && ph.assigned ? ph.completed + '/' + ph.assigned : null, l: 'Remediation completed' },
+    ];
+
+    var first = '<div class="bi-grid tight">' +
+      tiles.map(function (t) {
+        return '<div class="bi-cell' + (t.ok ? ' ok' : '') + '">' +
+            '<div class="bi-v' + (t.v == null ? ' nd' : '') + '">' +
+              (t.v == null ? 'No data' : esc(t.v)) + '</div>' +
+            '<div class="bi-l">' + esc(t.l) + '</div>' +
+          '</div>';
+      }).join('') +
+    '</div>';
+
+    var camps = phishingCampaigns(sessions, 3);
+    if (camps.length) {
+      first += subHead('Recent phishing simulations') + D.dataTable({
+        cols: [
+          { label: 'Date', key: 'sentDate', width: '18%',
+            raw: function (r) { return esc(fmtLongDate(r.sentDate)); } },
+          { label: 'Campaign', key: 'title', width: '46%',
+            raw: function (r) { return esc(truncate(r.title, 52)); } },
+          { label: 'Sent',    key: 'sent',    width: '12%', cls: 'num' },
+          { label: 'Clicked', key: 'clicked', width: '12%', cls: 'num' },
+          { label: 'Click %', key: 'clickPct', width: '12%', cls: 'num',
+            raw: function (r) { return esc(Number(r.clickPct).toFixed(2)) + ' %'; } },
+        ],
+        rows: camps,
+      });
+    }
+
+    if (grcData(ctx)) {
+      var card = grcDomainCard(ctx, GRC_PEOPLE_SECTION);
+      var gaps = grcGaps(ctx, [GRC_PEOPLE_SECTION], 3);
+      if (card) {
+        first += subHead('People and awareness controls') +
+          '<div class="cmp-row" style="grid-template-columns:1fr">' + card + '</div>';
+      }
+      if (gaps.length) {
+        first += '<div class="gc-list" style="margin-top:4mm">' + gaps.map(gcItem).join('') + '</div>';
+      }
+    }
+
+    var second = awarenessBlock(ctx);
+    return second ? [first, second] : first;
+  }
+
+  // ── 13. Recovery and Resilience Dashboard ─────────────────────────────────
+
+  function renderResilience(ctx) {
+    if (!grcData(ctx)) return null;
+
+    var controls = RESILIENCE_ITR.map(function (id) { return grcControl(ctx, id); })
+                                 .filter(Boolean);
+    if (!controls.length) return null;
+
+    var incidents = ((ctx.data.vulnFindings || {}).incidents || []);
+    var inPeriod  = incidents.filter(function (i) { return monthOf(i.opened_at) === ctx.period; });
+    var recovering = incidents.filter(function (i) {
+      return i.phase === 'recovery' && i.status !== 'closed' && i.status !== 'resolved';
+    }).length;
+    var closed = inPeriod.filter(function (i) { return i.closed_at; });
+    var hours  = closed.map(function (i) {
+      return (new Date(i.closed_at) - new Date(i.opened_at)) / 3600000;
+    }).filter(function (h) { return h >= 0; });
+    var meanHours = hours.length
+      ? Math.round((hours.reduce(function (x, y) { return x + y; }, 0) / hours.length) * 10) / 10
+      : null;
+
+    var cards = GRC_RESILIENCE_SECTIONS.map(function (n) { return grcDomainCard(ctx, n); })
+                                       .filter(Boolean).join('');
+
+    return '<div class="gc-list">' + controls.map(gcItem).join('') + '</div>' +
+      (cards
+        ? subHead('Resilience domains') +
+          '<div class="cmp-row" style="grid-template-columns:repeat(2,1fr)">' + cards + '</div>'
+        : '') +
+      subHead('Observed recovery') +
+      '<div class="bi-grid tight">' +
+        '<div class="bi-cell' + (recovering ? '' : ' ok') + '">' +
+          '<div class="bi-v">' + recovering + '</div>' +
+          '<div class="bi-l">Incidents in recovery</div></div>' +
+        '<div class="bi-cell">' +
+          '<div class="bi-v">' + closed.length + '</div>' +
+          '<div class="bi-l">Incidents closed this period</div></div>' +
+        '<div class="bi-cell">' +
+          '<div class="bi-v' + (meanHours == null ? ' nd' : '') + '">' +
+            (meanHours == null ? 'No data' : meanHours + ' hrs') + '</div>' +
+          '<div class="bi-l">Mean time to close</div></div>' +
+      '</div>' +
+      '<div class="rag-note">' +
+        'No recovery-time or recovery-point objective is recorded in the platform, so ' +
+        'this reports control attestation and observed incident-closure time rather ' +
+        'than measured RTO or RPO attainment.' +
+      '</div>';
+  }
+
+  // ── 14. Compliance Dashboard ──────────────────────────────────────────────
+
+  var MAX_DOMAIN_ROWS = 11;
+
+  function renderCompliance(ctx) {
+    var g = grcData(ctx);
+    if (!g) return null;
+
+    var fw = g.frameworkScores || {};
+    var cards = [
+      { label: 'Overall self-assessment', score: g.assessment.grc_score },
+      { label: 'NIST CSF',                score: fw.NIST_CSF },
+      { label: 'CIS Controls v8',         score: fw.CIS_V8 },
+    ].map(function (c) {
+      var has  = c.score != null;
+      var band = has ? scoreBand(c.score) : null;
+      return '<div class="cmp-card">' +
+          '<div class="cmp-head"><span class="cmp-t">' + esc(c.label) + '</span></div>' +
+          '<div class="cmp-bar"><div class="cmp-fill" style="width:' + (has ? c.score : 0) +
+            '%;background:' + (has ? band.color : '#D9D9D9') + '"></div></div>' +
+          '<div class="cmp-score">' + (has ? c.score + '/100' : 'Not scored') + '</div>' +
+          (has ? '<div class="cmp-d">' + esc(band.label) + '</div>' : '') +
+        '</div>';
+    }).join('');
+
+    var scores = g.sectionScores || {};
+    var rows = Object.keys(scores).sort().map(function (name) {
+      var s = scores[name];
+      return { domain: name, score: s.score, answered: s.answered, total: s.total };
+    });
+
+    function domainTable(subset) {
+      return D.dataTable({
+        cols: [
+          { label: 'Domain', key: 'domain', width: '40%',
+            raw: function (r) { return esc(truncate(r.domain, 42)); } },
+          { label: 'Score', key: 'score', width: '26%',
+            raw: function (r) {
+              if (r.score == null) return '<span class="rag-unknown">Not assessed</span>';
+              return '<div class="sb-bar"><div class="sb-fill" style="width:' + r.score +
+                     '%;background:' + scoreBand(r.score).color + '"></div></div>';
+            } },
+          { label: 'Rating', key: 'rating', width: '20%',
+            raw: function (r) { return r.score == null ? '&mdash;' : esc(scoreBand(r.score).label); } },
+          { label: 'Answered', key: 'answered', width: '14%', cls: 'num',
+            raw: function (r) { return r.answered + ' / ' + r.total; } },
+        ],
+        rows: subset,
+      });
+    }
+
+    var note = '<div class="rag-note">' +
+        'Point-in-time self-assessment' +
+        (g.assessment.assessed_at ? ', assessed ' + esc(fmtShortDate(g.assessment.assessed_at)) : '') +
+        '. One assessment is retained per client, so there is no prior assessment to ' +
+        'compare against and no trend can be shown. Controls marked not applicable or ' +
+        'left unanswered are excluded from every denominator.' +
+      '</div>';
+
+    var head = '<div class="cmp-row">' + cards + '</div>';
+    if (!rows.length) return head + note;
+
+    if (rows.length <= MAX_DOMAIN_ROWS) {
+      return head + subHead('Control domains') + domainTable(rows) + note;
+    }
+
+    return [
+      head + subHead('Control domains') + domainTable(rows.slice(0, MAX_DOMAIN_ROWS)),
+      subHead('Control domains (continued)') + domainTable(rows.slice(MAX_DOMAIN_ROWS)) + note,
+    ];
+  }
+
+  // ── 15. Executive Decisions and Recommendations ───────────────────────────
+
+  function renderDecisions(ctx) {
+    var decisions = deriveDecisions(ctx);
+    var recs      = recommendationsBlock(ctx);
+    if (!decisions.length && !recs) return null;
+
+    var bodies = [];
+
+    if (decisions.length) {
+      bodies.push('<div class="rec-list">' +
+        decisions.map(function (d) {
+          var tone = PRIORITY_TONES[d.tone] || '#8C8C8C';
+          return '<div class="rec-item" style="border-left-color:' + tone + '">' +
+              '<div class="rec-body">' +
+                '<div class="rec-area">' + esc(d.area) + '</div>' +
+                '<div class="rec-text">' + esc(d.text) + '</div>' +
+              '</div>' +
+              '<div class="rec-meta">' +
+                '<span class="rec-chip" style="background:' + tone + '">Decision</span>' +
+                (d.impact ? '<span class="rec-impact">' + esc(d.impact) + '</span>' : '') +
+              '</div>' +
+            '</div>';
+        }).join('') +
+      '</div>' +
+      '<div class="rag-note">Each item above needs a board decision: fund it, accept ' +
+        'the risk, or revise the target.</div>');
+    }
+
+    if (recs) bodies.push(subHead('Recommended actions') + recs);
+
+    bodies[bodies.length - 1] += sectionComment(ctx, 'recommendations');
+    return bodies.length === 1 ? bodies[0] : bodies;
+  }
+
+  /** Controls shown as gaps on the Identity dashboard before it gets crowded. */
+  var MAX_IDENTITY_GAPS = 4;
+
+  function renderExecRisk(ctx) {
+    var areas = riskAreas(ctx);
+    if (!areas.some(function (a) { return a.score != null; })) return null;
+    return riskAreaTable(ctx, areas);
+  }
+
+  function renderObservations(ctx) { return observationBullets(ctx); }
+
+  // Thin wrappers over the extracted blocks. The folded sections compose the
+  // blocks directly; these keep the registry working unchanged.
+  function renderMaturityTrend(ctx) { return maturityBlock(ctx); }
+  function renderIrKpis(ctx) { return irKpiBlock(ctx); }
+  function renderRemediation(ctx) { return remediationPages(ctx); }
+  function renderTickets(ctx) { return ticketsBlock(ctx); }
+  function renderVulns(ctx) { return topFindingsBlock(ctx); }
+  function renderVulnExposure(ctx) { return vulnExposureBlock(ctx); }
+  function renderRecommendations(ctx) { return recommendationsBlock(ctx); }
+  function renderAwareness(ctx) { return awarenessBlock(ctx); }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // The board report, in reading order.
+  //
+  // Slide order IS array order. Ids are load-bearing: prefs.sections and
+  // prefs.comments in localStorage are keyed on them, so a surviving section
+  // keeps its id even when its label changes.
+  // ══════════════════════════════════════════════════════════════════════════
+  var SECTIONS = [
+    { n: 1,  id: 'execSummary',        label: 'Executive Summary',                       group: 'Executive',
+      requires: [],
+      optional: ['secureScore', 'secureScoreHistory', 'vulnFindings', 'mdr', 'awareness', 'vulnSummary'],
+      render: renderExecSummary, commentable: true },
+
+    { n: 2,  id: 'assuranceDashboard', label: 'Cybersecurity Assurance Dashboard',       group: 'Executive',
+      requires: ['secureScore'], optional: ['secureScoreHistory', 'mdr', 'edr'],
+      render: renderAssuranceDashboard, commentable: true },
+
+    { n: 3,  id: 'heatMap',            label: 'Cyber Risk Heat Map',                     group: 'Risk',
+      requires: ['vulnFindings'],                  render: renderRiskHeatMap, commentable: true },
+
+    { n: 4,  id: 'assurance',          label: 'Board Assurance Statement',               group: 'Executive',
+      requires: [],                                render: renderAssurance },
+
+    { n: 5,  id: 'topRisks',           label: 'Top Cyber Risks',                         group: 'Risk',
+      requires: ['vulnFindings'],                  render: renderTopRisks, commentable: true },
+
+    { n: 6,  id: 'execRisk',           label: 'Risk Appetite Dashboard',                 group: 'Risk',
       requires: ['secureScore'], optional: ['edr', 'o365', 'vulnFindings', 'secureScoreHistory'],
-      render: renderExecRisk,        order: 'lead' },
-    { id: 'businessImpact', label: 'Business Impact Summary',      group: 'Executive',
-      requires: ['vulnFindings'],                render: renderBusinessImpact,  order: 'lead' },
-    { id: 'topRisks',     label: 'Top Cyber Risks',                group: 'Executive',
-      requires: ['vulnFindings'],                render: renderTopRisks,        order: 'lead' },
-    { id: 'vulnExposure', label: 'Vulnerability Exposure',         group: 'Executive',
-      requires: ['vulnFindings'],                render: renderVulnExposure,    order: 'lead' },
-    { id: 'controlCoverage', label: 'Cyber Defence Coverage',      group: 'Executive',
-      requires: [], optional: ['edr', 'o365'],   render: renderControlCoverage, order: 'lead' },
-    { id: 'threatLandscape', label: 'Threat Landscape',            group: 'Executive',
-      requires: ['vulnFindings'],                render: renderThreatLandscape, order: 'lead' },
-    { id: 'irKpis',       label: 'Detection & Response KPIs',      group: 'Executive',
-      requires: ['mdr'], optional: ['edr'],      render: renderIrKpis,          order: 'lead' },
-    { id: 'maturityTrend', label: 'Security Maturity Trend',       group: 'Executive',
-      requires: ['secureScore'], optional: ['secureScoreHistory'],
-      render: renderMaturityTrend,   order: 'lead' },
-    { id: 'assurance',    label: 'Board Assurance Statement',      group: 'Executive',
-      requires: [],                              render: renderAssurance,       order: 'tail' },
+      render: renderRiskAppetite, commentable: true },
+
+    { n: 7,  id: 'businessImpact',     label: 'Business Impact Summary',                 group: 'Risk',
+      requires: ['vulnFindings'],                  render: renderBusinessImpact, commentable: true },
+
+    { n: 8,  id: 'threatLandscape',    label: 'Threat Landscape Overview',               group: 'Dashboards',
+      requires: ['vulnFindings'], optional: ['mdr'],
+      render: renderThreatLandscape, commentable: true },
+
+    { n: 9,  id: 'thirdParty',         label: 'Third-Party Risk Dashboard',              group: 'Dashboards',
+      requires: ['grcAssessment', 'grcQuestions'], optional: ['vulnFindings'],
+      render: renderThirdPartyRisk },
+
+    { n: 10, id: 'identityRisk',       label: 'Identity and Access Risk Dashboard',      group: 'Dashboards',
+      requires: [], optional: ['o365', 'grcAssessment', 'grcQuestions'],
+      render: renderIdentityRisk },
+
+    { n: 11, id: 'vulnDashboard',      label: 'Vulnerability Dashboard',                 group: 'Dashboards',
+      requires: ['vulnFindings'], optional: ['vulnSummary', 'vulnTrends'],
+      render: renderVulnDashboard },
+
+    { n: 12, id: 'humanRisk',          label: 'Human Risk Dashboard',                    group: 'Dashboards',
+      requires: ['awareness'], optional: ['grcAssessment', 'grcQuestions'],
+      render: renderHumanRisk },
+
+    { n: 13, id: 'resilience',         label: 'Recovery and Resilience Dashboard',       group: 'Dashboards',
+      requires: ['grcAssessment', 'grcQuestions'], optional: ['vulnFindings'],
+      render: renderResilience },
+
+    { n: 14, id: 'compliance',         label: 'Compliance Dashboard',                    group: 'Governance',
+      requires: ['grcAssessment', 'grcQuestions'], render: renderCompliance },
+
+    { n: 15, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',
+      requires: ['secureScore'], optional: ['vulnFindings'],
+      render: renderDecisions, commentable: true },
   ];
 
-  // Executive sections bracket the operational ones: risk assurance up front,
-  // the board statement last. Slide order is registry order.
-  var ORDERED = []
-    .concat(EXEC_SECTIONS.filter(function (s) { return s.order === 'lead'; }))
-    .concat(REGISTRY)
-    .concat(EXEC_SECTIONS.filter(function (s) { return s.order === 'tail'; }));
+  SECTIONS.draftObservations = draftObservations;
+  SECTIONS.draftAssurance    = draftAssurance;
+  SECTIONS.draftExecSummary  = draftExecSummary;
+  SECTIONS.scoreBand         = scoreBand;
+  SECTIONS.tileValue         = tileValue;
+  // Every deck figure is derived from a tab's own data; nothing is attested by
+  // hand, so the Reports tab has no manual-entry form to render.
+  SECTIONS.MANUAL_METRICS    = [];
 
-  ORDERED.draftObservations = draftObservations;
-  ORDERED.draftAssurance    = draftAssurance;
-  ORDERED.scoreBand         = scoreBand;
-  ORDERED.tileValue         = tileValue;
-  // Every deck figure is now derived from a tab's own data; nothing is attested
-  // by hand, so the Reports tab has no manual-entry form to render.
-  ORDERED.MANUAL_METRICS    = [];
-
-  return ORDERED;
+  return SECTIONS;
 })();
