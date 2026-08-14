@@ -44,9 +44,24 @@ const ThirdPartyRiskTab = (() => {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  /** YYYY-MM-DD. This feeds <input type="date">, so the shape is fixed. */
   function fmt(dateStr) {
     if (!dateStr) return '—';
     return String(dateStr).slice(0, 10);
+  }
+
+  /**
+   * '1 Nov 2026' for display. Separate from fmt() on purpose — date inputs
+   * only accept ISO, and a column of ISO dates is slower to read than one a
+   * person would write. Parsed as UTC so a DATE never shifts a day.
+   */
+  function fmtDisplay(dateStr) {
+    if (!dateStr) return '—';
+    const key = String(dateStr).slice(0, 10);
+    const d = new Date(key + 'T00:00:00Z');
+    if (isNaN(d.getTime())) return key;
+    return d.toLocaleDateString('en-GB',
+      { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
   }
 
   function canWrite() {
@@ -109,45 +124,63 @@ const ThirdPartyRiskTab = (() => {
 
   // ── Stats ──────────────────────────────────────────────────────────────────
 
+  /**
+   * Build one tile.
+   *
+   * Colour is reserved for a state somebody has to act on. Inventory counts
+   * carry no accent no matter how large they are — "12 vendors" and "4 of them
+   * critical" are facts about the estate, not failures, and colouring them red
+   * spends the reader's attention on something they cannot do anything about.
+   * A tile that has nothing to report reads the same as its neighbours rather
+   * than turning green to congratulate itself.
+   */
+  function statTile(label, value, accent) {
+    return `
+      <div class="stat-card${accent ? ' accent-' + accent : ''}">
+        <div class="stat-label">${label}</div>
+        <div class="stat-value">${value}</div>
+      </div>`;
+  }
+
   async function renderStats() {
     const el = document.getElementById('tpr-stats');
     if (!el) return;
     try {
       const res  = await fetch('api/vendors/stats' + tenantParam('?'), { credentials: 'same-origin' });
-      const data = await res.json();
-      el.innerHTML = `
-        <div class="stat-card accent-blue">
-          <div class="stat-label">Vendors Under Management</div>
-          <div class="stat-value">${data.total}</div>
-        </div>
-        <div class="stat-card accent-red">
-          <div class="stat-label">Critical &amp; High Tier</div>
-          <div class="stat-value">${data.highTier}</div>
-        </div>
-        <div class="stat-card ${data.reviewsOverdue ? 'accent-red' : 'accent-green'}">
-          <div class="stat-label">Reviews Overdue</div>
-          <div class="stat-value">${data.reviewsOverdue}</div>
-        </div>
-        <div class="stat-card ${data.noEvidence ? 'accent-amber' : 'accent-green'}">
-          <div class="stat-label">No Assurance Evidence</div>
-          <div class="stat-value">${data.noEvidence}</div>
-        </div>
-        <div class="stat-card ${data.expiringSoon ? 'accent-amber' : ''}">
-          <div class="stat-label">Evidence Expiring (90d)</div>
-          <div class="stat-value">${data.expiringSoon}</div>
-        </div>`;
+      if (!res.ok) throw new Error('stats ' + res.status);
+      const d = await res.json();
+      el.innerHTML =
+        statTile('Vendors Under Management', d.total,          null) +
+        statTile('Critical &amp; High Tier',     d.highTier,       null) +
+        statTile('Reviews Overdue',          d.reviewsOverdue, d.reviewsOverdue ? 'red'   : null) +
+        statTile('No Assurance Evidence',    d.noEvidence,     d.noEvidence     ? 'amber' : null) +
+        statTile('Evidence Expiring (90d)',  d.expiringSoon,   d.expiringSoon   ? 'amber' : null);
     } catch (_) {
-      el.innerHTML = '<p class="empty-state">Failed to load stats.</p>';
+      // Not a grid item: a failure message stretched into a stat-card slot
+      // reads as a broken tile rather than as an error.
+      el.innerHTML = '<p class="tpr-load-error">Could not load vendor statistics.</p>';
     }
   }
 
   // ── Table rendering ────────────────────────────────────────────────────────
 
+  /**
+   * Rows for the current filter.
+   *
+   * "All" means all vendors under management, which excludes terminated
+   * relationships — the same population /api/vendors/stats counts. They used to
+   * be listed here while being excluded from the tiles, so the header read
+   * "4 vendors under management" above a table of five. Terminated vendors are
+   * still reachable, through their own filter.
+   */
+  function underManagement(v) { return v.status !== 'terminated'; }
+
   function visibleVendors() {
-    if (_filter === 'all')         return _vendors;
-    if (_filter === 'overdue')     return _vendors.filter(isReviewOverdue);
-    if (_filter === 'no-evidence') return _vendors.filter(v => !hasEvidence(v) && v.status !== 'terminated');
-    return _vendors.filter(v => v.criticality === _filter);
+    if (_filter === 'all')         return _vendors.filter(underManagement);
+    if (_filter === 'terminated')  return _vendors.filter(v => v.status === 'terminated');
+    if (_filter === 'overdue')     return _vendors.filter(v => underManagement(v) && isReviewOverdue(v));
+    if (_filter === 'no-evidence') return _vendors.filter(v => underManagement(v) && !hasEvidence(v));
+    return _vendors.filter(v => underManagement(v) && v.criticality === _filter);
   }
 
   function emptyState() {
@@ -166,6 +199,27 @@ const ThirdPartyRiskTab = (() => {
     return '<p class="empty-state">No vendors match this filter.</p>';
   }
 
+  /**
+   * The secondary line under a vendor's name: what they do, who owns the
+   * relationship, and — only when it is not the ordinary case — their status.
+   * Keeping status silent for active vendors means the eye goes to the three
+   * that are offboarding rather than reading "Active" forty times.
+   */
+  function vendorSubLine(v) {
+    const parts = [];
+    if (v.service) parts.push(esc(truncate(v.service, 44)));
+    if (v.owner)   parts.push(esc(v.owner));
+    if (v.status && v.status !== 'active') {
+      parts.push('<span class="tpr-status">' + (STATUS_LABEL[v.status] || esc(v.status)) + '</span>');
+    }
+    return parts.length ? '<div class="tpr-sub">' + parts.join(' &middot; ') + '</div>' : '';
+  }
+
+  function truncate(s, n) {
+    const str = String(s == null ? '' : s);
+    return str.length > n ? str.slice(0, n).replace(/\s+\S*$/, '') + '…' : str;
+  }
+
   function render() {
     const el = document.getElementById('tpr-list');
     if (!el) return;
@@ -178,21 +232,24 @@ const ThirdPartyRiskTab = (() => {
       return;
     }
 
+    // Six columns, not ten. Owner, data classification, status and the
+    // inherent score moved into the row's secondary line or the detail modal:
+    // ten columns forced a horizontal scrollbar on a laptop, which costs more
+    // than the columns were worth. Inherent and residual in particular sat
+    // adjacent on the same 1-25 scale, one a bare number and one a badge —
+    // residual is the number anyone acts on, and the modal explains how it was
+    // derived from the inherent one.
     el.innerHTML = `
       <div class="table-wrapper">
-        <table class="data-table">
+        <table class="data-table tpr-table">
           <thead>
             <tr>
-              <th>Vendor</th>
-              <th>Service</th>
-              <th>Owner</th>
-              <th>Tier</th>
-              <th>Data</th>
-              <th>Assurance</th>
-              <th>Inherent</th>
-              <th>Residual</th>
-              <th>Next Review</th>
-              <th>Status</th>
+              <th scope="col">Vendor</th>
+              <th scope="col">Tier</th>
+              <th scope="col">Data access</th>
+              <th scope="col">Assurance</th>
+              <th scope="col" class="num">Risk</th>
+              <th scope="col">Next review</th>
             </tr>
           </thead>
           <tbody>
@@ -200,29 +257,39 @@ const ThirdPartyRiskTab = (() => {
               const overdue  = isReviewOverdue(v);
               const evidence = hasEvidence(v);
               const expired  = assuranceExpired(v);
+              const label    = CRITICALITY_LABEL[v.criticality] || esc(v.criticality);
               return `
-              <tr class="tpr-row" data-id="${v.id}" style="cursor:pointer">
-                <td><strong>${esc(v.name)}</strong></td>
-                <td>${esc(v.service) || '—'}</td>
-                <td>${esc(v.owner) || '—'}</td>
-                <td><span class="badge ${tierBadge(v.criticality)}">${CRITICALITY_LABEL[v.criticality] || esc(v.criticality)}</span></td>
-                <td>${DATA_LABEL[v.data_access] || esc(v.data_access)}${v.network_access ? ' <span class="badge badge-muted">Network</span>' : ''}</td>
+              <tr class="tpr-row" data-id="${v.id}">
                 <td>
-                  <span class="badge ${evidence ? 'badge-green' : 'badge-amber'}">${ASSURANCE_LABEL[v.assurance] || esc(v.assurance)}</span>
-                  ${expired ? '<span class="badge badge-red">Expired</span>' : ''}
+                  <button type="button" class="tpr-name-btn" data-id="${v.id}">${esc(v.name)}</button>
+                  ${vendorSubLine(v)}
                 </td>
-                <td>${v.inherent_score}</td>
-                <td><span class="badge ${scoreBadge(v.residual_score)}">${v.residual_score}</span></td>
-                <td>${overdue ? `<span class="badge badge-red">${fmt(v.next_review_date)}</span>` : fmt(v.next_review_date)}</td>
-                <td>${STATUS_LABEL[v.status] || esc(v.status)}</td>
+                <td><span class="badge ${tierBadge(v.criticality)}">${label}</span></td>
+                <td>
+                  ${DATA_LABEL[v.data_access] || esc(v.data_access)}
+                  ${v.network_access ? '<span class="badge badge-muted">Network</span>' : ''}
+                </td>
+                <td>
+                  <span class="badge ${evidence ? 'badge-green' : 'badge-muted'}">${ASSURANCE_LABEL[v.assurance] || esc(v.assurance)}</span>
+                  ${expired ? '<span class="badge badge-amber">Expired</span>' : ''}
+                </td>
+                <td class="num"><span class="badge ${scoreBadge(v.residual_score)}">${v.residual_score}</span></td>
+                <td class="num">
+                  ${fmtDisplay(v.next_review_date)}
+                  ${overdue ? '<span class="badge badge-red">Overdue</span>' : ''}
+                </td>
               </tr>`;
             }).join('')}
           </tbody>
         </table>
       </div>`;
 
-    el.querySelectorAll('.tpr-row').forEach(row => {
-      row.addEventListener('click', () => openModal(parseInt(row.dataset.id, 10)));
+    // A real <button>, so the row is reachable by Tab, activates on Enter and
+    // Space, is announced as a control, and picks up the shared focus ring.
+    // It used to be a click handler on a <tr> with cursor:pointer and no
+    // tabindex — opening a vendor was mouse-only.
+    el.querySelectorAll('.tpr-name-btn').forEach(btn => {
+      btn.addEventListener('click', () => openModal(parseInt(btn.dataset.id, 10)));
     });
   }
 
@@ -259,7 +326,12 @@ const ThirdPartyRiskTab = (() => {
     const factor  = current ? (ASSURANCE_FACTOR[assurance] != null ? ASSURANCE_FACTOR[assurance] : 1.0) : 1.0;
     const residual = Math.max(1, Math.round(inherent * factor));
 
-    document.getElementById('tpr-score-display').textContent = residual;
+    // Same thresholds as scoreBadge(), so the readout and the table badge for
+    // the same vendor can never disagree about what colour the number is.
+    const out = document.getElementById('tpr-score-display');
+    out.textContent = residual;
+    out.className = 'tpr-score ' +
+      (residual >= 15 ? 'is-high' : residual >= 8 ? 'is-medium' : 'is-low');
 
     let explain = 'Inherent ' + inherent + ' (criticality ' + impact + ' × exposure ' + exposure + ')';
     if (residual < inherent) {
@@ -309,14 +381,42 @@ const ThirdPartyRiskTab = (() => {
       el.disabled = readOnly;
     });
     document.getElementById('tpr-modal-save').hidden = readOnly;
+    setModalMessage('');
 
     modalEl.hidden = false;
     document.body.classList.add('modal-open');
+
+    // Dialog semantics, Esc, backdrop dismissal, focus trap and focus restore.
+    // Visibility stays this module's business; the helper only layers on the
+    // accessible behaviour and calls back here to hide.
+    if (window.ModalA11y) {
+      window.ModalA11y.open(modalEl, {
+        labelledBy: 'tpr-modal-title',
+        onClose: hideModal,
+      });
+    }
   }
 
-  function closeModal() {
+  /** Message line in the modal footer, replacing alert(). */
+  function setModalMessage(text) {
+    const el = document.getElementById('tpr-modal-msg');
+    if (el) el.textContent = text || '';
+  }
+
+  /** Hides the modal. Called by ModalA11y once it has released the trap. */
+  function hideModal() {
     document.getElementById('vendor-modal').hidden = true;
     document.body.classList.remove('modal-open');
+  }
+
+  /**
+   * Close route for the tab's own controls (Cancel, the header ×, a successful
+   * save). Routes through ModalA11y so focus is restored to whatever opened
+   * the dialog; falls back to hiding directly if the helper is absent.
+   */
+  function closeModal() {
+    if (window.ModalA11y) window.ModalA11y.close(document.getElementById('vendor-modal'));
+    else hideModal();
   }
 
   async function saveVendor() {
@@ -337,21 +437,37 @@ const ThirdPartyRiskTab = (() => {
       status:            val('tpr-status'),
       notes:             val('tpr-notes').trim(),
     };
-    if (!body.name) { alert('Vendor name is required.'); return; }
+    // Inline, next to the button that failed — an alert() steals focus, cannot
+    // be styled, and drops the user back with no idea which field was wrong.
+    if (!body.name) {
+      setModalMessage('Vendor name is required.');
+      document.getElementById('tpr-name').focus();
+      return;
+    }
 
     const isSA = window.currentUser && window.currentUser.role === 'superadmin';
     if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
 
-    const res = await fetch(id ? `api/vendors/${id}` : 'api/vendors', {
-      method: id ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      alert('Could not save the vendor: ' + (err.error || res.status));
+    const saveBtn = document.getElementById('tpr-modal-save');
+    saveBtn.disabled = true;
+    setModalMessage('');
+    try {
+      const res = await fetch(id ? `api/vendors/${id}` : 'api/vendors', {
+        method: id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setModalMessage(err.error || ('Could not save the vendor (' + res.status + ').'));
+        return;
+      }
+    } catch (_) {
+      setModalMessage('Could not reach the server. Check your connection and try again.');
       return;
+    } finally {
+      saveBtn.disabled = false;
     }
 
     closeModal();
@@ -363,8 +479,22 @@ const ThirdPartyRiskTab = (() => {
   async function deleteVendor() {
     const id = val('tpr-id');
     if (!id) return;
+    // Kept as confirm(): this is destructive and irreversible, and the native
+    // dialog's blocking behaviour is the right shape for that. Only the
+    // non-blocking error paths moved inline.
     if (!confirm('Delete this vendor? Any risks linked to it stay on the register with the link cleared.')) return;
-    await fetch(`api/vendors/${id}` + tenantParam('?'), { method: 'DELETE', credentials: 'same-origin' });
+    try {
+      const res = await fetch(`api/vendors/${id}` + tenantParam('?'),
+        { method: 'DELETE', credentials: 'same-origin' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setModalMessage(err.error || ('Could not delete the vendor (' + res.status + ').'));
+        return;
+      }
+    } catch (_) {
+      setModalMessage('Could not reach the server. Check your connection and try again.');
+      return;
+    }
     closeModal();
     await load();
     render();

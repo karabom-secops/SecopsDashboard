@@ -1,3 +1,10 @@
+/* MUST stay on line 1. CSS requires @import to precede every other rule except
+   @charset/@layer — this sat below :root for a long time, so browsers dropped
+   it and the whole app silently rendered in the Trebuchet MS fallback rather
+   than the brand faces. index.html, login.html, manager.html and upload.html
+   all link this file, so keeping the import here covers all four. */
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
+
 /* ── Custom properties ─────────────────────────────────────────────────────── */
 :root {
   /* ── Brand / logo palette ── */
@@ -17,7 +24,10 @@
 
   /* ── Text ── */
   --text:         #0B2A3E;
-  --muted:        #4A7A96;
+  /* Nudged two steps darker from #4A7A96, which cleared 4.5:1 on white (4.65)
+     but not on --surface2 (4.46) or --surface3 (4.27) — and secondary text is
+     precisely what sits on those tinted surfaces. Now 4.9-5.2:1 everywhere. */
+  --muted:        #45728C;
 
   /* ── Semantic ── */
   --red:          #E8394A;
@@ -37,11 +47,45 @@
   /* ── Shape ── */
   --radius:       14px;
   --radius-sm:    8px;
-  --shadow:       0 20px 40px rgba(0, 102, 204, .13);
-  --shadow-sm:    0 6px 16px rgba(0, 102, 204, .10);
-}
 
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
+  /* ── Elevation ──
+     One system, three steps. Everything here is the same blue-tinted hue so
+     height reads consistently; a component that invents its own shadow reads
+     as sitting at a different height for no reason. */
+  --shadow-sm:    0 6px 16px rgba(0, 102, 204, .10);
+  --shadow:       0 20px 40px rgba(0, 102, 204, .13);
+  --shadow-lg:    0 28px 64px rgba(0, 102, 204, .22);
+
+  /* ── Type scale ──
+     html is 15px, so 1rem = 15px. Steps are far enough apart to read as
+     deliberate; the file previously held ~21 ad-hoc sizes, several within
+     0.01rem of each other, which is why things looked almost-but-not-quite
+     aligned. New work should use these. */
+  --text-xs:      0.72rem;   /* 10.8px — badges, dense labels          */
+  --text-sm:      0.8rem;    /* 12px   — table headers, chips, hints   */
+  --text-base:    0.88rem;   /* 13.2px — body, inputs, table cells     */
+  --text-md:      1rem;      /* 15px   — modal titles                  */
+  --text-lg:      1.2rem;    /* 18px   — sub-headings                  */
+  --text-xl:      1.5rem;    /* 22.5px                                 */
+  --text-2xl:     1.8rem;    /* 27px   — page titles                   */
+
+  /* ── Spacing scale ── 4px-based against a 15px root. */
+  --space-1:      0.25rem;
+  --space-2:      0.5rem;
+  --space-3:      0.75rem;
+  --space-4:      1rem;
+  --space-5:      1.25rem;
+  --space-6:      1.5rem;
+  --space-8:      2rem;
+
+  /* ── Motion ── */
+  --dur-fast:     120ms;
+  --dur:          200ms;
+  --ease:         cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Focus ── one ring, everywhere something is interactive. */
+  --focus-ring:   0 0 0 3px rgba(0, 186, 223, .35);
+}
 
 /* ── Reset / base ──────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -62,6 +106,11 @@ body {
   background-size: auto, auto, auto, 40px 40px, 40px 40px, auto;
   color: var(--text);
   min-height: 100vh;
+  /* Previously unset, so every table, form and paragraph in the app ran at the
+     UA default. Headings and dense components override this below. */
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 a { color: var(--blue); }
@@ -281,14 +330,23 @@ a { color: var(--blue); }
   margin-bottom: 1rem;
 }
 
+/* Used two ways: as a <span> inside a .form-label ("(one per line)"), and as a
+   <p> beneath a field. The margin-left only makes sense for the first — as a
+   block it just indents the paragraph out of alignment with its input. */
 .form-hint {
   font-size: 0.75rem;
   font-weight: 400;
   text-transform: none;
   letter-spacing: 0;
+  line-height: 1.45;
   color: var(--muted);
-  opacity: 0.7;
   margin-left: 0.4rem;
+}
+
+p.form-hint {
+  display: block;
+  margin-left: 0;
+  margin-top: 0.35rem;
 }
 
 input[type="date"] {
@@ -521,18 +579,35 @@ input[type="file"] {
   border: 1.5px solid #C8E8F6;
   background: #F0F9FF;
   color: var(--muted);
-  font-size: 0.8rem;
+  font-family: var(--font);
+  font-size: var(--text-sm);
   font-weight: 600;
+  line-height: 1.4;
   cursor: pointer;
-  transition: all .2s ease;
+  transition: border-color var(--dur-fast) var(--ease),
+              background   var(--dur-fast) var(--ease),
+              color        var(--dur-fast) var(--ease);
   user-select: none;
 }
 
-.chip.active, .chip:hover {
-  border-color: var(--logo-cyan);
+/* Hover is a hint; selected is a state. These shared one rule, so while the
+   pointer was over any chip you could not tell which filter was applied.
+   Active is expressed through border weight, text weight and a ring rather
+   than a fill, because the vulns tab's .chip-st-*.active variants supply their
+   own background with !important — a solid fill here would land on the "All"
+   chip only and leave that filter row half-styled. */
+.chip:hover {
+  border-color: #9BD9EE;
+  background: #E4F5FD;
   color: var(--logo-blue);
-  background: rgba(0,186,223,.16);
-  box-shadow: 0 2px 8px rgba(0,186,223,.18);
+}
+
+.chip.active {
+  border-color: var(--logo-blue);
+  background: rgba(0, 186, 223, .16);
+  color: var(--logo-blue);
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px var(--logo-blue);
 }
 
 /* ── Priority list ─────────────────────────────────────────────────────────── */
@@ -1025,13 +1100,12 @@ input[type="file"] {
 
 /* Empty state card on vulns tab */
 /* ── Empty states ──────────────────────────────────────────────────────────── */
-.empty-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-  padding: 2rem;
-}
+/* .empty-state is defined once, further down (centred italic note). It used to
+   be declared here as well, as a 200px flex centring box — the later rule won,
+   so this one had no effect and only made the component impossible to reason
+   about from its first definition. Removed.
+   .empty-state-container consequently has to centre itself, since it can no
+   longer rely on a flex parent. */
 
 .empty-state-container {
   display: flex;
@@ -1040,6 +1114,11 @@ input[type="file"] {
   gap: 1.2rem;
   text-align: center;
   max-width: 420px;
+  /* Centres itself rather than depending on a flex parent that no longer
+     exists. Without this it renders left-aligned at 420px, with its text
+     centred inside — which reads as a layout bug. */
+  margin-inline: auto;
+  padding: var(--space-8, 2rem) var(--space-4, 1rem);
 }
 
 .empty-state-icon {
@@ -1476,17 +1555,30 @@ body.modal-open .tab-nav {
   border-bottom: 1px solid var(--border);
 }
 .modal-title { font-size: 1rem; font-weight: 700; margin: 0; letter-spacing: 0.01em; }
+/* .modal-close was never defined anywhere, yet nine modals use it — every one
+   of them rendered a raw native button in its header next to styled chrome.
+   Both names are now the same control; a 32px square keeps it a comfortable
+   pointer target rather than the 1.3rem glyph's own tiny box. */
+.modal-close,
 .modal-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
   background: none;
   border: none;
   font-size: 1.3rem;
+  font-family: inherit;
   cursor: pointer;
   color: var(--muted);
   line-height: 1;
-  padding: 0.25rem 0.5rem;
-  border-radius: 6px;
-  transition: background 0.15s;
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-fast) var(--ease),
+              color      var(--dur-fast) var(--ease);
 }
+.modal-close:hover,
 .modal-close-btn:hover { background: var(--surface2); color: var(--text); }
 
 .modal-body { padding: 1.1rem 1.25rem 0.75rem; display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; }
@@ -1584,17 +1676,13 @@ body.modal-open .tab-nav {
   background: var(--surface2);
   border-radius: 0 0 14px 14px;
 }
-.btn-secondary {
-  background: var(--card-bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  padding: 0.5rem 1.1rem;
-  border-radius: 7px;
-  font-size: 0.88rem;
-  cursor: pointer;
-  font-weight: 500;
-}
-.btn-secondary:hover { background: var(--border); }
+/* .btn-secondary was defined a second time here, re-declaring padding, radius
+   (7px, matching no token), font-size and weight. It won on source order and
+   fought .btn — so Cancel sat at a different height and weight than the Save
+   beside it in every modal footer, and `.btn-sm .btn-secondary` rendered at
+   full size because this padding overrode .btn-sm's. Removed; the definition
+   near .btn (~line 274) composes with .btn as intended. Every usage in the
+   app pairs the two classes, so nothing loses its styling. */
 
 /* Status pill as button */
 .status-pill.status-edit-btn {
@@ -2041,8 +2129,9 @@ body.login-page {
   vertical-align: middle;
   letter-spacing: 0.02em;
 }
-.badge-blue  { background: #dbeafe; color: #1d4ed8; }
-.badge-amber { background: #fef3c7; color: #92400e; }
+/* .badge-blue / .badge-amber were declared here and again further down; the
+   later pair won, so these never applied. Single definition now lives with the
+   rest of the badge variants. */
 
 /* ── Hamburger button ──────────────────────────────────────────────────────── */
 .hamburger-btn {
@@ -2227,7 +2316,7 @@ body.login-page {
   flex-shrink: 0;
   stroke: currentColor;
 }
-.badge-red   { background: #fee2e2; color: #991b1b; }
+/* .badge-red was declared here too; superseded further down. Removed. */
 /* ═══════════════════════════════════════════════════════════════════════════
    HEADER USER INFO (logout button, username, role badge)
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -2582,8 +2671,13 @@ body.login-page {
   .vuln-status-summary,
   .col-check, #vulnBulkBar { display: none !important; }
 
-  .tab-panel { display: block !important; }
-  section.tab-panel:not(#tab-vulns) { display: none !important; }
+  /* Deliberately does NOT force panel visibility. This used to read
+     `.tab-panel { display: block !important }` followed by hiding everything
+     except #tab-vulns, while secure-score.css ran the mirror image for its own
+     panel — and since it loads second, it won, so printing from ANY tab
+     printed the Secure Score page. Inactive panels already carry the `hidden`
+     attribute, and `[hidden] { display: none !important }` at the top of this
+     file handles them, so whichever tab is open is the one that prints. */
 
   .vuln-findings-wrap {
     max-height: none !important;
@@ -2851,11 +2945,18 @@ body.login-page {
   padding: 1.5rem 0;
 }
 
-.badge-blue   { background: rgba(6,182,212,.15);  color: #06b6d4; }
-.badge-green  { background: rgba(34,197,94,.15);  color: #16a34a; }
-.badge-amber  { background: rgba(245,158,11,.15); color: #d97706; }
-.badge-red    { background: rgba(239,68,68,.15);  color: #dc2626; }
-.badge-muted  { background: rgba(148,163,184,.15);color: #64748b; }
+/* The only definition of these variants — earlier duplicates were removed.
+   Text tones are darkened from the tint's own hue until each clears WCAG AA
+   (4.5:1) against its rendered background. The previous set failed badly:
+   .badge-blue was #06b6d4 on a 15% tint of itself, about 2.1:1, at 0.72rem
+   bold. Verified on white, on the table's zebra row and on its hover row;
+   worst case is now 4.9:1, and all five sit in a 4.9-6.7 band so no variant
+   shouts louder than another. */
+.badge-blue   { background: rgba(6,182,212,.15);  color: #155E75; }
+.badge-green  { background: rgba(34,197,94,.15);  color: #166534; }
+.badge-amber  { background: rgba(245,158,11,.15); color: #92400E; }
+.badge-red    { background: rgba(239,68,68,.15);  color: #B91C1C; }
+.badge-muted  { background: rgba(148,163,184,.15);color: #475569; }
 
 /* Risk Register kanban board */
 .rr-board {
@@ -3014,35 +3115,51 @@ body.login-page {
 }
 
 .form-input,
-.form-select {
-  width: 100%;
-  padding: 0.45rem 0.65rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface2);
-  color: var(--text);
-  font-size: 0.88rem;
-  box-sizing: border-box;
-}
-
+.form-select,
 .form-textarea {
   width: 100%;
-  padding: 0.45rem 0.65rem;
+  padding: 0.5rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface2);
   color: var(--text);
-  font-size: 0.88rem;
-  resize: vertical;
+  /* Explicit, and not optional. Form controls do not inherit the page font,
+     so without this they render in the UA default — and .form-textarea in
+     particular fell through to the bare `textarea` rule's Cascadia Code, so
+     every textarea in the app was monospace. */
+  font-family: var(--font);
+  font-size: var(--text-base);
+  line-height: 1.4;
   box-sizing: border-box;
+  transition: border-color var(--dur-fast) var(--ease),
+              box-shadow   var(--dur-fast) var(--ease);
 }
 
+.form-textarea { resize: vertical; min-height: 4.5rem; }
+
+/* --primary is not a token in this file, so the focus ring was falling back to
+   a generic #3b82f6 that appears nowhere else in the product. */
+.form-input:focus-visible,
+.form-select:focus-visible,
+.form-textarea:focus-visible,
 .form-input:focus,
 .form-select:focus,
 .form-textarea:focus {
   outline: none;
-  border-color: var(--primary, #3b82f6);
-  box-shadow: 0 0 0 2px rgba(59,130,246,.2);
+  border-color: var(--logo-cyan);
+  box-shadow: var(--focus-ring);
+}
+
+/* Read-only users get every control disabled; there was no styling for that
+   state, so they saw raw UA grey and no cue as to why nothing responded. */
+.form-input:disabled,
+.form-select:disabled,
+.form-textarea:disabled {
+  background: var(--surface3);
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 1;               /* override the UA's own dimming */
+  -webkit-text-fill-color: var(--muted);   /* Safari ignores color when disabled */
 }
 
 
@@ -3663,3 +3780,222 @@ body.login-page {
 .rpt-comments-acc > summary { cursor: pointer; font-weight: 600; color: var(--logo-blue); font-size: 0.9rem; padding: 0.35rem 0; list-style: revert; }
 .rpt-comments-acc > summary:focus-visible { outline: 2px solid var(--logo-cyan); outline-offset: 2px; }
 .rpt-comments-acc[open] > summary { margin-bottom: 0.3rem; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   INTERACTION FOUNDATIONS
+   Appended last so the focus rules win over the component definitions above
+   without needing !important. Everything here is cross-cutting: focus, motion
+   and the small typographic corrections that follow from body{line-height}.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Focus ────────────────────────────────────────────────────────────────────
+   The app had six :focus-visible rules, all on sidebar chrome. Buttons, chips,
+   close buttons, sortable headers and table row actions had none at all, so a
+   keyboard user navigating a tab fell back to the UA outline — which is close
+   to invisible against this blue palette. One treatment, applied once.
+   :focus-visible (not :focus) so a mouse click does not leave a ring behind. */
+.btn:focus-visible,
+.chip:focus-visible,
+.modal-close:focus-visible,
+.modal-close-btn:focus-visible,
+.data-table th[data-sort]:focus-visible,
+.data-table th.sortable-col:focus-visible,
+.tpr-name-btn:focus-visible,
+.rr-card:focus-visible,
+summary:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 2px solid var(--logo-cyan);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Motion ───────────────────────────────────────────────────────────────────
+   `transition: all` makes the compositor watch every animatable property,
+   including ones that change for unrelated reasons. Name what actually moves. */
+.btn {
+  transition: transform  var(--dur-fast) var(--ease),
+              box-shadow var(--dur)      var(--ease),
+              background var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+.stat-card {
+  transition: transform  var(--dur) var(--ease),
+              box-shadow var(--dur) var(--ease);
+}
+
+/* The existing reduced-motion block covers only the sidebar. These are the
+   parts that actually move on a dashboard: the infinite float on an empty-
+   state icon, the entrance animation applied to every panel AND every card
+   inside it (so a tab switch animates twice), and the hover lifts. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .empty-state-icon { animation: none !important; }
+  .btn:hover,
+  .stat-card:hover { transform: none !important; }
+}
+
+/* ── Typographic corrections ─────────────────────────────────────────────────
+   body now sets line-height: 1.5, which is right for prose and too loose for
+   headings and dense tabular data. Pull those back deliberately rather than
+   leaving the whole app at the UA default to avoid the problem. */
+h1, h2, h3, h4,
+.section-title,
+.modal-title,
+.stat-value,
+.empty-state-title { line-height: 1.25; }
+
+.data-table       { line-height: 1.45; }
+.badge            { line-height: 1.5; }
+
+/* border-collapse: collapse paints cell backgrounds and borders over the
+   wrapper's rounded corners, so the table reads as a square block inside a
+   rounded container. Clipping the wrapper restores the radius. */
+.table-wrapper { overflow: hidden; overflow-x: auto; }
+
+/* The zebra stripe was rgba(0,186,223,.02) — around a quarter of one percent
+   of luminance, i.e. invisible. Either it helps the eye track a row or it
+   should not be there; this makes it do its job while staying quiet. */
+.data-table tbody tr:nth-child(odd) { background: rgba(0, 186, 223, .045); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THIRD-PARTY RISK TAB
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Numeric and date columns align right so digits stack and the eye can compare
+   down the column. Generic enough for any .data-table to use. */
+.data-table th.num,
+.data-table td.num { text-align: right; white-space: nowrap; }
+
+/* The vendor name is the row's control. Styled as text rather than as a button
+   so the table stays a table — the affordance is the hover underline and the
+   pointer, and the real <button> underneath gives keyboard and screen-reader
+   users the same access the mouse always had. */
+.tpr-name-btn {
+  display: inline-block;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 700;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease);
+}
+.tpr-name-btn:hover { color: var(--logo-blue); text-decoration: underline; }
+
+/* Secondary line: present but recessive. Sized and coloured to sit clearly
+   below the name in the hierarchy without becoming unreadable. */
+.tpr-sub {
+  margin-top: 0.15rem;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--muted);
+}
+.tpr-status { font-weight: 700; color: #92400E; }
+
+.tpr-table td { vertical-align: top; }
+.tpr-table td.num,
+.tpr-table td:not(:first-child) { vertical-align: middle; }
+
+/* Two badges can land in one cell (assurance + its expiry). Give them room
+   rather than letting them collide. */
+.tpr-table td .badge + .badge { margin-left: 0.3rem; }
+
+.tpr-load-error {
+  color: var(--muted);
+  font-style: italic;
+  padding: 1rem 0;
+}
+
+/* The live score readout in the modal. It was permanently grey while the same
+   number wore a colour in the table two inches away — so the one place the
+   user is actively changing the score gave the least feedback about it. */
+.tpr-score {
+  display: inline-block;
+  min-width: 2.5rem;
+  text-align: center;
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-md);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.tpr-score.is-low    { background: rgba(34,197,94,.15);  color: #166534; }
+.tpr-score.is-medium { background: rgba(245,158,11,.15); color: #92400E; }
+.tpr-score.is-high   { background: rgba(239,68,68,.15);  color: #B91C1C; }
+
+/* Paired date fields — four stacked full-width date pickers was a lot of
+   vertical travel for four related values. */
+.tpr-field-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+@media (max-width: 480px) {
+  .tpr-field-pair { grid-template-columns: 1fr; }
+}
+
+/* Inline modal errors, replacing alert(). */
+.tpr-modal-msg {
+  flex: 1 1 auto;
+  align-self: center;
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: #B91C1C;
+  text-align: left;
+}
+.tpr-modal-msg:empty { display: none; }
+
+/* A checkbox is a sentence, not a field label. This markup previously reused
+   .form-label, so the wording inherited uppercase, letter-spacing and the
+   label colour — it read as a heading with a stray checkbox in front of it. */
+.tpr-check {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.tpr-check input[type="checkbox"] {
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--logo-blue);
+  cursor: pointer;
+}
+.tpr-check input:disabled,
+.tpr-check:has(input:disabled) { cursor: not-allowed; color: var(--muted); }
+
+/* Five tiles. The shared .stat-grid uses auto-fit/minmax(180px), which at
+   common desktop widths fits four and orphans the fifth on its own row — a
+   layout that reads as broken rather than as five equal metrics. Explicit
+   column counts, stepping down cleanly instead. */
+.tpr-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
+@media (max-width: 1199px) {
+  .tpr-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .tpr-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .tpr-stats { grid-template-columns: 1fr; }
+}
+
+/* Labels wrap to two lines at narrow tile widths while others stay on one,
+   which leaves the numbers sitting at different heights across the row.
+   Reserving the second line keeps the value baselines aligned. */
+.tpr-stats .stat-label { min-height: 2.2em; }

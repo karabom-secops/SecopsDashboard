@@ -1291,7 +1291,7 @@
       <button class="btn btn-primary" id="tpr-new-btn">+ New Vendor</button>
     </div>
 
-    <div id="tpr-stats" class="stat-grid" style="margin-bottom:1.5rem"></div>
+    <div id="tpr-stats" class="stat-grid tpr-stats"></div>
 
     <div class="filter-chips" id="tpr-filters">
       <button class="chip active" type="button" data-filter="all">All</button>
@@ -1301,6 +1301,7 @@
       <button class="chip" type="button" data-filter="low">Low</button>
       <button class="chip" type="button" data-filter="overdue">Review overdue</button>
       <button class="chip" type="button" data-filter="no-evidence">No assurance evidence</button>
+      <button class="chip" type="button" data-filter="terminated">Terminated</button>
     </div>
 
     <div id="tpr-list"></div>
@@ -1346,8 +1347,9 @@
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label" for="tpr-network-access">
-              <input type="checkbox" id="tpr-network-access"> Has network or system access
+            <label class="tpr-check" for="tpr-network-access">
+              <input type="checkbox" id="tpr-network-access">
+              <span>Has network or system access</span>
             </label>
             <p class="form-hint">Connects to our environment, or is integrated with a system we run.</p>
           </div>
@@ -1367,8 +1369,8 @@
             <p class="form-hint">Evidence past this date earns no risk reduction.</p>
           </div>
           <div class="form-group">
-            <label class="form-label">Risk Score</label>
-            <div id="tpr-score-display" class="rr-score-display">3</div>
+            <label class="form-label" for="tpr-score-display">Risk Score</label>
+            <div id="tpr-score-display" class="tpr-score is-low" role="status" aria-live="polite">3</div>
             <p class="form-hint" id="tpr-score-explain"></p>
           </div>
           <div class="modal-divider"></div>
@@ -1382,21 +1384,25 @@
               <option value="terminated">Terminated</option>
             </select>
           </div>
-          <div class="form-group">
-            <label class="form-label" for="tpr-contract-start">Contract Start</label>
-            <input class="form-input" id="tpr-contract-start" type="date">
+          <div class="tpr-field-pair">
+            <div class="form-group">
+              <label class="form-label" for="tpr-contract-start">Contract Start</label>
+              <input class="form-input" id="tpr-contract-start" type="date">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="tpr-contract-end">Contract End</label>
+              <input class="form-input" id="tpr-contract-end" type="date">
+            </div>
           </div>
-          <div class="form-group">
-            <label class="form-label" for="tpr-contract-end">Contract End</label>
-            <input class="form-input" id="tpr-contract-end" type="date">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="tpr-last-review">Last Review</label>
-            <input class="form-input" id="tpr-last-review" type="date">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="tpr-next-review">Next Review Due</label>
-            <input class="form-input" id="tpr-next-review" type="date">
+          <div class="tpr-field-pair">
+            <div class="form-group">
+              <label class="form-label" for="tpr-last-review">Last Review</label>
+              <input class="form-input" id="tpr-last-review" type="date">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="tpr-next-review">Next Review Due</label>
+              <input class="form-input" id="tpr-next-review" type="date">
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label" for="tpr-notes">Notes</label>
@@ -1404,6 +1410,7 @@
           </div>
         </form>
         <div class="modal-footer">
+          <p class="tpr-modal-msg" id="tpr-modal-msg" role="alert"></p>
           <button class="btn btn-danger" id="tpr-modal-delete" hidden>Delete</button>
           <button class="btn btn-secondary" id="tpr-modal-close-2">Cancel</button>
           <button class="btn btn-primary" id="tpr-modal-save">Save</button>
@@ -2293,6 +2300,7 @@
   <script src="js/tab-redteam.js"></script>
   <script src="js/ir-playbooks-data.js"></script>
   <script src="js/tab-incident-response.js"></script>
+  <script src="js/modal-a11y.js"></script>
   <script src="js/tab-risk-register.js"></script>
   <script src="js/tab-third-party-risk.js"></script>
   <script src="js/tab-remediation-tracker.js"></script>

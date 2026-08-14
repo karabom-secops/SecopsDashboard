@@ -418,21 +418,43 @@
   line-height: 1.5;
 }
 
-/* Section headers */
+/* Section headers
+   A flex row: the title block takes the space, actions sit at the trailing
+   edge. This used to be margin-bottom alone, so any button placed inside a
+   .section-header dropped onto its own line below the subtitle, left-aligned,
+   regardless of markup order. Direct children only, so a tab that nests its
+   own layout inside the header is unaffected. */
 .section-header {
-  margin-bottom: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  margin-bottom: var(--space-8, 2rem);
 }
+
+/* Title and actions share the first row; the subtitle is forced onto a full
+   width second row by its 100% basis. `order` does the work rather than a
+   wrapper element, so this holds for all the shapes already in the markup —
+   title alone, title + subtitle, title + button(s), and title + subtitle +
+   .rpt-actions — without touching a single header's HTML. Two buttons simply
+   sit side by side at the trailing edge. */
+.section-header > *                 { order: 2; }             /* actions      */
+.section-header > .section-title    { flex: 1 1 auto; order: 1; margin-bottom: 0; }
+.section-header > .section-subtitle { flex: 1 1 100%; order: 3; }
 
 .section-title {
   margin: 0 0 0.5rem 0;
-  font-size: 1.8rem;
+  font-size: var(--text-2xl, 1.8rem);
   font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
   color: var(--text);
 }
 
 .section-subtitle {
   margin: 0;
   font-size: 0.95rem;
+  line-height: 1.45;
   color: var(--muted);
   font-weight: 400;
 }
@@ -494,9 +516,10 @@
   /* Reset dashboard margin (sidebar is gone) */
   #dashboard { margin-left: 0 !important; }
 
-  /* Hide all tab panels except secure-score */
-  .tab-panel { display: none !important; }
-  #tab-secure-score { display: block !important; }
+  /* No panel-visibility forcing here — see the matching note in styles.css.
+     This block used to hide every .tab-panel and re-show #tab-secure-score,
+     and because this file loads second that made every tab print the Secure
+     Score page. The `hidden` attribute on inactive panels is enough. */
 
   .secure-score-wrapper { padding: 0; gap: 1rem; }
 
