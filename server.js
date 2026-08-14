@@ -25,6 +25,7 @@ const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } 
 const {
   calculateGrcScore, calculateFrameworkScores, calculateSectionScores,
 } = require('./lib/grc-score');
+const { scoreVendor } = require('./lib/vendor-score');
 const {
   calculateSecureScore, calculateVulnScore, calculateAwarenessScore,
   calculateMdrScore, generateRecommendations,
@@ -3908,6 +3909,27 @@ app.get('/api/risks', requireAuth, async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
+/**
+ * Resolve an optional risks.vendor_id from a request body.
+ *
+ * The foreign key only proves the vendor exists, not that it belongs to this
+ * tenant, so the ownership check has to happen here — otherwise one tenant
+ * could attribute a risk to another tenant's vendor and the Third-Party tab
+ * would render a name it should never see.
+ *
+ * Returns { vendorId } (possibly null) or { error }.
+ */
+async function resolveRiskVendorId(raw, tenantId) {
+  if (raw === undefined || raw === null || raw === '') return { vendorId: null };
+  const id = parseInt(raw, 10);
+  if (isNaN(id) || id < 1) return { error: 'invalid vendor_id.' };
+  const owned = await pool.query(
+    'SELECT id FROM vendors WHERE id=$1 AND tenant_id=$2', [id, tenantId]
+  );
+  if (owned.rows.length === 0) return { error: 'vendor_id not found for this client.' };
+  return { vendorId: id };
+}
+
 /** POST /api/risks */
 app.post('/api/risks', async (req, res) => {
   try {
@@ -3925,10 +3947,13 @@ app.post('/api/risks', async (req, res) => {
     if (category !== undefined && !RISK_CATEGORIES.includes(category)) return res.status(400).json({ error: 'invalid category.' });
     if (stage !== undefined && !RISK_STAGES.includes(stage)) return res.status(400).json({ error: 'invalid stage.' });
 
+    const vend = await resolveRiskVendorId(req.body.vendor_id, tenantId);
+    if (vend.error) return res.status(400).json({ error: vend.error });
+
     const result = await pool.query(
-      `INSERT INTO risks (tenant_id, title, description, category, likelihood, impact, risk_score, owner, mitigation_plan, stage, start_date, due_date, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-      [tenantId, title, description || '', category || 'operational', lk, im, lk * im, owner || '', mitigation_plan || '', stage || 'identified', start_date, due_date || null, req.session.userId]
+      `INSERT INTO risks (tenant_id, title, description, category, likelihood, impact, risk_score, owner, mitigation_plan, stage, start_date, due_date, created_by, vendor_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [tenantId, title, description || '', category || 'operational', lk, im, lk * im, owner || '', mitigation_plan || '', stage || 'identified', start_date, due_date || null, req.session.userId, vend.vendorId]
     );
     res.json({ risk: result.rows[0] });
   } catch (err) { return serverError(res, err); }
@@ -3951,15 +3976,18 @@ app.put('/api/risks/:id', async (req, res) => {
     if (category !== undefined && !RISK_CATEGORIES.includes(category)) return res.status(400).json({ error: 'invalid category.' });
     if (stage !== undefined && !RISK_STAGES.includes(stage)) return res.status(400).json({ error: 'invalid stage.' });
 
+    const vend = await resolveRiskVendorId(req.body.vendor_id, tenantId);
+    if (vend.error) return res.status(400).json({ error: vend.error });
+
     const result = await pool.query(
       `UPDATE risks
        SET title=$1, description=$2, category=$3, likelihood=$4, impact=$5, risk_score=$6, owner=$7,
-           mitigation_plan=$8, stage=$9, start_date=$10, due_date=$11, updated_at=NOW(),
+           mitigation_plan=$8, stage=$9, start_date=$10, due_date=$11, vendor_id=$12, updated_at=NOW(),
            closed_at = CASE WHEN $9::varchar = 'closed' AND closed_at IS NULL THEN NOW()
                             WHEN $9::varchar != 'closed' THEN NULL
                             ELSE closed_at END
-       WHERE id=$12 AND tenant_id=$13 RETURNING *`,
-      [title, description || '', category || 'operational', lk, im, lk * im, owner || '', mitigation_plan || '', stage || 'identified', start_date, due_date || null, req.params.id, tenantId]
+       WHERE id=$13 AND tenant_id=$14 RETURNING *`,
+      [title, description || '', category || 'operational', lk, im, lk * im, owner || '', mitigation_plan || '', stage || 'identified', start_date, due_date || null, vend.vendorId, req.params.id, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Risk not found.' });
     res.json({ risk: result.rows[0] });
@@ -4000,6 +4028,194 @@ app.delete('/api/risks/:id', async (req, res) => {
       [req.params.id, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Risk not found.' });
+    res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
+// ── Third-Party Risk (vendor inventory) routes ────────────────────────────
+
+function resolveVendorTenant(req, source) {
+  if (req.session.role === 'superadmin') {
+    const raw = source === 'body' ? req.body.tenantId : req.query.tenantId;
+    const tid = parseInt(raw, 10);
+    if (isNaN(tid) || tid < 1) {
+      return { error: { status: 400, message: 'superadmin must provide a valid tenantId.' } };
+    }
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+// Mirror the CHECK constraints in db/migrate-third-party-risk.sql. Validating
+// here turns a 500 from Postgres into a 400 that names the bad field.
+const VENDOR_CRITICALITY = ['critical', 'high', 'medium', 'low'];
+const VENDOR_DATA_ACCESS = ['none', 'internal', 'confidential', 'pii', 'regulated'];
+const VENDOR_ASSURANCE   = ['none', 'questionnaire', 'soc2', 'iso27001', 'both'];
+const VENDOR_STATUS      = ['onboarding', 'active', 'under_review', 'offboarding', 'terminated'];
+
+// Assurance values that count as evidence held. 'questionnaire' is a
+// self-attestation by the vendor, not independent evidence, so it is not one.
+const VENDOR_EVIDENCE = ['soc2', 'iso27001', 'both'];
+
+/**
+ * Validate and normalise a vendor payload, then derive its scores.
+ * Returns { error } or { fields } — the caller never reads req.body directly,
+ * so a client-sent inherent_score/residual_score simply cannot reach the table.
+ */
+function prepareVendor(body) {
+  const name = String(body.name || '').trim();
+  if (!name) return { error: 'name is required.' };
+
+  const criticality = body.criticality || 'medium';
+  const dataAccess  = body.data_access || 'none';
+  const assurance   = body.assurance   || 'none';
+  const status      = body.status      || 'active';
+
+  if (!VENDOR_CRITICALITY.includes(criticality)) return { error: 'invalid criticality.' };
+  if (!VENDOR_DATA_ACCESS.includes(dataAccess))  return { error: 'invalid data_access.' };
+  if (!VENDOR_ASSURANCE.includes(assurance))     return { error: 'invalid assurance.' };
+  if (!VENDOR_STATUS.includes(status))           return { error: 'invalid status.' };
+
+  const fields = {
+    name,
+    service:           String(body.service || '').trim(),
+    owner:             String(body.owner   || '').trim(),
+    criticality,
+    data_access:       dataAccess,
+    network_access:    body.network_access === true || body.network_access === 'true',
+    assurance,
+    assurance_expires: body.assurance_expires || null,
+    contract_start:    body.contract_start    || null,
+    contract_end:      body.contract_end      || null,
+    last_review_date:  body.last_review_date  || null,
+    next_review_date:  body.next_review_date  || null,
+    status,
+    notes:             String(body.notes || '').trim(),
+  };
+
+  // Derived server-side on every write, exactly as POST /api/risks computes
+  // risk_score rather than trusting the body.
+  const scored = scoreVendor(fields);
+  fields.inherent_score = scored.inherent;
+  fields.residual_score = scored.residual;
+
+  return { fields };
+}
+
+/** GET /api/vendors/stats */
+app.get('/api/vendors/stats', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveVendorTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    // 'terminated' relationships are history, not inventory — every tile
+    // except the total counts only vendors still engaged.
+    const live = `status != 'terminated'`;
+
+    const [totalRes, tierRes, overdueRes, noEvidenceRes, expiringRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*) FROM vendors WHERE tenant_id=$1 AND ${live}`, [tenantId]),
+      pool.query(`SELECT COUNT(*) FROM vendors WHERE tenant_id=$1 AND ${live}
+                    AND criticality IN ('critical','high')`, [tenantId]),
+      pool.query(`SELECT COUNT(*) FROM vendors WHERE tenant_id=$1 AND ${live}
+                    AND next_review_date IS NOT NULL AND next_review_date < CURRENT_DATE`, [tenantId]),
+      pool.query(`SELECT COUNT(*) FROM vendors WHERE tenant_id=$1 AND ${live}
+                    AND (assurance NOT IN ('soc2','iso27001','both')
+                         OR (assurance_expires IS NOT NULL AND assurance_expires < CURRENT_DATE))`, [tenantId]),
+      pool.query(`SELECT COUNT(*) FROM vendors WHERE tenant_id=$1 AND ${live}
+                    AND assurance_expires IS NOT NULL
+                    AND assurance_expires >= CURRENT_DATE
+                    AND assurance_expires < CURRENT_DATE + INTERVAL '90 days'`, [tenantId]),
+    ]);
+
+    res.json({
+      total:            parseInt(totalRes.rows[0].count, 10) || 0,
+      highTier:         parseInt(tierRes.rows[0].count, 10) || 0,
+      reviewsOverdue:   parseInt(overdueRes.rows[0].count, 10) || 0,
+      noEvidence:       parseInt(noEvidenceRes.rows[0].count, 10) || 0,
+      expiringSoon:     parseInt(expiringRes.rows[0].count, 10) || 0,
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/vendors */
+app.get('/api/vendors', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveVendorTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const result = await pool.query(
+      `SELECT * FROM vendors WHERE tenant_id = $1 ORDER BY residual_score DESC, name ASC`,
+      [tenantId]
+    );
+    res.json({ vendors: result.rows });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/vendors */
+app.post('/api/vendors', async (req, res) => {
+  try {
+    const { tenantId, error } = resolveVendorTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const prepared = prepareVendor(req.body);
+    if (prepared.error) return res.status(400).json({ error: prepared.error });
+    const f = prepared.fields;
+
+    const result = await pool.query(
+      `INSERT INTO vendors (tenant_id, name, service, owner, criticality, data_access, network_access,
+                            assurance, assurance_expires, contract_start, contract_end,
+                            last_review_date, next_review_date, status,
+                            inherent_score, residual_score, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
+      [tenantId, f.name, f.service, f.owner, f.criticality, f.data_access, f.network_access,
+       f.assurance, f.assurance_expires, f.contract_start, f.contract_end,
+       f.last_review_date, f.next_review_date, f.status,
+       f.inherent_score, f.residual_score, f.notes, req.session.userId]
+    );
+    res.json({ vendor: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** PUT /api/vendors/:id */
+app.put('/api/vendors/:id', async (req, res) => {
+  try {
+    const { tenantId, error } = resolveVendorTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const prepared = prepareVendor(req.body);
+    if (prepared.error) return res.status(400).json({ error: prepared.error });
+    const f = prepared.fields;
+
+    const result = await pool.query(
+      `UPDATE vendors
+       SET name=$1, service=$2, owner=$3, criticality=$4, data_access=$5, network_access=$6,
+           assurance=$7, assurance_expires=$8, contract_start=$9, contract_end=$10,
+           last_review_date=$11, next_review_date=$12, status=$13,
+           inherent_score=$14, residual_score=$15, notes=$16, updated_at=NOW()
+       WHERE id=$17 AND tenant_id=$18 RETURNING *`,
+      [f.name, f.service, f.owner, f.criticality, f.data_access, f.network_access,
+       f.assurance, f.assurance_expires, f.contract_start, f.contract_end,
+       f.last_review_date, f.next_review_date, f.status,
+       f.inherent_score, f.residual_score, f.notes, req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Vendor not found.' });
+    res.json({ vendor: result.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/vendors/:id */
+app.delete('/api/vendors/:id', async (req, res) => {
+  try {
+    const { tenantId, error } = resolveVendorTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    // risks.vendor_id is ON DELETE SET NULL, so any register entries raised
+    // against this vendor survive with their attribution cleared.
+    const result = await pool.query(
+      'DELETE FROM vendors WHERE id=$1 AND tenant_id=$2 RETURNING id',
+      [req.params.id, tenantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Vendor not found.' });
     res.json({ ok: true });
   } catch (err) { return serverError(res, err); }
 });

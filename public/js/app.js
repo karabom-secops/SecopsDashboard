@@ -17,6 +17,7 @@
     'incident-response': document.getElementById('tab-incident-response'),
     grc:          document.getElementById('tab-grc'),
     'risk-register': document.getElementById('tab-risk-register'),
+    'third-party-risk': document.getElementById('tab-third-party-risk'),
     'remediation-tracker': document.getElementById('tab-remediation-tracker'),
     'secure-score': document.getElementById('tab-secure-score'),
     edr:          document.getElementById('tab-edr'),
@@ -42,6 +43,7 @@
     'incident-response': 'Incident Response',
     grc:        'GRC',
     'risk-register': 'Risk Register',
+    'third-party-risk': 'Third-Party Risk',
     'remediation-tracker': 'Remediation Tracker',
     'secure-score': 'Secure Score',
     edr:        'Managed EDR',
@@ -128,6 +130,9 @@
     }
     if (target === 'risk-register' && typeof window.RiskRegisterTab !== 'undefined') {
       window.RiskRegisterTab.loadAndRender();
+    }
+    if (target === 'third-party-risk' && typeof window.ThirdPartyRiskTab !== 'undefined') {
+      window.ThirdPartyRiskTab.loadAndRender();
     }
     if (target === 'remediation-tracker' && typeof window.RemediationTrackerTab !== 'undefined') {
       window.RemediationTrackerTab.loadAndRender();

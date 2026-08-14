@@ -170,6 +170,10 @@
             <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
             <span class="side-nav-text">Risk Register</span>
           </button>
+          <button class="side-nav-item" type="button" data-tab="third-party-risk" hidden>
+            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span class="side-nav-text">Third-Party Risk</span>
+          </button>
           <button class="side-nav-item" type="button" data-tab="awareness" hidden>
             <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
             <span class="side-nav-text">Awareness</span>
@@ -1253,6 +1257,13 @@
             <input class="form-input" id="rr-due" type="date">
           </div>
           <div class="form-group">
+            <label class="form-label" for="rr-vendor">Related Vendor</label>
+            <select class="form-select" id="rr-vendor">
+              <option value="">&mdash; None &mdash;</option>
+            </select>
+            <p class="form-hint">Optional. Attributes this risk to a supplier on the Third-Party Risk tab.</p>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="rr-stage">Stage</label>
             <select class="form-select" id="rr-stage">
               <option value="identified">Identified</option>
@@ -1267,6 +1278,135 @@
           <button class="btn btn-danger" id="rr-modal-delete" hidden>Delete</button>
           <button class="btn btn-secondary" id="rr-modal-close-2">Cancel</button>
           <button class="btn btn-primary" id="rr-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tab: Third-Party Risk Management -->
+  <section id="tab-third-party-risk" class="tab-panel" role="tabpanel" hidden>
+    <div class="section-header">
+      <h2 class="section-title">Third-Party Risk Management</h2>
+      <p class="section-subtitle">Supplier inventory &middot; inherent and residual risk &middot; assurance evidence and review cycle</p>
+      <button class="btn btn-primary" id="tpr-new-btn">+ New Vendor</button>
+    </div>
+
+    <div id="tpr-stats" class="stat-grid" style="margin-bottom:1.5rem"></div>
+
+    <div class="filter-chips" id="tpr-filters">
+      <button class="chip active" type="button" data-filter="all">All</button>
+      <button class="chip" type="button" data-filter="critical">Critical</button>
+      <button class="chip" type="button" data-filter="high">High</button>
+      <button class="chip" type="button" data-filter="medium">Medium</button>
+      <button class="chip" type="button" data-filter="low">Low</button>
+      <button class="chip" type="button" data-filter="overdue">Review overdue</button>
+      <button class="chip" type="button" data-filter="no-evidence">No assurance evidence</button>
+    </div>
+
+    <div id="tpr-list"></div>
+
+    <!-- Vendor Modal -->
+    <div id="vendor-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="tpr-modal-title" class="modal-title">New Vendor</h3>
+          <button class="modal-close" id="tpr-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <form id="tpr-form" onsubmit="return false">
+          <input type="hidden" id="tpr-id">
+          <div class="form-group">
+            <label class="form-label" for="tpr-name">Vendor Name *</label>
+            <input class="form-input" id="tpr-name" type="text" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-service">Service Provided</label>
+            <textarea class="form-textarea" id="tpr-service" rows="2"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-owner">Internal Owner</label>
+            <input class="form-input" id="tpr-owner" type="text">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-criticality">Business Criticality *</label>
+            <select class="form-select" id="tpr-criticality">
+              <option value="low">Low &mdash; easily replaced, no operational impact</option>
+              <option value="medium" selected>Medium &mdash; short disruption if lost</option>
+              <option value="high">High &mdash; significant disruption if lost</option>
+              <option value="critical">Critical &mdash; business stops without them</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-data-access">Data They Can Access *</label>
+            <select class="form-select" id="tpr-data-access">
+              <option value="none" selected>None &mdash; no access to our data</option>
+              <option value="internal">Internal &mdash; non-sensitive business data</option>
+              <option value="confidential">Confidential &mdash; commercially sensitive</option>
+              <option value="pii">Personal data (PII)</option>
+              <option value="regulated">Regulated &mdash; POPIA / PCI / health records</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-network-access">
+              <input type="checkbox" id="tpr-network-access"> Has network or system access
+            </label>
+            <p class="form-hint">Connects to our environment, or is integrated with a system we run.</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-assurance">Assurance Evidence Held *</label>
+            <select class="form-select" id="tpr-assurance">
+              <option value="none" selected>None</option>
+              <option value="questionnaire">Completed security questionnaire</option>
+              <option value="soc2">SOC 2 report</option>
+              <option value="iso27001">ISO 27001 certificate</option>
+              <option value="both">SOC 2 and ISO 27001</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-assurance-expires">Assurance Expires</label>
+            <input class="form-input" id="tpr-assurance-expires" type="date">
+            <p class="form-hint">Evidence past this date earns no risk reduction.</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Risk Score</label>
+            <div id="tpr-score-display" class="rr-score-display">3</div>
+            <p class="form-hint" id="tpr-score-explain"></p>
+          </div>
+          <div class="modal-divider"></div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-status">Status</label>
+            <select class="form-select" id="tpr-status">
+              <option value="onboarding">Onboarding</option>
+              <option value="active" selected>Active</option>
+              <option value="under_review">Under review</option>
+              <option value="offboarding">Offboarding</option>
+              <option value="terminated">Terminated</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-contract-start">Contract Start</label>
+            <input class="form-input" id="tpr-contract-start" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-contract-end">Contract End</label>
+            <input class="form-input" id="tpr-contract-end" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-last-review">Last Review</label>
+            <input class="form-input" id="tpr-last-review" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-next-review">Next Review Due</label>
+            <input class="form-input" id="tpr-next-review" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tpr-notes">Notes</label>
+            <textarea class="form-textarea" id="tpr-notes" rows="3"></textarea>
+          </div>
+        </form>
+        <div class="modal-footer">
+          <button class="btn btn-danger" id="tpr-modal-delete" hidden>Delete</button>
+          <button class="btn btn-secondary" id="tpr-modal-close-2">Cancel</button>
+          <button class="btn btn-primary" id="tpr-modal-save">Save</button>
         </div>
       </div>
     </div>
@@ -2154,6 +2294,7 @@
   <script src="js/ir-playbooks-data.js"></script>
   <script src="js/tab-incident-response.js"></script>
   <script src="js/tab-risk-register.js"></script>
+  <script src="js/tab-third-party-risk.js"></script>
   <script src="js/tab-remediation-tracker.js"></script>
   <script src="js/tab-mdr-pricing.js"></script>
   <script src="js/tab-edr.js"></script>

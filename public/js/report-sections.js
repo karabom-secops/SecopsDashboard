@@ -28,6 +28,9 @@ window.ReportSections = (function () {
   var MAX_TICKET_ROWS    = 12;
   var MAX_VULN_ROWS      = 11;
   var MAX_DESC_CHARS     = 80;
+  // Section 9 shares a body with a 4-tile strip, so both tables stay short.
+  var MAX_VENDOR_ROWS       = 6;
+  var MAX_LINKED_RISK_ROWS  = 5;
 
   function esc(s) { return S.esc(s); }
 
@@ -1848,6 +1851,78 @@ window.ReportSections = (function () {
   var GRC_RESILIENCE_SECTIONS = ['Backup & Recovery', 'Business Continuity'];
   var GRC_THIRD_PARTY_SECTION = 'Third Party & Supply Chain';
 
+  // ── Vendor inventory helpers ───────────────────────────────────────────────
+  // inherent_score and residual_score are computed by lib/vendor-score.js on
+  // every write, so the deck only reads them. Nothing here re-derives a score.
+
+  /** Assurance values counting as independent evidence. Matches server.js. */
+  var VENDOR_EVIDENCE = ['soc2', 'iso27001', 'both'];
+
+  var VENDOR_ASSURANCE_LABEL = {
+    both: 'SOC 2 + ISO', soc2: 'SOC 2', iso27001: 'ISO 27001',
+    questionnaire: 'Questionnaire', none: 'None',
+  };
+  var VENDOR_TIER_LABEL = {
+    critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
+  };
+
+  /** YYYY-MM-DD for a DATE string, an ISO timestamp or a Date. */
+  function dayKey(value) {
+    if (!value) return null;
+    var s = String(value);
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    var d = new Date(value);
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  }
+
+  /**
+   * Vendors still under management. 'terminated' relationships are history,
+   * not exposure, so they never reach a board figure.
+   */
+  function vendorList(ctx) {
+    var v = ctx.data.vendors;
+    var rows = (v && v.vendors) || [];
+    return rows.filter(function (r) { return r && r.status !== 'terminated'; });
+  }
+
+  /**
+   * Last day of the reporting period, as YYYY-MM-DD.
+   *
+   * Review dates and certificate expiries are judged against the period end,
+   * not against today, so re-printing March's report next year still shows
+   * what was overdue in March. ctx.period is 'YYYY-MM'.
+   */
+  function vendorAsOf(ctx) {
+    var m = /^(\d{4})-(\d{2})$/.exec(String(ctx.period || ''));
+    if (!m) return dayKey(new Date());
+    // Day 0 of the following month is the last day of this one.
+    return dayKey(new Date(Date.UTC(+m[1], +m[2], 0)));
+  }
+
+  /**
+   * Has the recorded assurance passed its expiry date?
+   *
+   * Distinct from vendorHasEvidence: a completed questionnaire never counts as
+   * independent evidence, but that does not make it *expired*. Conflating the
+   * two labels a current questionnaire "(expired)", which is simply untrue.
+   */
+  function vendorAssuranceExpired(v, asOf) {
+    if (v.assurance === 'none') return false;
+    var exp = dayKey(v.assurance_expires);
+    return !!exp && exp < asOf;
+  }
+
+  /** Independent, unexpired third-party evidence on file. */
+  function vendorHasEvidence(v, asOf) {
+    if (VENDOR_EVIDENCE.indexOf(v.assurance) === -1) return false;
+    return !vendorAssuranceExpired(v, asOf);
+  }
+
+  function vendorReviewOverdue(v, asOf) {
+    var due = dayKey(v.next_review_date);
+    return !!due && due < asOf;
+  }
+
   /** The GRC payload, or null when no assessment has been completed. */
   function grcData(ctx) {
     var g = ctx.data.grcAssessment;
@@ -2365,59 +2440,158 @@ window.ReportSections = (function () {
 
   // ── 9. Third-Party Risk Dashboard ─────────────────────────────────────────
 
-  function renderThirdPartyRisk(ctx) {
-    if (!grcData(ctx)) return null;
-
-    var controls = THIRD_PARTY_ITR.map(function (id) { return grcControl(ctx, id); })
-                                  .filter(Boolean);
-    if (!controls.length) return null;
-
-    var ids = {};
-    controls.forEach(function (c) { ids[c.q.id] = true; });
-    var linked = ((ctx.data.vulnFindings || {}).risks || []).filter(function (r) {
-      return r.stage !== 'closed' && ids[r.grc_question_id];
-    });
-    var failing = controls.filter(function (c) { return c.answer === 'no'; }).length;
-    var score   = grcSectionScore(ctx, GRC_THIRD_PARTY_SECTION);
+  /** Inventory half: tiles plus the highest-residual-risk vendors. */
+  function vendorInventoryBlock(ctx, vendors) {
+    var asOf     = vendorAsOf(ctx);
+    var highTier = vendors.filter(function (v) {
+      return v.criticality === 'critical' || v.criticality === 'high';
+    }).length;
+    var overdue  = vendors.filter(function (v) { return vendorReviewOverdue(v, asOf); }).length;
+    var noEvid   = vendors.filter(function (v) { return !vendorHasEvidence(v, asOf); }).length;
 
     var html = '<div class="bi-grid tight">' +
         '<div class="bi-cell">' +
-          '<div class="bi-v' + (score && score.score != null ? '' : ' nd') + '">' +
-            (score && score.score != null ? score.score + '/100' : 'Not assessed') + '</div>' +
-          '<div class="bi-l">Supplier security domain</div></div>' +
-        '<div class="bi-cell' + (failing ? '' : ' ok') + '">' +
-          '<div class="bi-v">' + failing + '</div>' +
-          '<div class="bi-l">Controls not in place</div></div>' +
-        '<div class="bi-cell' + (linked.length ? '' : ' ok') + '">' +
-          '<div class="bi-v">' + linked.length + '</div>' +
-          '<div class="bi-l">Open risks on the register</div></div>' +
-      '</div>' +
-      '<div class="gc-list" style="margin-top:5mm">' +
-        controls.map(gcItem).join('') +
+          '<div class="bi-v">' + vendors.length + '</div>' +
+          '<div class="bi-l">Vendors under management</div></div>' +
+        '<div class="bi-cell">' +
+          '<div class="bi-v">' + highTier + '</div>' +
+          '<div class="bi-l">Critical &amp; high tier</div></div>' +
+        '<div class="bi-cell' + (overdue ? '' : ' ok') + '">' +
+          '<div class="bi-v">' + overdue + '</div>' +
+          '<div class="bi-l">Reviews overdue</div></div>' +
+        '<div class="bi-cell' + (noEvid ? '' : ' ok') + '">' +
+          '<div class="bi-v">' + noEvid + '</div>' +
+          '<div class="bi-l">No assurance evidence</div></div>' +
       '</div>';
 
+    // Already ordered by residual_score DESC by the API; sort defensively so
+    // the deck does not depend on the route's ORDER BY.
+    var top = vendors.slice().sort(function (a, b) {
+      return (b.residual_score || 0) - (a.residual_score || 0);
+    }).slice(0, MAX_VENDOR_ROWS);
+
+    html += subHead('Highest residual exposure') + D.dataTable({
+      cols: [
+        { label: 'Vendor', key: 'name', width: '26%',
+          raw: function (v) { return esc(truncate(v.name || '', 30)); } },
+        { label: 'Service', key: 'service', width: '24%',
+          raw: function (v) { return esc(truncate(v.service || '—', 28)); } },
+        { label: 'Tier', key: 'criticality', width: '12%',
+          raw: function (v) { return esc(VENDOR_TIER_LABEL[v.criticality] || v.criticality || '—'); } },
+        { label: 'Assurance', key: 'assurance', width: '18%',
+          raw: function (v) {
+            var label = VENDOR_ASSURANCE_LABEL[v.assurance] || v.assurance || 'None';
+            if (vendorAssuranceExpired(v, asOf)) label += ' (expired)';
+            return esc(label);
+          } },
+        { label: 'Residual', key: 'residual_score', width: '10%', cls: 'num' },
+        { label: 'Next review', key: 'next_review_date', width: '10%', cls: 'num',
+          raw: function (v) { return esc(fmtShortDate(v.next_review_date)); } },
+      ],
+      rows: top,
+    });
+
+    return html;
+  }
+
+  function renderThirdPartyRisk(ctx) {
+    var vendors = vendorList(ctx);
+    var grc     = grcData(ctx);
+
+    var controls = grc
+      ? THIRD_PARTY_ITR.map(function (id) { return grcControl(ctx, id); }).filter(Boolean)
+      : [];
+
+    // Neither an inventory nor a supplier-security self-assessment: there is
+    // nothing to say, so say nothing rather than print a page of zeroes.
+    if (!vendors.length && !controls.length) return null;
+
+    var asOf = vendorAsOf(ctx);
+    var bodies = [];
+
+    if (vendors.length) bodies.push(vendorInventoryBlock(ctx, vendors));
+
+    // Control-attestation half, kept as corroboration of the inventory.
+    if (controls.length) {
+      var score   = grcSectionScore(ctx, GRC_THIRD_PARTY_SECTION);
+      var failing = controls.filter(function (c) { return c.answer === 'no'; }).length;
+
+      var gov = '';
+      // These two tiles are the whole story when there is no inventory; with
+      // one, the inventory tiles above already carry the headline.
+      if (!vendors.length) {
+        gov += '<div class="bi-grid tight">' +
+            '<div class="bi-cell">' +
+              '<div class="bi-v' + (score && score.score != null ? '' : ' nd') + '">' +
+                (score && score.score != null ? score.score + '/100' : 'Not assessed') + '</div>' +
+              '<div class="bi-l">Supplier security domain</div></div>' +
+            '<div class="bi-cell' + (failing ? '' : ' ok') + '">' +
+              '<div class="bi-v">' + failing + '</div>' +
+              '<div class="bi-l">Controls not in place</div></div>' +
+          '</div>';
+      }
+
+      gov += subHead('Supplier security controls' +
+        (score && score.score != null ? ' — ' + score.score + '/100' : '')) +
+        '<div class="gc-list">' + controls.map(gcItem).join('') + '</div>';
+
+      bodies.push(gov);
+    }
+
+    // Risks attributed to a vendor, or raised against one of the supplier
+    // controls above. A risk can match on either, so dedupe by id.
+    var ids = {};
+    controls.forEach(function (c) { ids[c.q.id] = true; });
+    var vendorNames = {};
+    vendors.forEach(function (v) { vendorNames[v.id] = v.name; });
+
+    var linked = ((ctx.data.vulnFindings || {}).risks || []).filter(function (r) {
+      return r.stage !== 'closed' &&
+             (ids[r.grc_question_id] || (r.vendor_id && vendorNames[r.vendor_id]));
+    });
+
+    var tail = '';
     if (linked.length) {
-      html += subHead('Linked risks') + D.dataTable({
+      tail += subHead('Linked risks') + D.dataTable({
         cols: [
-          { label: 'Risk', key: 'title', width: '46%',
-            raw: function (r) { return esc(truncate(r.title || '', 60)); } },
-          { label: 'Rating', key: 'risk_score', width: '14%', cls: 'num' },
-          { label: 'Owner', key: 'owner', width: '24%',
-            raw: function (r) { return esc(truncate(r.owner || 'Unassigned', 26)); } },
-          { label: 'Target', key: 'due_date', width: '16%', cls: 'num',
+          { label: 'Risk', key: 'title', width: '38%',
+            raw: function (r) { return esc(truncate(r.title || '', 52)); } },
+          { label: 'Vendor', key: 'vendor_id', width: '20%',
+            raw: function (r) { return esc(truncate(vendorNames[r.vendor_id] || '—', 24)); } },
+          { label: 'Rating', key: 'risk_score', width: '12%', cls: 'num' },
+          { label: 'Owner', key: 'owner', width: '18%',
+            raw: function (r) { return esc(truncate(r.owner || 'Unassigned', 22)); } },
+          { label: 'Target', key: 'due_date', width: '12%', cls: 'num',
             raw: function (r) { return esc(fmtShortDate(r.due_date)); } },
         ],
-        rows: linked.slice(0, 5),
+        rows: linked.slice(0, MAX_LINKED_RISK_ROWS),
       });
     }
 
-    return html +
-      '<div class="rag-note">' +
-        'Third-party exposure is assessed from the supplier-security controls in the ' +
-        'self-assessment and the risk-register entries linked to them. The platform ' +
-        'holds no vendor inventory, so this is a control-attestation view rather than ' +
-        'a per-vendor risk score.' +
-      '</div>';
+    // State the basis precisely. These scores are self-attested inherent risk,
+    // not a tested assessment of the vendor's controls, and a board that reads
+    // them as the latter has been misled.
+    tail += '<div class="rag-note">';
+    if (vendors.length) {
+      tail += 'Vendor scores are <strong>inherent risk</strong> derived from the business ' +
+        'criticality recorded for each supplier, the data they can reach, and the ' +
+        'assurance evidence held on file — not a tested assessment of the vendor\'s ' +
+        'own controls. Assurance past its expiry date earns no reduction. Review ' +
+        'dates are judged as at ' + esc(fmtShortDate(asOf)) + '. ';
+      tail += controls.length
+        ? 'The supplier-security controls above are the client\'s own self-assessment.'
+        : 'No supplier-security self-assessment has been completed, so no control ' +
+          'attestation is shown alongside the inventory.';
+    } else {
+      tail += 'Third-party exposure is assessed from the supplier-security controls in the ' +
+        'self-assessment and the risk-register entries linked to them. No vendors have ' +
+        'been recorded on the Third-Party Risk tab, so this is a control-attestation ' +
+        'view rather than a per-vendor risk score.';
+    }
+    tail += '</div>';
+
+    bodies[bodies.length - 1] += tail;
+    return bodies;
   }
 
   // ── 10. Identity and Access Risk Dashboard ────────────────────────────────
@@ -2753,7 +2927,7 @@ window.ReportSections = (function () {
       render: renderThreatLandscape, commentable: true },
 
     { n: 9,  id: 'thirdParty',         label: 'Third-Party Risk Dashboard',              group: 'Dashboards',
-      requires: ['grcAssessment', 'grcQuestions'], optional: ['vulnFindings'],
+      requires: [], optional: ['vendors', 'grcAssessment', 'grcQuestions', 'vulnFindings'],
       render: renderThirdPartyRisk },
 
     { n: 10, id: 'identityRisk',       label: 'Identity and Access Risk Dashboard',      group: 'Dashboards',

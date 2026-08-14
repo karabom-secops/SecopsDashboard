@@ -5,6 +5,9 @@ const RiskRegisterTab = (() => {
 
   let _risks = [];
   let _dragId = null;
+  // Vendors, for the optional "Related Vendor" field. Empty when the user has
+  // no read access to the Third-Party Risk page, or the module is unmigrated.
+  let _vendors = [];
 
   const STAGES = ['identified', 'assessing', 'mitigating', 'monitoring', 'closed'];
 
@@ -95,6 +98,7 @@ const RiskRegisterTab = (() => {
             <span>${esc(r.category)}</span>
             ${r.owner ? `<span>${esc(r.owner)}</span>` : ''}
             ${r.grc_question_id ? `<span class="badge badge-blue">GRC gap</span>` : ''}
+            ${vendorName(r.vendor_id) ? `<span class="badge badge-muted">${esc(vendorName(r.vendor_id))}</span>` : ''}
           </div>
           <div class="rr-card-due">Due: ${fmt(r.due_date)}</div>
         </div>
@@ -165,6 +169,42 @@ const RiskRegisterTab = (() => {
     _risks = data.risks || [];
   }
 
+  /**
+   * Vendor list for the "Related Vendor" dropdown.
+   *
+   * Best-effort: a user with no access to the Third-Party Risk page, or a
+   * database where migrate-third-party-risk.sql has not been run, must still
+   * get a fully working Risk Register — the field just disappears.
+   */
+  async function loadVendors() {
+    if (!window.canView || !window.canView('third-party-risk')) { _vendors = []; return; }
+    try {
+      const res = await fetch('api/vendors' + tenantParam('?'), { credentials: 'same-origin' });
+      if (!res.ok) { _vendors = []; return; }
+      const data = await res.json();
+      _vendors = data.vendors || [];
+    } catch (_) {
+      _vendors = [];
+    }
+  }
+
+  function vendorName(id) {
+    const v = _vendors.find(x => x.id === id);
+    return v ? v.name : null;
+  }
+
+  function populateVendorSelect(selectedId) {
+    const sel = document.getElementById('rr-vendor');
+    if (!sel) return;
+    // Hide the whole field rather than offer an empty dropdown.
+    const group = sel.closest('.form-group');
+    if (group) group.hidden = _vendors.length === 0;
+
+    sel.innerHTML = '<option value="">— None —</option>' +
+      _vendors.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
+    sel.value = selectedId ? String(selectedId) : '';
+  }
+
   // ── Modal ──────────────────────────────────────────────────────────────────
 
   function updateScoreDisplay() {
@@ -194,6 +234,7 @@ const RiskRegisterTab = (() => {
     document.getElementById('rr-start').value = risk ? fmt(risk.start_date) : fmt(new Date().toISOString());
     document.getElementById('rr-due').value = risk ? fmt(risk.due_date) : '';
     document.getElementById('rr-stage').value = risk ? risk.stage : 'identified';
+    populateVendorSelect(risk ? risk.vendor_id : null);
     updateScoreDisplay();
 
     document.getElementById('rr-modal-delete').hidden = !(risk && canWrite());
@@ -225,6 +266,7 @@ const RiskRegisterTab = (() => {
       start_date: document.getElementById('rr-start').value,
       due_date: document.getElementById('rr-due').value || null,
       stage: document.getElementById('rr-stage').value,
+      vendor_id: document.getElementById('rr-vendor').value || null,
     };
     if (!body.title) { alert('Title is required.'); return; }
     if (!body.start_date) { alert('Start date is required.'); return; }
@@ -279,7 +321,7 @@ const RiskRegisterTab = (() => {
   async function loadAndRender() {
     wireOnce();
     await renderStats();
-    await load();
+    await Promise.all([load(), loadVendors()]);
     render();
   }
 

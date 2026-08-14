@@ -48,6 +48,9 @@ window.ReportsTab = (function () {
     vulnFindings:     function () { return 'api/remediation-tracker' + tenantParam('?'); },
     // 12 months of severity counts, for the Vulnerability Dashboard trend.
     vulnTrends:       function () { return 'api/vulns/trends' + tenantParam('?'); },
+    // Vendor inventory, for the Third-Party Risk Dashboard. Scores are derived
+    // server-side, so the deck reads the same numbers as the tab.
+    vendors:          function () { return 'api/vendors' + tenantParam('?'); },
     // GRC self-assessment: total, framework and per-section scores + answers.
     grcAssessment:    function () { return 'api/grc/assessment' + tenantParam('?'); },
     // The question bank is global — no tenant parameter.
