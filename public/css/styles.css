@@ -5,86 +5,185 @@
    all link this file, so keeping the import here covers all four. */
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
 
-/* ── Custom properties ─────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESIGN TOKENS — iOS design language, Reflex tint
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Modelled on Apple's Human Interface Guidelines: a semantic colour system
+   with grouped backgrounds and a label hierarchy, the SF type ramp, iOS radii
+   and materials, and the standard spring curves.
+
+   Two rules this system enforces that the previous palette did not:
+
+   1. FILL vs TEXT are different colours. Every iOS system colour fails WCAG AA
+      as body text on white — systemRed is 3.55:1, systemOrange 2.20:1,
+      systemGreen 2.22:1, and even systemBlue only reaches 4.02:1. Apple gets
+      away with it because those colours are used for fills, glyphs and large
+      type. Anywhere a status colour carries *text*, use the -text variant,
+      which is the same hue darkened until it clears 4.5:1.
+
+   2. Tokens are grouped so a dark theme is a drop-in. Only the colour block
+      below changes; nothing references a raw hex outside it. Dark is not
+      defined yet (light-only was the call) but the seams are cut for it.
+
+   Reflex blue is the tint — Apple's own guidance is that a third-party app
+   keeps its brand colour as the accent and adopts the system for everything
+   else. It also happens to be the one accent here that passes AA at 5.57:1.
+   ═══════════════════════════════════════════════════════════════════════════ */
 :root {
-  /* ── Brand / logo palette ── */
-  --logo-blue:    #0066CC;
-  --logo-cyan:    #00BADF;
+  /* ── Tint (brand) ──────────────────────────────────────────────────────
+     What "interactive" looks like: links, selected states, filled buttons. */
+  --tint:            #0066CC;
+  --tint-dark:       #005BB8;   /* pressed */
+  --tint-light:      #00BADF;   /* secondary brand, gradients */
+  --tint-wash:       rgba(0, 102, 204, .10);   /* tinted button fill */
+  --tint-wash-hi:    rgba(0, 102, 204, .16);
+
+  /* Legacy aliases. The app has ~200 references to these names across 3,600
+     lines; re-pointing them here re-skins every screen at once and lets the
+     old names retire gradually instead of in one risky sweep. */
+  --logo-blue:    var(--tint);
+  --logo-cyan:    var(--tint-light);
   --logo-ice:     #00E5FF;
   --logo-teal:    #008AB0;
 
-  /* ── Surfaces ── */
-  --bg:           #F0F8FF;
-  --bg-soft:      #E2F4FF;
-  --surface:      #FFFFFF;
-  --surface2:     #F5FBFF;
-  --surface3:     #EBF7FF;
-  --card-bg:      #FFFFFF;
-  --border:       #B0D8EE;
+  /* ── Grouped backgrounds ───────────────────────────────────────────────
+     iOS layers content on a grey "grouped" canvas with white cards on top.
+     That inversion — grey page, white content — is most of why an iOS screen
+     reads as calm: the card edge does the separating, not a border. */
+  --bg:              #F2F2F7;   /* systemGroupedBackground      */
+  --bg-soft:         #E9E9EF;
+  --surface:         #FFFFFF;   /* secondarySystemGrouped       */
+  --surface2:        #F2F2F7;   /* tertiarySystemGrouped        */
+  --surface3:        #E9E9EF;
+  --card-bg:         #FFFFFF;
 
-  /* ── Text ── */
-  --text:         #0B2A3E;
-  /* Nudged two steps darker from #4A7A96, which cleared 4.5:1 on white (4.65)
-     but not on --surface2 (4.46) or --surface3 (4.27) — and secondary text is
-     precisely what sits on those tinted surfaces. Now 4.9-5.2:1 everywhere. */
-  --muted:        #45728C;
+  /* ── Labels ────────────────────────────────────────────────────────────
+     Apple's four-step hierarchy. Values are opaque equivalents of their
+     rgba(60,60,67,α) definitions, darkened where needed to hold AA. */
+  --text:            #1C1C1E;   /* label            — 15.9:1 on white */
+  --muted:           #5B5B60;   /* secondaryLabel   —  6.9:1          */
+  --text-tertiary:   #8A8A8E;   /* tertiaryLabel    — decorative only */
+  --text-quaternary: #C7C7CC;
 
-  /* ── Semantic ── */
-  --red:          #E8394A;
-  --red-dim:      #FFF0F1;
-  --amber:        #F59E0B;
-  --amber-dim:    #FFFBEB;
-  --green:        #22C55E;
-  --green-dim:    #F0FFF4;
-  --blue:         #0099D6;
-  --blue-dim:     #E0F5FC;
-  --cyan-glow:    rgba(0, 186, 223, 0.22);
+  /* ── Separators ────────────────────────────────────────────────────────
+     iOS hairlines are far lighter than the old 1.5px #B0D8EE border. Almost
+     all "boxes" become a background change plus a hairline. */
+  --separator:       rgba(60, 60, 67, .29);
+  --separator-solid: #C6C6C8;
+  --border:          var(--separator-solid);
 
-  /* ── Typography ── */
-  --font:         'Manrope', 'Trebuchet MS', 'Segoe UI', sans-serif;
-  --font-display: 'Space Grotesk', 'Manrope', sans-serif;
+  /* ── Fills ── translucent greys for inert controls and wells. */
+  --fill:            rgba(120, 120, 128, .20);
+  --fill-2:          rgba(120, 120, 128, .16);
+  --fill-3:          rgba(120, 120, 128, .12);
+  --fill-4:          rgba(120, 120, 128, .08);
 
-  /* ── Shape ── */
-  --radius:       14px;
-  --radius-sm:    8px;
+  /* ── Semantic status ───────────────────────────────────────────────────
+     iOS system colours for fills; darkened companions for text. See rule 1. */
+  --red:             #FF3B30;   --red-text:    #C7000F;   --red-dim:    #FFEBE9;
+  --orange:          #FF9500;   --orange-text: #A04800;   --orange-dim: #FFF3E0;
+  --green:           #34C759;   --green-text:  #137A34;   --green-dim:  #E8F8ED;
+  --yellow:          #FFCC00;
+  --teal:            #30B0C7;
+  --indigo:          #5856D6;
+  --blue:            var(--tint);  --blue-text: var(--tint);  --blue-dim: #E6F0FB;
+  /* Retained: --amber is referenced widely; orange is its iOS counterpart. */
+  --amber:           var(--orange);
+  --amber-dim:       var(--orange-dim);
+  --cyan-glow:       rgba(0, 186, 223, .22);
 
-  /* ── Elevation ──
-     One system, three steps. Everything here is the same blue-tinted hue so
-     height reads consistently; a component that invents its own shadow reads
-     as sitting at a different height for no reason. */
-  --shadow-sm:    0 6px 16px rgba(0, 102, 204, .10);
-  --shadow:       0 20px 40px rgba(0, 102, 204, .13);
-  --shadow-lg:    0 28px 64px rgba(0, 102, 204, .22);
+  /* ── Materials ── translucency is the other half of the iOS look. */
+  --material-thick:  rgba(255, 255, 255, .80);
+  --material-thin:   rgba(255, 255, 255, .68);
+  --material-blur:   saturate(180%) blur(20px);
 
-  /* ── Type scale ──
-     html is 15px, so 1rem = 15px. Steps are far enough apart to read as
-     deliberate; the file previously held ~21 ad-hoc sizes, several within
-     0.01rem of each other, which is why things looked almost-but-not-quite
-     aligned. New work should use these. */
-  --text-xs:      0.72rem;   /* 10.8px — badges, dense labels          */
-  --text-sm:      0.8rem;    /* 12px   — table headers, chips, hints   */
-  --text-base:    0.88rem;   /* 13.2px — body, inputs, table cells     */
-  --text-md:      1rem;      /* 15px   — modal titles                  */
-  --text-lg:      1.2rem;    /* 18px   — sub-headings                  */
-  --text-xl:      1.5rem;    /* 22.5px                                 */
-  --text-2xl:     1.8rem;    /* 27px   — page titles                   */
+  /* ── Typography ────────────────────────────────────────────────────────
+     SF Pro on Apple hardware, then the platform equivalents. Manrope stays as
+     the Reflex face for display type only — brand where it is seen, system
+     where it is read.
 
-  /* ── Spacing scale ── 4px-based against a 15px root. */
-  --space-1:      0.25rem;
-  --space-2:      0.5rem;
-  --space-3:      0.75rem;
-  --space-4:      1rem;
-  --space-5:      1.25rem;
-  --space-6:      1.5rem;
-  --space-8:      2rem;
+     Sizes are in px, not rem, on purpose: iOS type is an absolute point ramp,
+     and the root here is 15px, which would turn every step into an awkward
+     fraction. Browser zoom still scales px; only a custom minimum font size
+     would not apply. */
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text',
+          'Segoe UI', 'Inter', 'Manrope', system-ui, sans-serif;
+  --font-display: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-rounded:  ui-rounded, 'SF Pro Rounded', 'Manrope', var(--font);
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
 
-  /* ── Motion ── */
-  --dur-fast:     120ms;
-  --dur:          200ms;
-  --ease:         cubic-bezier(0.4, 0, 0.2, 1);
+  --text-large-title: 34px;   /* screen titles                */
+  --text-title-1:     28px;
+  --text-title-2:     22px;
+  --text-title-3:     20px;
+  --text-headline:    17px;   /* semibold row/section heads   */
+  --text-body:        17px;   /* the iOS reading size         */
+  --text-callout:     16px;
+  --text-subhead:     15px;
+  --text-footnote:    13px;
+  --text-caption:     12px;
+  --text-caption-2:   11px;
 
-  /* ── Focus ── one ring, everywhere something is interactive. */
-  --focus-ring:   0 0 0 3px rgba(0, 186, 223, .35);
+  /* Tracking. Apple tightens large type and opens up small type. */
+  --track-large:  -0.4px;
+  --track-title:  -0.3px;
+  --track-body:   -0.2px;
+  --track-caption: 0;
+
+  /* Legacy type aliases, re-pointed onto the ramp. */
+  --text-xs:      var(--text-caption-2);
+  --text-sm:      var(--text-caption);
+  --text-base:    var(--text-subhead);
+  --text-md:      var(--text-headline);
+  --text-lg:      var(--text-title-3);
+  --text-xl:      var(--text-title-2);
+  --text-2xl:     var(--text-large-title);
+
+  /* ── Shape ─────────────────────────────────────────────────────────────
+     iOS corner radii cluster around a few values by role, not by taste. */
+  --radius-capsule: 999px;   /* buttons, chips, switches   */
+  --radius-sheet:   16px;    /* sheets, large surfaces     */
+  --radius-card:    12px;    /* grouped list containers    */
+  --radius-control: 10px;    /* fields, small controls     */
+  --radius-tight:   8px;
+
+  --radius:    var(--radius-card);
+  --radius-sm: var(--radius-control);
+
+  /* ── Elevation ─────────────────────────────────────────────────────────
+     Deliberately far lighter than before. iOS separates by background and
+     hairline, not by drop shadow; heavy shadows are the fastest way to make
+     a UI look non-native. Only genuinely floating surfaces get one. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .04), 0 1px 3px rgba(0, 0, 0, .06);
+  --shadow:    0 4px 12px rgba(0, 0, 0, .08);
+  --shadow-lg: 0 -2px 40px rgba(0, 0, 0, .16);   /* sheets rise from below */
+
+  /* ── Spacing ── 4pt grid, absolute so it does not drift with the root. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* Minimum comfortable target. Apple's floor is 44pt and the app had chips
+     and close buttons well under it. */
+  --target: 44px;
+
+  /* ── Motion ────────────────────────────────────────────────────────────
+     The first curve is UIKit's sheet/navigation spring — it starts fast and
+     settles, which is what makes iOS motion feel physical rather than linear. */
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease:        cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast:    150ms;
+  --dur:         250ms;
+  --dur-sheet:   400ms;
+
+  /* ── Focus ── */
+  --focus-ring: 0 0 0 4px rgba(0, 102, 204, .28);
 }
 
 /* ── Reset / base ──────────────────────────────────────────────────────────── */
@@ -95,16 +194,15 @@ html { font-size: 15px; }
 
 body {
   font-family: var(--font);
+  /* A flat grouped canvas. The page previously carried three radial brand
+     glows, a 40px graph-paper grid and a diagonal gradient — six layers
+     competing with the content for attention. iOS puts nothing behind the
+     content and lets the white cards do the separating; removing the texture
+     is what makes the cards read as raised at all. */
   background: var(--bg);
-  background-image:
-    radial-gradient(ellipse 60% 40% at 5% 0%,  rgba(0, 186, 223, .22) 0%, transparent 55%),
-    radial-gradient(ellipse 50% 36% at 96% 5%, rgba(0, 102, 204, .18) 0%, transparent 50%),
-    radial-gradient(ellipse 40% 30% at 50% 100%, rgba(0, 229, 255, .10) 0%, transparent 60%),
-    linear-gradient(rgba(0,102,204,.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,102,204,.035) 1px, transparent 1px),
-    linear-gradient(175deg, #F0F8FF 0%, #E6F5FF 55%, #DCF1FF 100%);
-  background-size: auto, auto, auto, 40px 40px, 40px 40px, auto;
   color: var(--text);
+  font-size: var(--text-subhead);
+  letter-spacing: var(--track-body);
   min-height: 100vh;
   /* Previously unset, so every table, form and paragraph in the app ran at the
      UA default. Headings and dense components override this below. */
@@ -116,20 +214,26 @@ body {
 a { color: var(--blue); }
 
 /* ── Header ────────────────────────────────────────────────────────────────── */
+/* iOS navigation bar: a translucent material with a hairline underneath, and
+   nothing else. The `saturate` is the part people miss — it is what makes
+   content read as *through* the bar rather than behind frosted glass, and it
+   is why Apple's materials look alive when you scroll under them. The 2px
+   cyan rule and the 28px blue glow both go; a nav bar should not announce
+   itself. */
 .site-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.8rem 2rem;
-  background: rgba(255,255,255,.92);
-  border-bottom: 2px solid rgba(0, 186, 223, .28);
-  box-shadow: 0 4px 28px rgba(0, 102, 204, .14), 0 1px 0 rgba(0,186,223,.18);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  padding: var(--space-2) var(--space-6);
+  background: var(--material-thick);
+  border-bottom: 1px solid var(--separator);
+  box-shadow: none;
+  backdrop-filter: var(--material-blur);
+  -webkit-backdrop-filter: var(--material-blur);
   position: sticky;
   top: 0;
   z-index: 100;
-  gap: 1rem;
+  gap: var(--space-4);
 }
 
 .header-left {
@@ -235,56 +339,69 @@ a { color: var(--blue); }
 }
 
 /* ── Buttons ───────────────────────────────────────────────────────────────── */
+/* iOS has three button styles and they mean different things: filled (the one
+   action that commits), tinted (secondary, tint-coloured on a wash), and plain
+   (text only). None of them has a border, a gradient or a drop shadow — the
+   fill is the affordance. The old .btn carried a 1.5px border, a blue-tinted
+   shadow and a -2px hover lift all at once.
+
+   Base is the "plain/grey" style; .btn-primary and friends fill it in. */
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.55rem 1.1rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 0.85rem;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 16px;
+  border: none;
+  border-radius: var(--radius-capsule);
+  background: var(--fill-3);
+  color: var(--tint);
   font-family: var(--font);
-  font-weight: 600;
+  font-size: var(--text-subhead);
+  font-weight: 590;              /* SF's semibold; falls back cleanly */
+  letter-spacing: var(--track-body);
+  line-height: 1.2;
   cursor: pointer;
-  transition: all .2s ease;
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-sm);
-  letter-spacing: .2px;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background var(--dur-fast) var(--ease),
+              transform  var(--dur-fast) var(--ease-spring),
+              opacity    var(--dur-fast) var(--ease);
 }
 
-.btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 24px rgba(0, 102, 204, .18);
-}
-.btn:active { transform: translateY(0); }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
+/* iOS presses respond by dimming and shrinking a touch — never by lifting.
+   Hover is a desktop affordance the platform does not have, so it stays
+   subtle and the press does the talking. */
+.btn:hover  { background: var(--fill-2); }
+.btn:active { transform: scale(0.97); opacity: .8; }
+.btn:disabled,
+.btn[disabled] { opacity: .35; cursor: not-allowed; transform: none; }
 
+/* Filled — the committing action. One per view, ideally. */
 .btn-primary {
-  background: linear-gradient(135deg, #0066CC 0%, #00BADF 100%);
-  color: #ffffff;
-  border-color: transparent;
-  font-weight: 700;
-  box-shadow: 0 8px 20px rgba(0, 102, 204, .32), inset 0 1px 0 rgba(255,255,255,.20);
+  background: var(--tint);
+  color: #FFFFFF;
 }
+.btn-primary:hover  { background: var(--tint-dark); }
+.btn-primary:active { background: var(--tint-dark); }
 
-.btn-primary:hover {
-  background: linear-gradient(135deg, #005BBF 0%, #00A8CC 100%);
-  box-shadow: 0 14px 28px rgba(0, 102, 204, .38), inset 0 1px 0 rgba(255,255,255,.20);
-  opacity: 1;
-}
-
+/* Tinted — secondary actions that are still the brand. */
 .btn-secondary {
-  background: #EEF8FD;
-  color: #1e6080;
-  border-color: #A8D8EC;
+  background: var(--tint-wash);
+  color: var(--tint);
 }
-.btn-secondary:hover {
-  background: #E0F3FB;
-  border-color: var(--logo-cyan);
-}
+.btn-secondary:hover { background: var(--tint-wash-hi); }
 
-.btn-block { width: 100%; justify-content: center; margin-top: 1rem; }
+.btn-block { width: 100%; justify-content: center; margin-top: var(--space-4); }
+
+/* Plain: text-only, for tertiary actions and sheet "Cancel". */
+.btn-plain {
+  background: none;
+  color: var(--tint);
+  padding-inline: var(--space-2);
+}
+.btn-plain:hover { background: var(--fill-4); }
 
 /* ── Upload screen ─────────────────────────────────────────────────────────── */
 #uploadScreen {
@@ -316,15 +433,10 @@ a { color: var(--blue); }
   margin-bottom: 1.25rem;
 }
 
-.form-label {
-  display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .5px;
-  color: #447089;
-  margin-bottom: 0.35rem;
-}
+/* .form-label is defined once, in the form-controls section further down. The
+   uppercase micro-caps version that used to sit here was superseded rather
+   than left to lose silently on source order — that pattern of two live
+   definitions is exactly what made this file hard to reason about. */
 
 .form-row {
   margin-bottom: 1rem;
@@ -503,111 +615,137 @@ input[type="file"] {
   margin-bottom: 1.5rem;
 }
 
+/* A grouped card: white on the grey canvas, generous radius, hairline shadow.
+   No border — the background change is the edge, which is how iOS separates
+   a card from its page. */
 .stat-card {
   background: var(--surface);
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.2rem 1.4rem;
+  border: none;
+  border-radius: var(--radius-card);
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-1);
   box-shadow: var(--shadow-sm);
-  transition: all .2s ease;
+  transition: transform var(--dur-fast) var(--ease-spring);
   position: relative;
   overflow: hidden;
 }
-.stat-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--border);
-  transition: height .2s ease;
-}
-.stat-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 16px 32px rgba(0, 102, 204, .16);
-}
-.stat-card:hover::before {
-  height: 4px;
-}
 
+/* The value leads. Labels are secondary text above it, in the iOS footnote
+   size at normal case — the previous uppercase + letter-spacing treatment
+   made the label compete with the number it describes. */
 .stat-card .stat-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .5px;
-  color: #5e8298;
+  order: -1;
+  font-size: var(--text-footnote);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: var(--track-body);
+  color: var(--muted);
 }
 
+/* Rounded numerals and tabular figures: iOS uses SF Rounded for prominent
+   metrics, and tabular spacing stops digits jittering as values update. */
 .stat-card .stat-value {
-  font-size: clamp(1.25rem, 1.6vw + 0.8rem, 2rem);
+  font-family: var(--font-rounded);
+  font-size: clamp(26px, 2vw + 14px, 34px);
   font-weight: 700;
-  font-family: var(--font-display);
-  line-height: 1.15;
+  line-height: 1.1;
+  letter-spacing: var(--track-large);
+  font-variant-numeric: tabular-nums;
   overflow-wrap: break-word;
-  word-break: break-word;
 }
 
 .stat-card .stat-delta {
-  font-size: 0.78rem;
+  font-size: var(--text-footnote);
   color: var(--muted);
 }
 
-.stat-card.accent-red   { border-left: 4px solid var(--red);       box-shadow: 0 8px 20px rgba(232,57,74,.14);    background: linear-gradient(135deg, #fff 80%, #FFF5F5 100%); }
-.stat-card.accent-red::before { background: var(--red); }
-.stat-card.accent-amber { border-left: 4px solid var(--amber);     box-shadow: 0 8px 20px rgba(245,158,11,.14);   background: linear-gradient(135deg, #fff 80%, #FFFBF0 100%); }
-.stat-card.accent-amber::before { background: var(--amber); }
-.stat-card.accent-green { border-left: 4px solid var(--green);     box-shadow: 0 8px 20px rgba(34,197,94,.14);    background: linear-gradient(135deg, #fff 80%, #F2FFF5 100%); }
-.stat-card.accent-green::before { background: var(--green); }
-.stat-card.accent-blue  { border-left: 4px solid var(--logo-blue); box-shadow: 0 8px 20px rgba(0,102,204,.16);    background: linear-gradient(135deg, #fff 80%, #EFF8FF 100%); }
-.stat-card.accent-blue::before { background: var(--logo-blue); }
+/* One accent affordance, not four. Each variant used to set a left border AND
+   a top strip AND a bespoke tinted shadow AND a gradient background, which put
+   accented and plain cards at visibly different elevations. Now the value
+   takes the status colour and a hairline rule sits under it — the card itself
+   stays a card. */
+.stat-card.accent-red    .stat-value { color: var(--red-text); }
+.stat-card.accent-amber  .stat-value,
+.stat-card.accent-orange .stat-value { color: var(--orange-text); }
+.stat-card.accent-green  .stat-value { color: var(--green-text); }
+.stat-card.accent-blue   .stat-value { color: var(--tint); }
 
-/* ── Filter chips ──────────────────────────────────────────────────────────── */
+/* The accent rule. Driven by a dedicated custom property rather than
+   `color`/currentColor, so the accent cannot leak into any child that happens
+   not to set its own colour. */
+.stat-card[class*="accent-"]::after {
+  content: '';
+  position: absolute;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent, transparent);
+}
+.stat-card.accent-red    { --accent: var(--red); }
+.stat-card.accent-amber,
+.stat-card.accent-orange { --accent: var(--orange); }
+.stat-card.accent-green  { --accent: var(--green); }
+.stat-card.accent-blue   { --accent: var(--tint); }
+.stat-card.accent-purple { --accent: var(--indigo); }
+
+/* ── Segmented control ──────────────────────────────────────────────────────
+   iOS's UISegmentedControl: one recessed grey track holding the whole set,
+   with the selected segment raised as a white pill. Selection reads as a
+   physical position rather than as a colour change, which is why it survives
+   being hovered — the old chips shared one rule for :hover and .active, so
+   while the pointer was over any chip you could not tell which filter applied.
+
+   The track is the container, so .filter-chips stops being a plain flex gap
+   and becomes the control itself. */
 .filter-chips {
-  display: flex;
-  gap: 0.5rem;
+  display: inline-flex;
+  gap: 2px;
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  padding: 2px;
+  margin-bottom: var(--space-4);
+  background: var(--fill-3);
+  border-radius: var(--radius-control);
+  max-width: 100%;
 }
 
 .chip {
-  padding: 0.32rem 0.9rem;
-  border-radius: 999px;
-  border: 1.5px solid #C8E8F6;
-  background: #F0F9FF;
-  color: var(--muted);
+  flex: 0 1 auto;
+  min-height: 30px;
+  padding: 5px 14px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
   font-family: var(--font);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  line-height: 1.4;
+  font-size: var(--text-footnote);
+  font-weight: 510;
+  line-height: 1.35;
+  letter-spacing: var(--track-body);
+  white-space: nowrap;
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease),
-              background   var(--dur-fast) var(--ease),
-              color        var(--dur-fast) var(--ease);
   user-select: none;
+  transition: background var(--dur-fast) var(--ease),
+              color      var(--dur-fast) var(--ease),
+              transform  var(--dur-fast) var(--ease-spring);
 }
 
-/* Hover is a hint; selected is a state. These shared one rule, so while the
-   pointer was over any chip you could not tell which filter was applied.
-   Active is expressed through border weight, text weight and a ring rather
-   than a fill, because the vulns tab's .chip-st-*.active variants supply their
-   own background with !important — a solid fill here would land on the "All"
-   chip only and leave that filter row half-styled. */
-.chip:hover {
-  border-color: #9BD9EE;
-  background: #E4F5FD;
-  color: var(--logo-blue);
-}
+.chip:hover  { background: rgba(255, 255, 255, .55); }
+.chip:active { transform: scale(0.96); }
 
+/* The raised pill. A real background here rather than a ring, because the
+   segmented control's whole idea is that the selection sits on top of the
+   track. Status-specific chips on the vulns tab still override the fill with
+   !important, and that continues to work — they simply supply their own pill
+   colour instead of white. */
 .chip.active {
-  border-color: var(--logo-blue);
-  background: rgba(0, 186, 223, .16);
-  color: var(--logo-blue);
-  font-weight: 700;
-  box-shadow: inset 0 0 0 1px var(--logo-blue);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 590;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .10), 0 0 0 0.5px rgba(0, 0, 0, .04);
 }
 
 /* ── Priority list ─────────────────────────────────────────────────────────── */
@@ -778,11 +916,19 @@ input[type="file"] {
 .status-pill.wip  { background: #fff4de; color: #9f6f17; border: 1px solid #efcc89; }
 .status-pill.done { background: #e7f8ea; color: #2c8740; border: 1px solid #9ed9aa; }
 
-/* ── Tables ────────────────────────────────────────────────────────────────── */
+/* ── Tables as inset grouped lists ──────────────────────────────────────────
+   The iOS list is the pattern this app's tables should borrow: a white card on
+   the grey canvas, rows separated by hairlines that are INSET from the leading
+   edge so they align with the content rather than cutting the card in two, and
+   a header that is quiet secondary text rather than a filled bar.
+
+   What goes away: the blue gradient header, the 2px cyan underline, the
+   full-bleed borders on every cell, and the zebra striping — iOS does not
+   stripe, because inset separators already do the row-tracking job. */
 .table-wrapper {
   overflow-x: auto;
-  border-radius: var(--radius);
-  border: 1.5px solid var(--border);
+  border-radius: var(--radius-card);
+  border: none;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
 }
@@ -790,54 +936,66 @@ input[type="file"] {
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: var(--text-subhead);
+  letter-spacing: var(--track-body);
 }
 
 .data-table th {
-  background: linear-gradient(180deg, #EEF8FF 0%, #E4F4FD 100%);
-  padding: 0.65rem 1rem;
+  background: var(--surface);
+  padding: var(--space-3) var(--space-4);
   text-align: left;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .4px;
-  color: #3d5a74;
-  border-bottom: 2px solid rgba(0, 186, 223, .35);
+  font-size: var(--text-footnote);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: var(--track-body);
+  color: var(--muted);
+  border-bottom: 1px solid var(--separator);
   white-space: nowrap;
   position: sticky;
   top: 0;
   z-index: 2;
 }
 
-.data-table th[data-sort], .data-table th.sortable-col { cursor: pointer; user-select: none; }
-.data-table th[data-sort]:hover, .data-table th.sortable-col:hover {
-  color: var(--text);
-  background: linear-gradient(180deg, #E0F4FF 0%, #D4ECFD 100%);
-}
+.data-table th[data-sort],
+.data-table th.sortable-col { cursor: pointer; user-select: none; }
+.data-table th[data-sort]:hover,
+.data-table th.sortable-col:hover { color: var(--tint); }
 .data-table th[data-sort]::after {
-  content: ' ↕';
-  opacity: 0.4;
-  font-size: 0.65rem;
+  content: ' ⌃⌄';
+  opacity: .35;
+  font-size: 9px;
+  letter-spacing: -2px;
 }
 
-.sort-arrow { font-style: normal; margin-left: 3px; font-size: 0.75rem; }
+.sort-arrow { font-style: normal; margin-left: 3px; font-size: var(--text-caption); }
 
 .data-table td {
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: none;
   vertical-align: middle;
 }
 
+/* The inset separator. Drawn on the row rather than per-cell so it can start
+   after the leading padding — the detail that most distinguishes an iOS list
+   from a web table. */
 .data-table tbody tr {
-  transition: background-color .2s ease;
+  transition: background-color var(--dur-fast) var(--ease);
 }
-.data-table tbody tr:nth-child(odd) {
-  background: rgba(0, 186, 223, .02);
+.data-table tbody tr:not(:last-child) > td { position: relative; }
+.data-table tbody tr:not(:last-child) > td::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--separator);
 }
-.data-table tbody tr:hover { 
-  background: #EDF7FF;
-}
-.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table tbody tr:not(:last-child) > td:first-child::after { left: var(--space-4); }
+.data-table tbody tr:not(:last-child) > td:last-child::after  { right: var(--space-4); }
+
+.data-table tbody tr:nth-child(odd) { background: transparent; }
+.data-table tbody tr:hover { background: var(--fill-4); }
 
 /* ── Coverage bar ──────────────────────────────────────────────────────────── */
 .coverage-cell { display: flex; align-items: center; gap: 0.6rem; }
@@ -1032,13 +1190,37 @@ input[type="file"] {
 .badge-source-risk     { background: #dbeafe; color: #1e40af; }
 .badge-source-incident { background: #fee2e2; color: #b91c1c; }
 
-/* Remediation Tracker — view toggle */
-.view-toggle { display: flex; gap: 0.25rem; background: var(--surface2); border-radius: 8px; padding: 3px; }
-.view-toggle-btn {
-  border: none; background: transparent; color: var(--muted); font-size: 0.85rem;
-  padding: 0.35rem 0.85rem; border-radius: 6px; cursor: pointer;
+/* Remediation Tracker view switch — the same segmented control as .filter-chips,
+   since it is the same idea. Kept as its own selectors because the markup
+   differs, but the metrics and the raised-pill treatment match exactly. */
+.view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--fill-3);
+  border-radius: var(--radius-control);
+  padding: 2px;
 }
-.view-toggle-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+.view-toggle-btn {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--text-footnote);
+  font-weight: 510;
+  letter-spacing: var(--track-body);
+  min-height: 30px;
+  padding: 5px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.view-toggle-btn:hover { background: rgba(255, 255, 255, .55); }
+.view-toggle-btn.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 590;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .10), 0 0 0 0.5px rgba(0, 0, 0, .04);
+}
 
 /* Remediation Tracker — Gantt chart (weekly) */
 .rt-gantt-wrap { overflow-x: auto; }
@@ -1507,79 +1689,132 @@ body.modal-open .tab-nav {
 }
 
 /* ── Finding management modal ──────────────────────────────────────────────── */
+/* ── Sheets ─────────────────────────────────────────────────────────────────
+   iOS presents modal content as a sheet that rises from the bottom edge with
+   a grabber at the top, not as a box floating in the middle of a dimmed page.
+   On a wide screen it settles as a tall card anchored to the bottom, which is
+   how iPadOS handles the same component.
+
+   The scrim is lighter than the old 0.6 black: iOS dims to roughly 0.4 and
+   lets the page stay legible behind, because the sheet is understood as
+   sitting *on* the page rather than replacing it. */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, .4);
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
   z-index: 9999;
-  padding: 1rem;
+  padding: 0;
+  animation: sheet-scrim var(--dur-sheet) var(--ease-spring) both;
 }
 /* display:flex overrides the HTML hidden attribute — restore hide behaviour */
 .modal-overlay[hidden] { display: none !important; }
 
+@keyframes sheet-scrim { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sheet-rise  { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
 .modal-box {
-  background: #ffffff;
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: var(--surface);
+  border: none;
+  /* Top corners only — the sheet is attached to the bottom edge. */
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
   width: 100%;
-  max-width: 520px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+  max-width: 560px;
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
-  max-height: 90vh;
+  max-height: 92vh;
   overflow: hidden;
+  animation: sheet-rise var(--dur-sheet) var(--ease-spring) both;
 }
+
+/* The grabber. Purely an affordance cue — it tells you the surface is
+   dismissible, which is the job the old header border could not do. */
+.modal-box::before {
+  content: '';
+  flex-shrink: 0;
+  width: 36px;
+  height: 5px;
+  margin: 8px auto 0;
+  border-radius: var(--radius-capsule);
+  background: var(--fill);
+}
+
 .modal-box > form {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 1rem 1.25rem;
+  padding: var(--space-4) var(--space-5) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: var(--space-4);
   min-height: 0;
 }
 .modal-risk-strip {
-  height: 5px;
-  border-radius: 14px 14px 0 0;
-  background: #94a3b8;
+  height: 4px;
+  border-radius: var(--radius-capsule);
+  background: var(--fill);
   flex-shrink: 0;
 }
+
+/* Sheet navigation bar: title centred, actions at the edges. */
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.25rem 0.8rem;
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--separator);
 }
-.modal-title { font-size: 1rem; font-weight: 700; margin: 0; letter-spacing: 0.01em; }
+.modal-title {
+  font-size: var(--text-headline);
+  font-weight: 590;
+  margin: 0;
+  letter-spacing: var(--track-body);
+  flex: 1 1 auto;
+  text-align: center;
+}
 /* .modal-close was never defined anywhere, yet nine modals use it — every one
    of them rendered a raw native button in its header next to styled chrome.
-   Both names are now the same control; a 32px square keeps it a comfortable
-   pointer target rather than the 1.3rem glyph's own tiny box. */
+
+   iOS's sheet close is a filled grey circle with a thin glyph, sized to the
+   44px touch floor. Both class names resolve to the same control. */
 .modal-close,
 .modal-close-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
-  background: none;
+  background: var(--fill-3);
   border: none;
-  font-size: 1.3rem;
+  font-size: 17px;
   font-family: inherit;
+  font-weight: 500;
   cursor: pointer;
   color: var(--muted);
   line-height: 1;
-  border-radius: var(--radius-sm);
+  border-radius: 50%;
   transition: background var(--dur-fast) var(--ease),
-              color      var(--dur-fast) var(--ease);
+              color      var(--dur-fast) var(--ease),
+              transform  var(--dur-fast) var(--ease-spring);
 }
 .modal-close:hover,
-.modal-close-btn:hover { background: var(--surface2); color: var(--text); }
+.modal-close-btn:hover { background: var(--fill-2); color: var(--text); }
+.modal-close:active,
+.modal-close-btn:active { transform: scale(0.92); }
+/* Keeps the 44px target without a 44px visual. */
+.modal-close::after,
+.modal-close-btn::after {
+  content: '';
+  position: absolute;
+  width: var(--target);
+  height: var(--target);
+}
+.modal-header { position: relative; }
+.modal-close, .modal-close-btn { position: relative; }
 
 .modal-body { padding: 1.1rem 1.25rem 0.75rem; display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; }
 
@@ -1667,14 +1902,19 @@ body.modal-open .tab-nav {
   font-style: italic;
 }
 
+/* The sheet is anchored to the bottom edge, so the footer no longer needs a
+   rounded corner or a tinted bar to sit on — it is the base of the surface.
+   The safe-area inset keeps the buttons clear of a home indicator. */
 .modal-footer {
   display: flex;
-  gap: 0.6rem;
+  gap: var(--space-2);
+  align-items: center;
   justify-content: flex-end;
-  padding: 0.85rem 1.25rem 1rem;
-  border-top: 1px solid var(--border);
-  background: var(--surface2);
-  border-radius: 0 0 14px 14px;
+  padding: var(--space-3) var(--space-5);
+  padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--separator);
+  background: var(--surface);
+  border-radius: 0;
 }
 /* .btn-secondary was defined a second time here, re-declaring padding, radius
    (7px, matching no token), font-size and weight. It won on source order and
@@ -2120,14 +2360,20 @@ body.login-page {
   line-height: 1.9;
 }
 
+/* Capsule, not a square tag. iOS status pills are rounded, sit on a tinted
+   wash of their own hue, and use medium weight rather than bold — the colour
+   is the signal, so the weight does not also have to shout. */
 .badge {
-  display: inline-block;
-  font-size: 0.68rem;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-caption-2);
+  font-weight: 590;
+  padding: 3px 8px;
+  border-radius: var(--radius-capsule);
   vertical-align: middle;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 /* .badge-blue / .badge-amber were declared here and again further down; the
    later pair won, so these never applied. Single definition now lives with the
@@ -2191,9 +2437,14 @@ body.login-page {
   left: 0;
   width: var(--side-w);
   height: calc(100vh - var(--header-h));
-  background: linear-gradient(175deg, #fff 0%, #f4fbff 100%);
-  border-right: 2px solid rgba(0,186,223,.25);
-  box-shadow: 3px 0 20px rgba(0,102,204,.10);
+  /* A sidebar is chrome, so it takes the same translucent material as the nav
+     bar rather than its own blue gradient. The 2px cyan edge and the 20px blue
+     glow both go — a hairline is the whole separation iOS uses. */
+  background: var(--material-thick);
+  backdrop-filter: var(--material-blur);
+  -webkit-backdrop-filter: var(--material-blur);
+  border-right: 1px solid var(--separator);
+  box-shadow: none;
   z-index: 90;
   display: flex;
   flex-direction: column;
@@ -2291,20 +2542,22 @@ body.login-page {
   letter-spacing: .1px;
   position: relative;
 }
+/* The iOS sidebar selection is a filled rounded pill, not a left border plus a
+   gradient plus two inset glows. Hover no longer shifts padding-left either —
+   text that moves under the cursor is a fidget, and it made the whole list
+   jitter as the pointer travelled down it. */
 .side-nav-item:hover {
-  background: rgba(0,186,223,.12);
-  color: var(--logo-blue);
-  padding-left: 1.15rem;
-  box-shadow: inset 2px 0 8px rgba(0,186,223,.15);
+  background: var(--fill-4);
+  color: var(--text);
 }
 .side-nav-item.active {
-  background: linear-gradient(90deg, rgba(0,186,223,.15) 0%, rgba(0,186,223,.08) 100%);
-  color: var(--logo-blue);
-  font-weight: 700;
-  border-left: 4px solid var(--logo-cyan);
-  padding-left: calc(1rem - 4px);
-  box-shadow: inset 0 0 12px rgba(0,186,223,.10), -4px 0 14px rgba(0,186,223,.08);
+  background: var(--tint);
+  color: #FFFFFF;
+  font-weight: 590;
+  border-left: none;
+  box-shadow: none;
 }
+.side-nav-item.active .side-nav-icon { stroke: #FFFFFF; }
 .side-nav-item:focus-visible {
   outline: 2px solid var(--logo-cyan);
   outline-offset: 1px;
@@ -2552,17 +2805,26 @@ body.login-page {
 
 /* btn-sm helper */
 .btn-sm {
-  padding: 0.25rem 0.65rem;
-  font-size: 0.8rem;
+  min-height: 28px;
+  padding: 4px 12px;
+  font-size: var(--text-footnote);
 }
 
 /* Danger button */
+/* Destructive. iOS almost never fills a destructive button — it tints the
+   label red and leaves the fill neutral, so "delete" does not shout from the
+   corner of every row. The filled form is reserved for a sheet's final
+   confirmation. */
 .btn-danger {
-  background: #dc2626;
-  color: #ffffff;
-  border: none;
+  background: var(--fill-3);
+  color: var(--red-text);
 }
-.btn-danger:hover { background: #b91c1c; }
+.btn-danger:hover { background: rgba(255, 59, 48, .12); }
+.btn-danger-filled {
+  background: var(--red);
+  color: #FFFFFF;
+}
+.btn-danger-filled:hover { background: var(--red-text); }
 
 /* Edit modal — optional label */
 .modal-optional {
@@ -2946,17 +3208,15 @@ body.login-page {
 }
 
 /* The only definition of these variants — earlier duplicates were removed.
-   Text tones are darkened from the tint's own hue until each clears WCAG AA
-   (4.5:1) against its rendered background. The previous set failed badly:
-   .badge-blue was #06b6d4 on a 15% tint of itself, about 2.1:1, at 0.72rem
-   bold. Verified on white, on the table's zebra row and on its hover row;
-   worst case is now 4.9:1, and all five sit in a 4.9-6.7 band so no variant
-   shouts louder than another. */
-.badge-blue   { background: rgba(6,182,212,.15);  color: #155E75; }
-.badge-green  { background: rgba(34,197,94,.15);  color: #166534; }
-.badge-amber  { background: rgba(245,158,11,.15); color: #92400E; }
-.badge-red    { background: rgba(239,68,68,.15);  color: #B91C1C; }
-.badge-muted  { background: rgba(148,163,184,.15);color: #475569; }
+   Each is an iOS system hue at 15% for the fill, paired with the darkened
+   -text companion for the label, because every system colour fails AA as text
+   at this size (systemRed 3.6:1, systemOrange 2.2:1, systemGreen 2.2:1). The
+   fill carries the hue; the text carries the legibility. */
+.badge-blue   { background: rgba(0, 102, 204, .12);  color: var(--tint); }
+.badge-green  { background: rgba(52, 199, 89, .16);  color: var(--green-text); }
+.badge-amber  { background: rgba(255, 149, 0, .16);  color: var(--orange-text); }
+.badge-red    { background: rgba(255, 59, 48, .14);  color: var(--red-text); }
+.badge-muted  { background: var(--fill-3);           color: var(--muted); }
 
 /* Risk Register kanban board */
 .rr-board {
@@ -2969,9 +3229,9 @@ body.login-page {
   flex: 0 0 260px;
   display: flex;
   flex-direction: column;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  background: var(--fill-4);
+  border: none;
+  border-radius: var(--radius-card);
   max-height: 75vh;
 }
 .rr-column.drag-over {
@@ -3004,12 +3264,15 @@ body.login-page {
 }
 .rr-card {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.6rem 0.7rem;
+  border: none;
+  border-radius: var(--radius-control);
+  padding: var(--space-3);
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur-fast) var(--ease-spring),
+              box-shadow var(--dur-fast) var(--ease);
 }
+.rr-card:active { transform: scale(0.98); }
 .rr-card[draggable="true"] { cursor: grab; -webkit-user-drag: element; user-select: none; }
 .rr-card.dragging { opacity: 0.5; }
 .rr-card-header {
@@ -3114,28 +3377,45 @@ body.login-page {
   font-weight: 700;
 }
 
+/* iOS fields are a filled well, not an outlined box: no border, a light grey
+   fill, and the focus state adds the tint ring. Body size (17px) because these
+   are the one place a person actually types. */
 .form-input,
 .form-select,
 .form-textarea {
   width: 100%;
-  padding: 0.5rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface2);
+  min-height: var(--target);
+  padding: 11px 14px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: var(--fill-4);
   color: var(--text);
   /* Explicit, and not optional. Form controls do not inherit the page font,
      so without this they render in the UA default — and .form-textarea in
      particular fell through to the bare `textarea` rule's Cascadia Code, so
      every textarea in the app was monospace. */
   font-family: var(--font);
-  font-size: var(--text-base);
-  line-height: 1.4;
+  font-size: var(--text-callout);
+  letter-spacing: var(--track-body);
+  line-height: 1.35;
   box-sizing: border-box;
-  transition: border-color var(--dur-fast) var(--ease),
-              box-shadow   var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast) var(--ease),
+              box-shadow var(--dur-fast) var(--ease);
+}
+.form-input::placeholder,
+.form-textarea::placeholder { color: var(--text-tertiary); }
+
+.form-select {
+  /* Native arrow removed for a chevron that matches the platform. */
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='none' stroke='%238A8A8E' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M1 1.5 6 6.5l5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
 }
 
-.form-textarea { resize: vertical; min-height: 4.5rem; }
+.form-textarea { resize: vertical; min-height: 78px; }
 
 /* --primary is not a token in this file, so the focus ring was falling back to
    a generic #3b82f6 that appears nowhere else in the product. */
@@ -3146,8 +3426,8 @@ body.login-page {
 .form-select:focus,
 .form-textarea:focus {
   outline: none;
-  border-color: var(--logo-cyan);
-  box-shadow: var(--focus-ring);
+  background: var(--surface);
+  box-shadow: var(--focus-ring), inset 0 0 0 1px var(--tint);
 }
 
 /* Read-only users get every control disabled; there was no styling for that
@@ -3155,11 +3435,90 @@ body.login-page {
 .form-input:disabled,
 .form-select:disabled,
 .form-textarea:disabled {
-  background: var(--surface3);
-  color: var(--muted);
+  background: var(--fill-4);
+  color: var(--text-tertiary);
   cursor: not-allowed;
   opacity: 1;               /* override the UA's own dimming */
-  -webkit-text-fill-color: var(--muted);   /* Safari ignores color when disabled */
+  -webkit-text-fill-color: var(--text-tertiary);  /* Safari ignores color when disabled */
+}
+
+/* ── Labels ────────────────────────────────────────────────────────────────
+   iOS form labels are plain secondary text, not uppercase micro-caps. The
+   uppercase + letter-spacing treatment reads as a section header, which made
+   every field look like the start of a new group. */
+.form-label {
+  display: block;
+  font-size: var(--text-footnote);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: var(--track-body);
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+/* ── Switch ────────────────────────────────────────────────────────────────
+   The iOS toggle. A checkbox is a form primitive; a switch is a setting that
+   takes effect — which is what these actually are. Built on a real
+   <input type="checkbox"> so it stays keyboard- and screen-reader-native, with
+   the box itself hidden behind the track. */
+.ios-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 51px;
+  height: 31px;
+  cursor: pointer;
+}
+.ios-switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.ios-switch .switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-capsule);
+  background: var(--fill);
+  transition: background var(--dur) var(--ease);
+  pointer-events: none;
+}
+.ios-switch .switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, .15), 0 1px 1px rgba(0, 0, 0, .16);
+  /* The spring is what makes the thumb feel like it snaps rather than slides. */
+  transition: transform var(--dur) var(--ease-spring);
+  pointer-events: none;
+}
+.ios-switch input:checked ~ .switch-track { background: var(--green); }
+.ios-switch input:checked ~ .switch-thumb { transform: translateX(20px); }
+.ios-switch input:focus-visible ~ .switch-track { box-shadow: var(--focus-ring); }
+.ios-switch input:disabled ~ .switch-track { opacity: .5; }
+.ios-switch input:disabled { cursor: not-allowed; }
+
+/* A switch belongs on a row with its label, label leading, control trailing —
+   the settings-row shape. */
+.form-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--target);
+}
+.form-switch-row .form-switch-label {
+  font-size: var(--text-callout);
+  color: var(--text);
+  letter-spacing: var(--track-body);
 }
 
 
@@ -3852,15 +4211,14 @@ h1, h2, h3, h4,
 .data-table       { line-height: 1.45; }
 .badge            { line-height: 1.5; }
 
-/* border-collapse: collapse paints cell backgrounds and borders over the
-   wrapper's rounded corners, so the table reads as a square block inside a
-   rounded container. Clipping the wrapper restores the radius. */
+/* border-collapse: collapse paints cell backgrounds over the wrapper's rounded
+   corners, so the table reads as a square block inside a rounded container.
+   Clipping the wrapper restores the radius. */
 .table-wrapper { overflow: hidden; overflow-x: auto; }
 
-/* The zebra stripe was rgba(0,186,223,.02) — around a quarter of one percent
-   of luminance, i.e. invisible. Either it helps the eye track a row or it
-   should not be there; this makes it do its job while staying quiet. */
-.data-table tbody tr:nth-child(odd) { background: rgba(0, 186, 223, .045); }
+/* The zebra stripe is gone rather than tuned. iOS lists do not stripe — inset
+   separators already give the eye a row to track, and a stripe on top of them
+   is two solutions to one problem. See the .data-table rules above. */
 
 /* ═══════════════════════════════════════════════════════════════════════════
    THIRD-PARTY RISK TAB
@@ -3955,29 +4313,10 @@ h1, h2, h3, h4,
 }
 .tpr-modal-msg:empty { display: none; }
 
-/* A checkbox is a sentence, not a field label. This markup previously reused
-   .form-label, so the wording inherited uppercase, letter-spacing and the
-   label colour — it read as a heading with a stray checkbox in front of it. */
-.tpr-check {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  font-size: var(--text-base);
-  font-weight: 500;
-  color: var(--text);
-  cursor: pointer;
-  user-select: none;
-}
-.tpr-check input[type="checkbox"] {
-  width: 1.05rem;
-  height: 1.05rem;
-  margin: 0;
-  flex-shrink: 0;
-  accent-color: var(--logo-blue);
-  cursor: pointer;
-}
-.tpr-check input:disabled,
-.tpr-check:has(input:disabled) { cursor: not-allowed; color: var(--muted); }
+/* The network-access control is now an .ios-switch (see the switch rules in
+   the controls section). A checkbox states a fact about a form; a switch
+   states a setting that is on — which is what this is. */
+.form-switch-row .form-switch-label { cursor: pointer; }
 
 /* Five tiles. The shared .stat-grid uses auto-fit/minmax(180px), which at
    common desktop widths fits four and orphans the fifth on its own row — a

@@ -442,19 +442,23 @@
 .section-header > .section-title    { flex: 1 1 auto; order: 1; margin-bottom: 0; }
 .section-header > .section-subtitle { flex: 1 1 100%; order: 3; }
 
+/* iOS Large Title: 34px, bold, tightly tracked. The tracking is what stops a
+   heading this size reading as loose — Apple tightens as type grows and opens
+   up as it shrinks, which is the opposite of what most web type scales do. */
 .section-title {
-  margin: 0 0 0.5rem 0;
-  font-size: var(--text-2xl, 1.8rem);
+  margin: 0;
+  font-size: var(--text-large-title, 34px);
   font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: -0.01em;
+  line-height: 1.15;
+  letter-spacing: var(--track-large, -0.4px);
   color: var(--text);
 }
 
 .section-subtitle {
   margin: 0;
-  font-size: 0.95rem;
-  line-height: 1.45;
+  font-size: var(--text-subhead, 15px);
+  line-height: 1.4;
+  letter-spacing: var(--track-body, -0.2px);
   color: var(--muted);
   font-weight: 400;
 }

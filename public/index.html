@@ -1347,10 +1347,14 @@
             </select>
           </div>
           <div class="form-group">
-            <label class="tpr-check" for="tpr-network-access">
-              <input type="checkbox" id="tpr-network-access">
-              <span>Has network or system access</span>
-            </label>
+            <div class="form-switch-row">
+              <label class="form-switch-label" for="tpr-network-access">Has network or system access</label>
+              <span class="ios-switch">
+                <input type="checkbox" id="tpr-network-access">
+                <span class="switch-track" aria-hidden="true"></span>
+                <span class="switch-thumb" aria-hidden="true"></span>
+              </span>
+            </div>
             <p class="form-hint">Connects to our environment, or is integrated with a system we run.</p>
           </div>
           <div class="form-group">
