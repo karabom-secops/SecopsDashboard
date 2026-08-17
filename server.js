@@ -1389,37 +1389,48 @@ app.patch('/api/vulns/:monthKey/findings/bulk-status', async (req, res) => {
   }
 });
 
-// ── Latest vuln summary per tenant (superadmin: all, others: own) ──────────
+/**
+ * GET /api/vulns/latest-summary
+ *
+ * Two callers, with genuinely different needs:
+ *   - tab-orgs.js asks with NO tenantId and wants one row per tenant for the
+ *     Org Health table.
+ *   - tab-reports.js asks WITH ?tenantId= for one client's deck.
+ *
+ * This used to ignore ?tenantId= entirely — the only vuln route that did — and
+ * left the report to filter the all-tenants array on the client. That worked
+ * by accident and made any scoping problem invisible in the response, so the
+ * parameter is honoured when present, matching every sibling vuln route.
+ *
+ * The LEFT JOIN LATERAL is deliberate: a tenant with no scans still comes back
+ * as a row with a NULL summary, so a caller can tell "no scan uploaded" apart
+ * from "tenant does not exist".
+ */
 app.get('/api/vulns/latest-summary', async (req, res) => {
   try {
     const isSA = req.session.role === 'superadmin';
-    let rows;
-    if (isSA) {
-      const result = await pool.query(
-        `SELECT t.id AS "tenantId", t.name AS "tenantName",
-                vs.month_key AS "monthKey", vs.summary
-         FROM tenants t
-         LEFT JOIN LATERAL (
-           SELECT month_key, summary FROM vuln_scans
-           WHERE tenant_id = t.id ORDER BY month_key DESC LIMIT 1
-         ) vs ON true
-         ORDER BY t.name ASC`
-      );
-      rows = result.rows;
-    } else {
-      const tenantId = req.session.tenantId;
-      if (!tenantId) return res.json([]);
-      const result = await pool.query(
-        `SELECT $1::int AS "tenantId", '' AS "tenantName",
-                month_key AS "monthKey", summary
-         FROM vuln_scans WHERE tenant_id=$1 ORDER BY month_key DESC LIMIT 1`,
-        [tenantId]
-      );
-      rows = result.rows;
-    }
-    res.json(rows);
+    const requested = parseInt(req.query.tenantId, 10);
+    const scopeTo = isSA
+      ? (isNaN(requested) || requested < 1 ? null : requested)
+      : req.session.tenantId;
+
+    if (!isSA && !scopeTo) return res.json([]);
+
+    const result = await pool.query(
+      `SELECT t.id AS "tenantId", t.name AS "tenantName",
+              vs.month_key AS "monthKey", vs.summary
+       FROM tenants t
+       LEFT JOIN LATERAL (
+         SELECT month_key, summary FROM vuln_scans
+         WHERE tenant_id = t.id ORDER BY month_key DESC LIMIT 1
+       ) vs ON true
+       ${scopeTo ? 'WHERE t.id = $1' : ''}
+       ORDER BY t.name ASC`,
+      scopeTo ? [scopeTo] : []
+    );
+    res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return serverError(res, err);
   }
 });
 
@@ -1455,40 +1466,6 @@ app.patch('/api/vulns/:monthKey/findings/bulk-status', async (req, res) => {
     );
 
     res.json({ ok: true, updated: idxList.length });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── Latest vuln summary per tenant (superadmin: all, others: own) ──────────
-app.get('/api/vulns/latest-summary', async (req, res) => {
-  try {
-    const isSA = req.session.role === 'superadmin';
-    let rows;
-    if (isSA) {
-      const result = await pool.query(
-        `SELECT t.id AS "tenantId", t.name AS "tenantName",
-                vs.month_key AS "monthKey", vs.summary
-         FROM tenants t
-         LEFT JOIN LATERAL (
-           SELECT month_key, summary FROM vuln_scans
-           WHERE tenant_id = t.id ORDER BY month_key DESC LIMIT 1
-         ) vs ON true
-         ORDER BY t.name ASC`
-      );
-      rows = result.rows;
-    } else {
-      const tenantId = req.session.tenantId;
-      if (!tenantId) return res.json([]);
-      const result = await pool.query(
-        `SELECT $1::int AS "tenantId", '' AS "tenantName",
-                month_key AS "monthKey", summary
-         FROM vuln_scans WHERE tenant_id=$1 ORDER BY month_key DESC LIMIT 1`,
-        [tenantId]
-      );
-      rows = result.rows;
-    }
-    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

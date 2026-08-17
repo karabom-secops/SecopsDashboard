@@ -339,12 +339,54 @@ window.ReportsTab = (function () {
 
   // ── Data ──────────────────────────────────────────────────────────────────
 
-  async function fetchJson(url) {
+  /**
+   * Data sources that failed to load on the last fetch, as
+   * { key, url, status, message }. Reset at the start of each fetch round.
+   *
+   * The deck renders a missing source as "No data", which is right — it must
+   * never invent a figure. But it made a 403, a 404, a 500 and a genuinely
+   * empty table completely indistinguishable, so "why is my vulnerability
+   * count blank?" had no answer anywhere in the UI. These are surfaced above
+   * the section list after a generate.
+   */
+  var _fetchProblems = [];
+
+  async function fetchJson(url, key) {
     try {
       var res = await fetch(url, { credentials: 'same-origin' });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        var detail = '';
+        try {
+          var body = await res.json();
+          if (body && body.error) detail = body.error;
+        } catch (_) { /* not JSON — the status is all we have */ }
+        _fetchProblems.push({ key: key || url, url: url, status: res.status, message: detail });
+        return null;
+      }
       return await res.json();
-    } catch (_) { return null; }
+    } catch (err) {
+      _fetchProblems.push({
+        key: key || url, url: url, status: 0,
+        message: 'could not reach the server',
+      });
+      return null;
+    }
+  }
+
+  /** Human-readable account of what failed, or '' if everything loaded. */
+  function fetchProblemSummary() {
+    if (!_fetchProblems.length) return '';
+    var parts = _fetchProblems.map(function (p) {
+      var why = p.status === 403 ? 'no permission for this data'
+        : p.status === 404 ? 'endpoint not found'
+        : p.status === 400 ? (p.message || 'bad request')
+        : p.status === 0   ? 'server unreachable'
+        : p.status >= 500  ? (p.message || 'server error')
+        : (p.message || 'HTTP ' + p.status);
+      return p.key + ' (' + why + ')';
+    });
+    return 'Some data could not be loaded, so those figures show "No data": ' +
+      parts.join('; ') + '.';
   }
 
   /** Fetch only the endpoints the selected sections actually need. */
@@ -368,8 +410,11 @@ window.ReportsTab = (function () {
       });
     }
 
+    // Fresh slate each round, so a warning never persists from a prior client.
+    _fetchProblems = [];
+
     var pairs = await Promise.all(keys.map(async function (k) {
-      return [k, await fetchJson(DATA_SOURCES[k](ctx))];
+      return [k, await fetchJson(DATA_SOURCES[k](ctx), k)];
     }));
 
     var out = {};
@@ -541,9 +586,14 @@ window.ReportsTab = (function () {
       });
 
       var msgs = [];
+      // Load failures first: they explain the blanks the other messages report,
+      // and are the difference between "this client has no scan" and "the
+      // request was refused".
+      var problems = fetchProblemSummary();
+      if (problems) msgs.push(problems);
       if (skipped.length) msgs.push('Skipped: ' + skipped.join(', ') + ' (no data).');
       (_metrics && _metrics.warnings || []).forEach(function (w) { msgs.push(w); });
-      notice(msgs.join(' '));
+      notice(msgs.join(' '), !!problems);
 
       S.openReportWindow(D.renderDeck(slides, full), { width: 1280, height: 820 });
 

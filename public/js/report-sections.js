@@ -84,16 +84,30 @@ window.ReportSections = (function () {
   }
 
   /**
-   * /api/vulns/latest-summary returns an ARRAY — one row per tenant for a
-   * superadmin, a single row otherwise. Pick the row for the client being
-   * reported on and hand back its flat summary object.
+   * /api/vulns/latest-summary returns an ARRAY — normally a single row now that
+   * the route honours ?tenantId=, but still one row per tenant when it is
+   * called without one. Pick the row for the client being reported on and hand
+   * back its flat summary object.
+   *
+   * Matching on tenantId comes FIRST. This used to shortcut to rows[0] whenever
+   * the array had exactly one entry, which meant a deck could quietly print
+   * another client's scan — if the response held one row for a different
+   * tenant, the id was never checked. Falling back to rows[0] is only safe when
+   * the caller has no tenant context at all (a single-tenant login), so that is
+   * the only case where it happens.
    */
   function vulnSummaryFor(ctx) {
     var rows = ctx.data.vulnSummary;
     if (!Array.isArray(rows) || !rows.length) return null;
-    var row = rows.length === 1
-      ? rows[0]
-      : rows.filter(function (r) { return String(r.tenantId) === String(ctx.tenantId); })[0];
+
+    var row;
+    if (ctx.tenantId != null && ctx.tenantId !== '') {
+      row = rows.filter(function (r) {
+        return String(r.tenantId) === String(ctx.tenantId);
+      })[0];
+    } else if (rows.length === 1) {
+      row = rows[0];
+    }
     return row && row.summary ? row.summary : null;
   }
 
