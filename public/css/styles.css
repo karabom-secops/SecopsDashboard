@@ -234,62 +234,67 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
 
-    --tint:            #409CFF;
-    --tint-dark:       #6BB4FF;   /* pressed reads LIGHTER in dark */
+    /* Surfaces. Lifted off pure black on purpose — see the note above the
+       media query. Each step is a real, visible change in value, and cards
+       additionally get a hairline edge (--card-edge) because at this end of
+       the scale a background step alone is not enough to define a shape. */
+    --bg:              #17191D;   /* app canvas   */
+    --bg-soft:         #1C1F23;
+    --surface:         #212429;   /* cards, sheets, nav          */
+    --surface2:        #2A2E34;   /* wells, inputs, recessed     */
+    --surface3:        #343941;   /* hover on a recessed surface */
+    --card-bg:         #212429;
+    --card-edge:       rgba(255, 255, 255, .09);
+    --well-edge:       rgba(0, 0, 0, .25);
+
+    --tint:            #4DA3FF;
+    --tint-dark:       #7DBCFF;   /* pressed reads LIGHTER in dark */
     --tint-light:      #64D2FF;
-    --tint-wash:       rgba(64, 156, 255, .18);
-    --tint-wash-hi:    rgba(64, 156, 255, .26);
-    /* Darker than --tint so white still clears 4.5:1 on a filled button,
-       while staying bright enough (3.6:1) to read as a button on the card. */
+    --tint-wash:       rgba(77, 163, 255, .16);
+    --tint-wash-hi:    rgba(77, 163, 255, .24);
+    /* Darker than --tint so white clears 4.5:1 on the filled button, while
+       still standing off the card at 3.3:1. */
     --tint-fill:       #0A6FE8;
     --on-tint:         #FFFFFF;
-    --red-solid:       #E02D20;
+    --red-solid:       #D9342A;
     --on-red:          #FFFFFF;
-    /* A white wash at 55% would glare on black; in dark the raise is subtle. */
-    --raise:           rgba(255, 255, 255, .08);
+    --raise:           rgba(255, 255, 255, .07);
 
-    --bg:              #000000;
-    --bg-soft:         #1C1C1E;
-    --surface:         #1C1C1E;
-    --surface2:        #2C2C2E;
-    --surface3:        #3A3A3C;
-    --card-bg:         #1C1C1E;
+    /* Never pure white for body text — it glares against a dark field and is
+       the classic tell of an inverted rather than designed dark theme. */
+    --text:            #F2F3F5;
+    --muted:           #A2A9B4;
+    --text-tertiary:   #8A929D;
+    --text-quaternary: #5A626D;
 
-    --text:            #FFFFFF;
-    --muted:           #A1A1A8;
-    --text-tertiary:   #8E8E93;
-    --text-quaternary: #48484A;
+    --separator:       rgba(255, 255, 255, .10);
+    --separator-solid: #33373E;
+    --border:          #33373E;
 
-    --separator:       rgba(84, 84, 88, .65);
-    --separator-solid: #38383A;
-    --border:          #38383A;
+    --fill:            rgba(255, 255, 255, .16);
+    --fill-2:          rgba(255, 255, 255, .12);
+    --fill-3:          rgba(255, 255, 255, .08);
+    --fill-4:          rgba(255, 255, 255, .05);
 
-    --fill:            rgba(120, 120, 128, .36);
-    --fill-2:          rgba(120, 120, 128, .32);
-    --fill-3:          rgba(120, 120, 128, .24);
-    --fill-4:          rgba(120, 120, 128, .18);
-
-    --red:             #FF453A;   --red-text:    #FF8A80;   --red-dim:    #3A1A18;
-    --orange:          #FF9F0A;   --orange-text: #FFB340;   --orange-dim: #3A2A10;
-    --green:           #30D158;   --green-text:  #4CD964;   --green-dim:  #12301C;
+    --red:             #FF5A4F;   --red-text:    #FF7B72;   --red-dim:    #3A1F1D;
+    --orange:          #FF9F0A;   --orange-text: #FFAE42;   --orange-dim: #3A2E15;
+    --green:           #32D158;   --green-text:  #4CDF72;   --green-dim:  #17301F;
     --yellow:          #FFD60A;
     --teal:            #40C8E0;
-    --indigo:          #5E5CE6;
-    /* Lighter than --tint on purpose: the tint is for interactive text on the
-       card, this is badge text on the darker --blue-dim fill. */
-    --blue:            #409CFF;   --blue-text:   #6BB4FF;   --blue-dim:   #10243A;
+    --indigo:          #7D7AFF;
+    --blue:            #4DA3FF;   --blue-text:   #6BB4FF;   --blue-dim:   #16283C;
 
-    --material-thick:  rgba(30, 30, 32, .80);
-    --material-thin:   rgba(30, 30, 32, .68);
+    --material-thick:  rgba(33, 36, 41, .82);
+    --material-thin:   rgba(33, 36, 41, .70);
 
-    /* Shadows barely register on black. Elevation comes from the surface step
-       instead; these stay only so nothing loses its silhouette entirely. */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .40);
-    --shadow:    0 4px 14px rgba(0, 0, 0, .50);
-    --shadow-lg: 0 -2px 40px rgba(0, 0, 0, .70);
+    /* Shadows do little at this end of the scale; the surface step and the
+       card edge carry elevation instead. Kept soft so nothing floats oddly. */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .30);
+    --shadow:    0 6px 18px rgba(0, 0, 0, .40);
+    --shadow-lg: 0 -8px 48px rgba(0, 0, 0, .60);
 
-    --focus-ring: 0 0 0 4px rgba(64, 156, 255, .40);
-  }
+    --focus-ring: 0 0 0 4px rgba(77, 163, 255, .35);
+}
 }
 
 /* Explicit override. Kept as a separate block declaring the SAME properties as
@@ -299,56 +304,66 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --tint:            #409CFF;
-  --tint-dark:       #6BB4FF;
+  /* Surfaces. Lifted off pure black on purpose — see the note above the
+     media query. Each step is a real, visible change in value, and cards
+     additionally get a hairline edge (--card-edge) because at this end of
+     the scale a background step alone is not enough to define a shape. */
+  --bg:              #17191D;   /* app canvas   */
+  --bg-soft:         #1C1F23;
+  --surface:         #212429;   /* cards, sheets, nav          */
+  --surface2:        #2A2E34;   /* wells, inputs, recessed     */
+  --surface3:        #343941;   /* hover on a recessed surface */
+  --card-bg:         #212429;
+  --card-edge:       rgba(255, 255, 255, .09);
+  --well-edge:       rgba(0, 0, 0, .25);
+
+  --tint:            #4DA3FF;
+  --tint-dark:       #7DBCFF;   /* pressed reads LIGHTER in dark */
   --tint-light:      #64D2FF;
-  --tint-wash:       rgba(64, 156, 255, .18);
-  --tint-wash-hi:    rgba(64, 156, 255, .26);
+  --tint-wash:       rgba(77, 163, 255, .16);
+  --tint-wash-hi:    rgba(77, 163, 255, .24);
+  /* Darker than --tint so white clears 4.5:1 on the filled button, while
+     still standing off the card at 3.3:1. */
   --tint-fill:       #0A6FE8;
   --on-tint:         #FFFFFF;
-  --red-solid:       #E02D20;
+  --red-solid:       #D9342A;
   --on-red:          #FFFFFF;
-  --raise:           rgba(255, 255, 255, .08);
+  --raise:           rgba(255, 255, 255, .07);
 
-  --bg:              #000000;
-  --bg-soft:         #1C1C1E;
-  --surface:         #1C1C1E;
-  --surface2:        #2C2C2E;
-  --surface3:        #3A3A3C;
-  --card-bg:         #1C1C1E;
+  /* Never pure white for body text — it glares against a dark field and is
+     the classic tell of an inverted rather than designed dark theme. */
+  --text:            #F2F3F5;
+  --muted:           #A2A9B4;
+  --text-tertiary:   #8A929D;
+  --text-quaternary: #5A626D;
 
-  --text:            #FFFFFF;
-  --muted:           #A1A1A8;
-  --text-tertiary:   #8E8E93;
-  --text-quaternary: #48484A;
+  --separator:       rgba(255, 255, 255, .10);
+  --separator-solid: #33373E;
+  --border:          #33373E;
 
-  --separator:       rgba(84, 84, 88, .65);
-  --separator-solid: #38383A;
-  --border:          #38383A;
+  --fill:            rgba(255, 255, 255, .16);
+  --fill-2:          rgba(255, 255, 255, .12);
+  --fill-3:          rgba(255, 255, 255, .08);
+  --fill-4:          rgba(255, 255, 255, .05);
 
-  --fill:            rgba(120, 120, 128, .36);
-  --fill-2:          rgba(120, 120, 128, .32);
-  --fill-3:          rgba(120, 120, 128, .24);
-  --fill-4:          rgba(120, 120, 128, .18);
-
-  --red:             #FF453A;   --red-text:    #FF8A80;   --red-dim:    #3A1A18;
-  --orange:          #FF9F0A;   --orange-text: #FFB340;   --orange-dim: #3A2A10;
-  --green:           #30D158;   --green-text:  #4CD964;   --green-dim:  #12301C;
+  --red:             #FF5A4F;   --red-text:    #FF7B72;   --red-dim:    #3A1F1D;
+  --orange:          #FF9F0A;   --orange-text: #FFAE42;   --orange-dim: #3A2E15;
+  --green:           #32D158;   --green-text:  #4CDF72;   --green-dim:  #17301F;
   --yellow:          #FFD60A;
   --teal:            #40C8E0;
-  --indigo:          #5E5CE6;
-  /* Lighter than --tint on purpose: the tint is for interactive text on the
-     card, this is badge text on the darker --blue-dim fill. */
-  --blue:            #409CFF;   --blue-text:   #6BB4FF;   --blue-dim:   #10243A;
+  --indigo:          #7D7AFF;
+  --blue:            #4DA3FF;   --blue-text:   #6BB4FF;   --blue-dim:   #16283C;
 
-  --material-thick:  rgba(30, 30, 32, .80);
-  --material-thin:   rgba(30, 30, 32, .68);
+  --material-thick:  rgba(33, 36, 41, .82);
+  --material-thin:   rgba(33, 36, 41, .70);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .40);
-  --shadow:    0 4px 14px rgba(0, 0, 0, .50);
-  --shadow-lg: 0 -2px 40px rgba(0, 0, 0, .70);
+  /* Shadows do little at this end of the scale; the surface step and the
+     card edge carry elevation instead. Kept soft so nothing floats oddly. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .30);
+  --shadow:    0 6px 18px rgba(0, 0, 0, .40);
+  --shadow-lg: 0 -8px 48px rgba(0, 0, 0, .60);
 
-  --focus-ring: 0 0 0 4px rgba(64, 156, 255, .40);
+  --focus-ring: 0 0 0 4px rgba(77, 163, 255, .35);
 }
 
 /* ── Reset / base ──────────────────────────────────────────────────────────── */
@@ -427,7 +442,7 @@ a { color: var(--blue); }
   font-size: 1.05rem;
   font-weight: 700;
   font-family: var(--font-display);
-  color: #1e5070;
+  color: var(--text);
   letter-spacing: -0.2px;
 }
 
@@ -837,19 +852,11 @@ input[type="file"] {
 .stat-card.accent-green  .stat-value { color: var(--green-text); }
 .stat-card.accent-blue   .stat-value { color: var(--tint); }
 
-/* The accent rule. Driven by a dedicated custom property rather than
-   `color`/currentColor, so the accent cannot leak into any child that happens
-   not to set its own colour. */
-.stat-card[class*="accent-"]::after {
-  content: '';
-  position: absolute;
-  left: var(--space-4);
-  right: var(--space-4);
-  bottom: 0;
-  height: 3px;
-  border-radius: 3px 3px 0 0;
-  background: var(--accent, transparent);
-}
+/* No accent bar. The coloured value already says "this one needs attention",
+   and a 3px stripe pinned to the card's bottom edge said it a second time
+   while reading as a crude underline — especially in dark, where a saturated
+   bar on a dark card is the brightest thing on the page for no good reason.
+   The --accent property is kept because other components key off it. */
 .stat-card.accent-red    { --accent: var(--red); }
 .stat-card.accent-amber,
 .stat-card.accent-orange { --accent: var(--orange); }
@@ -922,8 +929,8 @@ input[type="file"] {
 
 .priority-card {
   background: var(--surface);
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--card-edge, var(--separator));
+  border-radius: var(--radius-card);
   border-left: 4px solid var(--border);
   padding: 1.1rem 1.3rem;
   transition: all .2s ease;
@@ -1072,14 +1079,11 @@ input[type="file"] {
 .status-pill.wip  { background: var(--amber-dim); color: var(--amber); border: 1px solid var(--amber); }
 .status-pill.done { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
 
-.p-badge.p1 { background: #ffe8e7; color: #bc3630; }
-.p-badge.p2 { background: #fff3db; color: #9a680f; }
-.p-badge.p3 { background: #dff7ff; color: #0b71a0; }
-.p-badge.p4, .p-badge.p5 { background: #eef6fb; color: #5b7e94; }
 
-.status-pill.open { background: #edf8fd; color: #4f748a; border: 1px solid #c3e6f4; }
-.status-pill.wip  { background: #fff4de; color: #9f6f17; border: 1px solid #efcc89; }
-.status-pill.done { background: #e7f8ea; color: #2c8740; border: 1px solid #9ed9aa; }
+
+
+
+
 
 /* ── Tables as inset grouped lists ──────────────────────────────────────────
    The iOS list is the pattern this app's tables should borrow: a white card on
@@ -1202,8 +1206,8 @@ input[type="file"] {
 .ir-badge.yes { background: var(--green-dim); color: var(--green); }
 .ir-badge.no  { background: var(--red-dim);   color: var(--red);   }
 
-.ir-badge.yes { background: #e5f8ea; color: #2e8c43; }
-.ir-badge.no  { background: #ffe9e7; color: #c43d37; }
+
+
 
 /* ── Escalation cell ───────────────────────────────────────────────────────── */
 .esc-bad  { color: var(--red); font-weight: 600; }
@@ -1219,15 +1223,15 @@ input[type="file"] {
 
 .chart-card {
   background: var(--surface);
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--card-edge, var(--separator));
+  border-radius: var(--radius-card);
   padding: 1.3rem 1.4rem;
   transition: border-color .2s, transform .2s, box-shadow .2s;
   box-shadow: var(--shadow-sm);
 }
 
 .chart-card:hover {
-  border-color: rgba(0, 186, 223, .50);
+  border-color: var(--tint);
   transform: translateY(-3px);
   box-shadow: 0 16px 34px rgba(0, 102, 204, .15);
 }
@@ -1278,10 +1282,10 @@ input[type="file"] {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .5px;
-  color: #2d5a7b;
+  color: var(--text);
   margin: 2rem 0 1rem;
   padding-bottom: 0.75rem;
-  border-bottom: 2px solid rgba(0, 186, 223, .25);
+  border-bottom: 1px solid var(--separator);
   position: relative;
 }
 .section-heading::before {
@@ -1296,17 +1300,16 @@ input[type="file"] {
 }
 
 /* Operations section containers */
+/* Was a 50%-white gradient, which stays bright whatever sits behind it — the
+   one panel that still glared in dark. A plain surface reads the same in both
+   themes and lets the card edge do the separating. */
 .operations-section {
-  background: linear-gradient(135deg, rgba(255,255,255,.5) 0%, rgba(0,186,223,.02) 100%);
-  border: 1px solid rgba(0,186,223,.12);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  margin-bottom: 2.5rem;
-  transition: all .2s ease;
-}
-.operations-section:hover {
-  border-color: rgba(0,186,223,.22);
-  box-shadow: 0 8px 20px rgba(0,102,204,.08);
+  background: var(--surface);
+  border: 1px solid var(--card-edge, var(--separator));
+  border-radius: var(--radius-card);
+  padding: var(--space-5);
+  margin-bottom: var(--space-8);
+  box-shadow: var(--shadow-sm);
 }
 .operations-section:first-of-type {
   margin-top: 0;
@@ -1345,15 +1348,15 @@ input[type="file"] {
 .risk-info      { background: #f1f5f9; color: #64748b; }
 
 /* Additional status pill variants for vuln remediation */
-.status-pill.accepted    { background: #ecfdf5; color: #059669; border: 1px solid #6ee7b7; }
-.status-pill.in-progress { background: #eff8ff; color: #1d6fab; border: 1px solid #93c5fd; }
-.status-pill.fixed       { background: #e7f8ea; color: #2c8740; border: 1px solid #9ed9aa; }
+.status-pill.accepted    { background: var(--green-dim);  color: var(--green-text);  border: 1px solid var(--green); }
+.status-pill.in-progress { background: var(--blue-dim);   color: var(--blue-text);   border: 1px solid var(--blue); }
+.status-pill.fixed       { background: var(--green-dim);  color: var(--green-text);  border: 1px solid var(--green); }
 
 /* Remediation Tracker — source badges */
-.badge-source-vuln     { background: #fef3c7; color: #92400e; }
-.badge-source-pentest  { background: #ede9fe; color: #5b21b6; }
-.badge-source-risk     { background: #dbeafe; color: #1e40af; }
-.badge-source-incident { background: #fee2e2; color: #b91c1c; }
+.badge-source-vuln     { background: var(--orange-dim); color: var(--orange-text); }
+.badge-source-pentest  { background: var(--indigo-dim, rgba(125,122,255,.14)); color: var(--indigo); }
+.badge-source-risk     { background: var(--blue-dim);   color: var(--blue-text); }
+.badge-source-incident { background: var(--red-dim);    color: var(--red-text); }
 
 /* Remediation Tracker view switch — the same segmented control as .filter-chips,
    since it is the same idea. Kept as its own selectors because the markup
@@ -1484,7 +1487,7 @@ input[type="file"] {
 .empty-state-title {
   font-size: 1.1rem;
   font-weight: 700;
-  color: #2d5a7b;
+  color: var(--text);
   letter-spacing: .3px;
   margin: 0;
 }
@@ -1525,7 +1528,7 @@ input[type="file"] {
 }
 .vuln-empty-card p:first-of-type {
   font-weight: 600;
-  color: #2d5a7b;
+  color: var(--text);
 }
 .vuln-empty-card p:last-of-type {
   font-size: 0.85rem;
@@ -1827,7 +1830,7 @@ input[type="file"] {
 
 /* ── Status filter chips ───────────────────────────────────────────────────── */
 .filter-chips-status { margin-top: 0.35rem; }
-.chip-st-open        { border-color: #c3e6f4 !important; color: #4f748a !important; }
+.chip-st-open        { border-color: #c3e6f4 !important; color: var(--muted) !important; }
 .chip-st-open.active { background: #edf8fd !important; }
 .chip-st-inprogress,
 .chip-st-in-progress        { border-color: #efcc89 !important; color: #9f6f17 !important; }
@@ -2446,8 +2449,8 @@ body.login-page {
   padding: 3rem 2rem;
   color: var(--muted);
   text-align: center;
-  background: linear-gradient(135deg, rgba(255,255,255,.3) 0%, rgba(124,58,237,.02) 100%);
-  border: 1.5px solid rgba(124,58,237,.12);
+  background: var(--fill-4);
+  border: 1px solid var(--card-edge, var(--separator));
   border-radius: var(--radius);
   margin: 1.5rem 0;
 }
@@ -2464,7 +2467,7 @@ body.login-page {
 }
 .awareness-empty p:first-of-type {
   font-weight: 600;
-  color: #2d5a7b;
+  color: var(--text);
 }
 
 .table-scroll {
@@ -4223,9 +4226,9 @@ body.login-page {
   overflow-y: auto;
   padding: 0.4rem 0.35rem 0.5rem;
   border-radius: var(--radius);
-  background: linear-gradient(175deg, #fff 0%, #f4fbff 100%);
-  border: 1.5px solid rgba(0,186,223,.30);
-  box-shadow: 6px 8px 28px rgba(0,102,204,.20);
+  background: var(--surface);
+  border: 1px solid var(--card-edge, var(--separator));
+  box-shadow: var(--shadow);
 }
 .nav-flyout-title {
   padding: 0.4rem 0.9rem 0.5rem;
@@ -4558,3 +4561,48 @@ h1, h2, h3, h4,
 :root[data-theme="dark"] .side-menu-brand .brand-secops { color: var(--tint); }
 :root[data-theme="dark"] .header-logo,
 :root[data-theme="dark"] .brand-logo { filter: brightness(1.6); }
+
+/* ── Card definition in dark ────────────────────────────────────────────────
+   The single most important dark-mode rule in this file.
+
+   In light, a white card on a grey canvas separates on background alone. In
+   dark, a #212429 card on a #17191D canvas is a ~1.13:1 step — technically a
+   difference, perceptually almost nothing, because the eye discriminates
+   poorly at the dark end and ambient light on an LCD washes out what is left.
+   Drop shadows do not help either; a shadow needs something lighter to fall
+   against.
+
+   macOS solves it with a hairline edge, and so does this. --card-edge is only
+   defined in the dark themes, so in light these rules resolve to `transparent`
+   and change nothing. */
+.stat-card,
+.table-wrapper,
+.modal-box,
+.rr-card,
+.chart-card,
+.upload-card,
+.priority-card,
+.operations-section,
+.grc-domain-card,
+.empty-state-container {
+  border: 1px solid var(--card-edge, transparent);
+}
+
+/* Recessed surfaces get the inverse treatment — a slightly darker inset line,
+   so a well reads as pressed in rather than raised. */
+.form-input,
+.form-select,
+.form-textarea,
+.filter-chips,
+.view-toggle,
+.rr-column {
+  border: 1px solid var(--well-edge, transparent);
+}
+
+/* The selected pill in a segmented control needs its own edge in dark: it sits
+   on a track that is already light-on-dark, so the value step alone is too
+   subtle to read as "raised". */
+.chip.active,
+.view-toggle-btn.active {
+  border: 1px solid var(--card-edge, transparent);
+}
