@@ -39,6 +39,17 @@
   --tint-wash:       rgba(0, 102, 204, .10);   /* tinted button fill */
   --tint-wash-hi:    rgba(0, 102, 204, .16);
 
+  /* A tint that TEXT sits on is a different colour from a tint that is text.
+     In dark the accent has to lighten to stay readable on black (#409CFF),
+     but white on #409CFF is only 2.8:1 — so a filled button needs its own,
+     darker fill. Light mode happens to be able to use one value for both. */
+  --tint-fill:       #0066CC;   /* filled button / selected row background */
+  --on-tint:         #FFFFFF;   /* text and glyphs on --tint-fill           */
+  --red-solid:       #D70015;   /* filled destructive; white reaches 5.4:1  */
+  --on-red:          #FFFFFF;
+  /* The raised pill in a segmented control, and control hover washes. */
+  --raise:           rgba(255, 255, 255, .55);
+
   /* Legacy aliases. The app has ~200 references to these names across 3,600
      lines; re-pointing them here re-skins every screen at once and lets the
      old names retire gradually instead of in one risky sweep. */
@@ -184,6 +195,160 @@
 
   /* ── Focus ── */
   --focus-ring: 0 0 0 4px rgba(0, 102, 204, .28);
+
+  /* Tells the UA to render its own furniture (scrollbars, form control
+     internals, the date-picker calendar) in the matching scheme. Without it
+     you get light scrollbars on a dark page. Overridden per theme below. */
+  color-scheme: light;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DARK THEME
+   ═══════════════════════════════════════════════════════════════════════════
+
+   iOS dark is not "light with the lightness flipped". Three things change
+   structurally, and all three are why a naive inversion looks wrong:
+
+   1. The GROUPED CANVAS GOES TO PURE BLACK and cards become #1C1C1E — the
+      opposite arrangement to light, where the canvas is grey and cards are
+      white. Elevation therefore reads as *lighter*, not as a shadow, which is
+      why shadows are nearly useless in dark and the surface step does the work.
+
+   2. EVERY ACCENT LIGHTENS. Reflex blue at #0066CC measures 3.06:1 on a
+      #1C1C1E card — unreadable. Even Apple's own systemBlue (#0A84FF) only
+      reaches 3.82:1 on an elevated #2C2C2E surface. The tint is lightened to
+      #409CFF, which holds 4.92:1 at worst while staying recognisably Reflex.
+
+   3. STATUS TEXT LIGHTENS FURTHER THAN THE FILLS. systemRed #FF453A fails on
+      elevated surfaces (4.09:1), and on its own 16% wash it is worse. Badge
+      labels use #FF8A80 / #6BB4FF, measured to clear 4.5:1 on the canvas, on
+      a card, and on an elevated surface.
+
+   Applied two ways, deliberately: the media query follows the OS (the Apple
+   default — the system decides, not the app), and the [data-theme] attribute
+   lets a person override it. The media query is guarded with
+   :not([data-theme="light"]) so an explicit light choice wins over a dark OS.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --tint:            #409CFF;
+    --tint-dark:       #6BB4FF;   /* pressed reads LIGHTER in dark */
+    --tint-light:      #64D2FF;
+    --tint-wash:       rgba(64, 156, 255, .18);
+    --tint-wash-hi:    rgba(64, 156, 255, .26);
+    /* Darker than --tint so white still clears 4.5:1 on a filled button,
+       while staying bright enough (3.6:1) to read as a button on the card. */
+    --tint-fill:       #0A6FE8;
+    --on-tint:         #FFFFFF;
+    --red-solid:       #E02D20;
+    --on-red:          #FFFFFF;
+    /* A white wash at 55% would glare on black; in dark the raise is subtle. */
+    --raise:           rgba(255, 255, 255, .08);
+
+    --bg:              #000000;
+    --bg-soft:         #1C1C1E;
+    --surface:         #1C1C1E;
+    --surface2:        #2C2C2E;
+    --surface3:        #3A3A3C;
+    --card-bg:         #1C1C1E;
+
+    --text:            #FFFFFF;
+    --muted:           #A1A1A8;
+    --text-tertiary:   #8E8E93;
+    --text-quaternary: #48484A;
+
+    --separator:       rgba(84, 84, 88, .65);
+    --separator-solid: #38383A;
+    --border:          #38383A;
+
+    --fill:            rgba(120, 120, 128, .36);
+    --fill-2:          rgba(120, 120, 128, .32);
+    --fill-3:          rgba(120, 120, 128, .24);
+    --fill-4:          rgba(120, 120, 128, .18);
+
+    --red:             #FF453A;   --red-text:    #FF8A80;   --red-dim:    #3A1A18;
+    --orange:          #FF9F0A;   --orange-text: #FFB340;   --orange-dim: #3A2A10;
+    --green:           #30D158;   --green-text:  #4CD964;   --green-dim:  #12301C;
+    --yellow:          #FFD60A;
+    --teal:            #40C8E0;
+    --indigo:          #5E5CE6;
+    /* Lighter than --tint on purpose: the tint is for interactive text on the
+       card, this is badge text on the darker --blue-dim fill. */
+    --blue:            #409CFF;   --blue-text:   #6BB4FF;   --blue-dim:   #10243A;
+
+    --material-thick:  rgba(30, 30, 32, .80);
+    --material-thin:   rgba(30, 30, 32, .68);
+
+    /* Shadows barely register on black. Elevation comes from the surface step
+       instead; these stay only so nothing loses its silhouette entirely. */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .40);
+    --shadow:    0 4px 14px rgba(0, 0, 0, .50);
+    --shadow-lg: 0 -2px 40px rgba(0, 0, 0, .70);
+
+    --focus-ring: 0 0 0 4px rgba(64, 156, 255, .40);
+  }
+}
+
+/* Explicit override. Kept as a separate block declaring the SAME properties as
+   the media query above — a check in the harness compares the two token sets,
+   because the failure mode here is silent drift where the toggle and the OS
+   produce different-looking dark themes. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --tint:            #409CFF;
+  --tint-dark:       #6BB4FF;
+  --tint-light:      #64D2FF;
+  --tint-wash:       rgba(64, 156, 255, .18);
+  --tint-wash-hi:    rgba(64, 156, 255, .26);
+  --tint-fill:       #0A6FE8;
+  --on-tint:         #FFFFFF;
+  --red-solid:       #E02D20;
+  --on-red:          #FFFFFF;
+  --raise:           rgba(255, 255, 255, .08);
+
+  --bg:              #000000;
+  --bg-soft:         #1C1C1E;
+  --surface:         #1C1C1E;
+  --surface2:        #2C2C2E;
+  --surface3:        #3A3A3C;
+  --card-bg:         #1C1C1E;
+
+  --text:            #FFFFFF;
+  --muted:           #A1A1A8;
+  --text-tertiary:   #8E8E93;
+  --text-quaternary: #48484A;
+
+  --separator:       rgba(84, 84, 88, .65);
+  --separator-solid: #38383A;
+  --border:          #38383A;
+
+  --fill:            rgba(120, 120, 128, .36);
+  --fill-2:          rgba(120, 120, 128, .32);
+  --fill-3:          rgba(120, 120, 128, .24);
+  --fill-4:          rgba(120, 120, 128, .18);
+
+  --red:             #FF453A;   --red-text:    #FF8A80;   --red-dim:    #3A1A18;
+  --orange:          #FF9F0A;   --orange-text: #FFB340;   --orange-dim: #3A2A10;
+  --green:           #30D158;   --green-text:  #4CD964;   --green-dim:  #12301C;
+  --yellow:          #FFD60A;
+  --teal:            #40C8E0;
+  --indigo:          #5E5CE6;
+  /* Lighter than --tint on purpose: the tint is for interactive text on the
+     card, this is badge text on the darker --blue-dim fill. */
+  --blue:            #409CFF;   --blue-text:   #6BB4FF;   --blue-dim:   #10243A;
+
+  --material-thick:  rgba(30, 30, 32, .80);
+  --material-thin:   rgba(30, 30, 32, .68);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .40);
+  --shadow:    0 4px 14px rgba(0, 0, 0, .50);
+  --shadow-lg: 0 -2px 40px rgba(0, 0, 0, .70);
+
+  --focus-ring: 0 0 0 4px rgba(64, 156, 255, .40);
 }
 
 /* ── Reset / base ──────────────────────────────────────────────────────────── */
@@ -380,8 +545,8 @@ a { color: var(--blue); }
 
 /* Filled — the committing action. One per view, ideally. */
 .btn-primary {
-  background: var(--tint);
-  color: #FFFFFF;
+  background: var(--tint-fill);
+  color: var(--on-tint);
 }
 .btn-primary:hover  { background: var(--tint-dark); }
 .btn-primary:active { background: var(--tint-dark); }
@@ -733,7 +898,7 @@ input[type="file"] {
               transform  var(--dur-fast) var(--ease-spring);
 }
 
-.chip:hover  { background: rgba(255, 255, 255, .55); }
+.chip:hover  { background: var(--raise); }
 .chip:active { transform: scale(0.96); }
 
 /* The raised pill. A real background here rather than a ring, because the
@@ -1214,7 +1379,7 @@ input[type="file"] {
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease);
 }
-.view-toggle-btn:hover { background: rgba(255, 255, 255, .55); }
+.view-toggle-btn:hover { background: var(--raise); }
 .view-toggle-btn.active {
   background: var(--surface);
   color: var(--text);
@@ -2461,8 +2626,10 @@ body.login-page {
   align-items: center;
   justify-content: space-between;
   padding: 1.1rem 1.2rem;
-  border-bottom: 1.5px solid rgba(0,186,223,.20);
-  background: rgba(255,255,255,.96);
+  /* Was a hardcoded near-white with a cyan rule, which stayed a bright island
+     at the top of the sidebar once the rest of the chrome went dark. */
+  border-bottom: 1px solid var(--separator);
+  background: transparent;
   flex-shrink: 0;
 }
 
@@ -2551,13 +2718,13 @@ body.login-page {
   color: var(--text);
 }
 .side-nav-item.active {
-  background: var(--tint);
-  color: #FFFFFF;
+  background: var(--tint-fill);
+  color: var(--on-tint);
   font-weight: 590;
   border-left: none;
   box-shadow: none;
 }
-.side-nav-item.active .side-nav-icon { stroke: #FFFFFF; }
+.side-nav-item.active .side-nav-icon { stroke: var(--on-tint); }
 .side-nav-item:focus-visible {
   outline: 2px solid var(--logo-cyan);
   outline-offset: 1px;
@@ -2821,8 +2988,8 @@ body.login-page {
 }
 .btn-danger:hover { background: rgba(255, 59, 48, .12); }
 .btn-danger-filled {
-  background: var(--red);
-  color: #FFFFFF;
+  background: var(--red-solid);
+  color: var(--on-red);
 }
 .btn-danger-filled:hover { background: var(--red-text); }
 
@@ -3212,11 +3379,17 @@ body.login-page {
    -text companion for the label, because every system colour fails AA as text
    at this size (systemRed 3.6:1, systemOrange 2.2:1, systemGreen 2.2:1). The
    fill carries the hue; the text carries the legibility. */
-.badge-blue   { background: rgba(0, 102, 204, .12);  color: var(--tint); }
-.badge-green  { background: rgba(52, 199, 89, .16);  color: var(--green-text); }
-.badge-amber  { background: rgba(255, 149, 0, .16);  color: var(--orange-text); }
-.badge-red    { background: rgba(255, 59, 48, .14);  color: var(--red-text); }
-.badge-muted  { background: var(--fill-3);           color: var(--muted); }
+/* Fills are the OPAQUE -dim tokens rather than a translucent wash of the hue.
+   Two reasons: they are themed, so dark mode swaps them automatically; and an
+   opaque fill has one known contrast value instead of a different one on every
+   background it lands on — the translucent version had to be verified against
+   the card, the row and the hover state separately.
+   Measured: light 4.8-5.6:1, dark 6.9-7.8:1. */
+.badge-blue   { background: var(--blue-dim);   color: var(--blue-text); }
+.badge-green  { background: var(--green-dim);  color: var(--green-text); }
+.badge-amber  { background: var(--orange-dim); color: var(--orange-text); }
+.badge-red    { background: var(--red-dim);    color: var(--red-text); }
+.badge-muted  { background: var(--fill-3);     color: var(--muted); }
 
 /* Risk Register kanban board */
 .rr-board {
@@ -4256,7 +4429,7 @@ h1, h2, h3, h4,
   line-height: 1.4;
   color: var(--muted);
 }
-.tpr-status { font-weight: 700; color: #92400E; }
+.tpr-status { font-weight: 700; color: var(--orange-text); }
 
 .tpr-table td { vertical-align: top; }
 .tpr-table td.num,
@@ -4286,9 +4459,9 @@ h1, h2, h3, h4,
   font-size: var(--text-md);
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.tpr-score.is-low    { background: rgba(34,197,94,.15);  color: #166534; }
-.tpr-score.is-medium { background: rgba(245,158,11,.15); color: #92400E; }
-.tpr-score.is-high   { background: rgba(239,68,68,.15);  color: #B91C1C; }
+.tpr-score.is-low    { background: var(--green-dim);  color: var(--green-text); }
+.tpr-score.is-medium { background: var(--orange-dim); color: var(--orange-text); }
+.tpr-score.is-high   { background: var(--red-dim);    color: var(--red-text); }
 
 /* Paired date fields — four stacked full-width date pickers was a lot of
    vertical travel for four related values. */
@@ -4308,7 +4481,7 @@ h1, h2, h3, h4,
   margin: 0;
   font-size: var(--text-sm);
   line-height: 1.4;
-  color: #B91C1C;
+  color: var(--red-text);
   text-align: left;
 }
 .tpr-modal-msg:empty { display: none; }
@@ -4338,3 +4511,50 @@ h1, h2, h3, h4,
    which leaves the numbers sitting at different heights across the row.
    Reserving the second line keeps the value baselines aligned. */
 .tpr-stats .stat-label { min-height: 2.2em; }
+
+/* ── Appearance toggle ─────────────────────────────────────────────────────── */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-capsule);
+  background: var(--fill-4);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease),
+              color      var(--dur-fast) var(--ease),
+              transform  var(--dur-fast) var(--ease-spring);
+}
+.theme-toggle:hover  { background: var(--fill-3); color: var(--text); }
+.theme-toggle:active { transform: scale(0.92); }
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: 2px;
+}
+.theme-icon { width: 18px; height: 18px; }
+
+/* ── Dark-mode corrections ─────────────────────────────────────────────────────
+   Rules whose LIGHT value is correct but which need a different value in dark,
+   and which are not expressible as a single token. Kept together so the dark
+   theme is one thing to read rather than scattered conditionals.
+
+   This block is deliberately short. Everything else in the app themes itself
+   through the tokens — if this section grows, that is the signal that a
+   component is hardcoding colour and should be tokenised instead. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .brand-secops,
+  :root:not([data-theme="light"]) .side-menu-brand .brand-secops { color: var(--tint); }
+
+  /* The logo is a dark-ink PNG/SVG on a light ground; on black it disappears.
+     Lifting it slightly keeps the mark visible without a second asset. */
+  :root:not([data-theme="light"]) .header-logo,
+  :root:not([data-theme="light"]) .brand-logo { filter: brightness(1.6); }
+}
+:root[data-theme="dark"] .brand-secops,
+:root[data-theme="dark"] .side-menu-brand .brand-secops { color: var(--tint); }
+:root[data-theme="dark"] .header-logo,
+:root[data-theme="dark"] .brand-logo { filter: brightness(1.6); }
