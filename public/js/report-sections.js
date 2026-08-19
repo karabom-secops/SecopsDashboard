@@ -697,12 +697,25 @@ window.ReportSections = (function () {
     function s(k) {
       return c[k] && c[k].score != null ? Math.round(Number(c[k].score)) : null;
     }
+    // A component with no data behind it scores 0 rather than being excluded —
+    // an unmeasured control is an unmanaged one. The deck has to be able to
+    // tell that zero apart from a zero that was earned, because on a
+    // client-facing page "Vulnerability Management: 0" reads as a catastrophic
+    // scan result when it may only mean no scan was uploaded.
+    // Payloads predating the flag are treated as measured.
+    function m(k) { return !(c[k] && c[k].measured === false); }
     return {
       vulnerabilities:  s('vulnerabilities'),
       awareness:        s('awareness'),
       incidentResponse: s('incidentResponse'),
       overall: (ctx.data.secureScore || {}).score != null
         ? Math.round(Number(ctx.data.secureScore.score)) : null,
+      measured: {
+        vulnerabilities:  m('vulnerabilities'),
+        awareness:        m('awareness'),
+        incidentResponse: m('incidentResponse'),
+        overall:          true,
+      },
     };
   }
 
@@ -1440,18 +1453,25 @@ window.ReportSections = (function () {
       { label: 'Secure Score',             key: 'overall',          target: MATURITY_TARGETS.overall },
     ];
 
+    var measured = now.measured || {};
     var rows = domains.map(function (d) {
       var cur = now[d.key], was = prev[d.key];
       var t = trendFor(cur, was);
       return {
         domain: d.label, prev: was, cur: cur, target: d.target, trend: t,
         gap: cur == null ? null : cur - d.target,
+        measured: measured[d.key] !== false,
       };
     });
+    var unmeasured = rows.filter(function (r) { return !r.measured; });
 
     return D.dataTable({
       cols: [
-        { label: 'Domain', key: 'domain', width: '32%' },
+        { label: 'Domain', key: 'domain', width: '32%',
+          raw: function (r) {
+            return esc(r.domain) +
+              (r.measured ? '' : ' <span class="rag-pill nd">No data</span>');
+          } },
         { label: prevLabel || 'Previous', key: 'prev', width: '13%', cls: 'num',
           raw: function (r) { return r.prev == null ? '—' : String(r.prev); } },
         { label: thisLabel || 'Current', key: 'cur', width: '13%', cls: 'num',
@@ -1474,6 +1494,16 @@ window.ReportSections = (function () {
     }) +
     '<div class="rag-note">Gap is the distance from the agreed target score. ' +
       'A positive gap means the domain is at or above target.' +
+      // Naming this is not optional on a client-facing page: a zero from an
+      // absent upload and a zero from a bad result look identical in a table.
+      (unmeasured.length
+        ? ' <strong>' + unmeasured.map(function (r) { return esc(r.domain); }).join(' and ') +
+          ' scored zero because no data has been supplied for ' +
+          (unmeasured.length > 1 ? 'those domains' : 'that domain') +
+          ', not because of an adverse result.</strong> An unmeasured control is ' +
+          'treated as unmanaged rather than excluded, so the overall score reflects ' +
+          'the gap in visibility.'
+        : '') +
       (prev.source === 'reconstructed'
         ? ' Prior-month figures are reconstructed from dated scan, training and ' +
           'ticket records rather than a stored measurement, so they reflect the ' +

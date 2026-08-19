@@ -4606,3 +4606,40 @@ h1, h2, h3, h4,
 .view-toggle-btn.active {
   border: 1px solid var(--card-edge, transparent);
 }
+
+/* ── Secure Score: unmeasured components ────────────────────────────────────
+   A component with no data scores 0 by design. These styles exist so that
+   zero is never mistaken for a failed assessment — the card is visibly a
+   "nothing here" state rather than a bad result. */
+.score-unmeasured-note {
+  max-width: 62ch;
+  margin: var(--space-3) auto 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-card);
+  background: var(--orange-dim);
+  color: var(--orange-text);
+  border: 1px solid var(--card-edge, transparent);
+  font-size: var(--text-footnote);
+  line-height: 1.5;
+  text-align: left;
+}
+.score-unmeasured-note strong { font-weight: 590; }
+
+/* Dashed edge reads as "absent", not "failed". */
+.component-card.component-unmeasured {
+  border: 1px dashed var(--separator-solid);
+  background: var(--fill-4);
+}
+.component-card.component-unmeasured .component-score-text { color: var(--muted); }
+
+.component-nodata-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-capsule);
+  background: var(--orange-dim);
+  color: var(--orange-text);
+  font-size: var(--text-caption-2);
+  font-weight: 590;
+  vertical-align: middle;
+}

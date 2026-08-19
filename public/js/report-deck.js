@@ -166,6 +166,11 @@ window.ReportDeck = (function () {
 '.rag-basis{font-size:7.5pt;color:' + P.DECK_MUTED + ';margin-top:.6mm}',
 '.rag-pill{display:inline-block;color:#fff;font-size:8pt;font-weight:700;',
 '  border-radius:1mm;padding:.9mm 2.4mm;white-space:nowrap}',
+/* Every other .rag-pill takes its background inline from the RAG rating; this
+   one marks "no data supplied" and has to carry its own, or it renders as
+   white text on white. Deliberately neutral — an absent measurement is not a
+   red result. */
+'.rag-pill.nd{background:#E8E8ED;color:#4A4A50;font-weight:600}',
 '.rag-yes{color:#1E7B45;font-weight:700}',
 '.rag-no{color:#C0392B;font-weight:700}',
 '.rag-unknown{color:' + P.DECK_MUTED + ';font-style:italic;font-size:8.5pt}',

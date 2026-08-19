@@ -94,32 +94,70 @@ const SecureScoreTab = (() => {
     }
   }
 
+  /**
+   * Banner naming the components with no data behind them and the score
+   * ceiling they impose. Hidden entirely when everything is measured.
+   */
+  function renderUnmeasuredNote(el, scoreData) {
+    if (!el) return;
+    const missing = scoreData.unmeasured || [];
+    if (!missing.length) { el.hidden = true; el.innerHTML = ''; return; }
+
+    const names = missing.map(u => u.label).join(', ');
+    const lost  = missing.reduce((n, u) => n + (u.pointsForfeited || 0), 0);
+    const ceil  = scoreData.maxAchievable != null ? scoreData.maxAchievable : (100 - lost);
+
+    el.hidden = false;
+    el.innerHTML =
+      '<strong>' + missing.length + ' component' + (missing.length > 1 ? 's have' : ' has') +
+      ' no data: ' + names + '.</strong> ' +
+      'These score zero rather than being excluded, because an unmeasured control ' +
+      'is an unmanaged one. Until data is supplied the score cannot exceed ' +
+      '<strong>' + ceil + '/100</strong> (' + lost + ' points unavailable).';
+  }
+
   function renderComponentScores(container, components) {
+    // `measured` comes from the scoring engine. A component with no data
+    // scores 0 by design — an unmeasured control is an unmanaged one — but the
+    // card MUST say so, or a client reads "0/100" as a scan they failed rather
+    // than one nobody uploaded. Older payloads without the flag are treated as
+    // measured, which keeps the previous behaviour.
+    const wasMeasured = (c) => c && c.measured !== false;
+
     const items = [
       {
         label: 'Vulnerabilities', weight: '40%',
         score: components.vulnerabilities.score,
+        measured: wasMeasured(components.vulnerabilities),
         desc: 'Based on critical, high, medium, and low findings',
-        tooltip: 'Score starts at 100. Each finding deducts points:<br>• Critical: −20 pts<br>• High: −10 pts<br>• Medium: −5 pts<br>• Low: −1 pt<br>Minimum score is 0.',
+        missing: 'No vulnerability scan uploaded. An unscanned estate is treated ' +
+                 'as unknown, not clean — upload a scan to recover up to 40 points.',
+        tooltip: 'Score starts at 100. Each finding deducts points:<br>• Critical: −20 pts<br>• High: −10 pts<br>• Medium: −5 pts<br>• Low: −1 pt<br>Minimum score is 0.<br><br><strong>No data scores 0</strong>, because an unmeasured control is an unmanaged one.',
       },
       {
         label: 'Security Awareness', weight: '35%',
         score: components.awareness.score,
+        measured: wasMeasured(components.awareness),
         desc: 'Training completion rate',
-        tooltip: 'Score = % of training sessions completed (phishing simulations excluded).<br>100% completion = 100/100.',
+        missing: 'No awareness training data uploaded — upload training records ' +
+                 'to recover up to 35 points.',
+        tooltip: 'Score = % of training sessions completed (phishing simulations excluded).<br>100% completion = 100/100.<br><br><strong>No data scores 0</strong>, because an unmeasured control is an unmanaged one.',
       },
       {
         label: 'Incident Response', weight: '25%',
         score: components.incidentResponse.score,
+        measured: wasMeasured(components.incidentResponse),
         desc: 'Ticket resolution & speed',
-        tooltip: 'Score based on ticket resolution rate minus a speed penalty.<br>• Resolution rate forms the base score.<br>• Avg resolution &gt; 24 hrs deducts up to 20 pts.',
+        missing: 'No MDR or incident data available — connect the MDR feed to ' +
+                 'recover up to 25 points.',
+        tooltip: 'Score based on ticket resolution rate minus a speed penalty.<br>• Resolution rate forms the base score.<br>• Avg resolution &gt; 24 hrs deducts up to 20 pts.<br><br><strong>No data scores 0</strong>, because an unmeasured control is an unmanaged one.',
       },
     ];
 
     const html = `
       <div class="component-scores">
         ${items.map(item => `
-          <div class="component-card">
+          <div class="component-card${item.measured ? '' : ' component-unmeasured'}">
             <div class="component-header">
               <h4>${item.label}</h4>
               <div class="component-header-right">
@@ -134,8 +172,10 @@ const SecureScoreTab = (() => {
               <div class="score-bar-fill" data-score="${item.score}"
                    style="width: 0%; background-color: ${getScoreColor(item.score)};"></div>
             </div>
-            <div class="component-score-text">${item.score}/100</div>
-            <small>${item.desc}</small>
+            <div class="component-score-text">
+              ${item.score}/100${item.measured ? '' : ' <span class="component-nodata-tag">No data</span>'}
+            </div>
+            <small>${item.measured ? item.desc : item.missing}</small>
           </div>
         `).join('')}
       </div>
@@ -408,6 +448,7 @@ const SecureScoreTab = (() => {
         </div>
         <div class="secure-score-main">
           <div id="secure-score-gauge" class="score-gauge-container"></div>
+          <div id="secure-score-unmeasured" class="score-unmeasured-note" hidden></div>
           <div id="secure-score-data-age" class="data-age-info"></div>
           <div id="secure-score-grc-indicator"></div>
         </div>
@@ -458,6 +499,11 @@ const SecureScoreTab = (() => {
     // Render main gauge with delta
     const gaugeContainer = document.getElementById('secure-score-gauge');
     renderScoreGauge(gaugeContainer, scoreData.score, delta);
+
+    // State the ceiling explicitly when components have no data behind them.
+    // Without this the score looks like a verdict on the client's security,
+    // when part of it is really a verdict on what has been uploaded.
+    renderUnmeasuredNote(document.getElementById('secure-score-unmeasured'), scoreData);
 
     // Render insurability panel
     const insurabilityContainer = document.getElementById('secure-score-insurability');

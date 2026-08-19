@@ -28,7 +28,7 @@ const {
 const { scoreVendor } = require('./lib/vendor-score');
 const {
   calculateSecureScore, calculateVulnScore, calculateAwarenessScore,
-  calculateMdrScore, generateRecommendations,
+  calculateMdrScore, generateRecommendations, WEIGHTS,
 } = require('./lib/secure-score');
 const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils');
 const arcticWolfAdapter = require('./lib/integrations/arctic-wolf');
@@ -4754,9 +4754,15 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       if (mdrResult.rows.length > 0) mdrData = { upload: mdrResult.rows[0] };
     } catch (_) { /* table may not exist yet */ }
 
-    // Calculate score
-    const { composite, vulnScore, awarenessScore, mdrScore } = calculateSecureScore(vulnData, awarenessData, mdrData);
-    const recommendations = generateRecommendations(vulnScore, awarenessScore, mdrScore);
+    // Calculate score. `measured` says whether each component was actually
+    // assessed; an unmeasured component scores 0 and must be labelled as such,
+    // or a client reads "Vulnerabilities 0/100" as a failed scan rather than as
+    // a scan that was never uploaded.
+    const {
+      composite, vulnScore, awarenessScore, mdrScore,
+      measured, unmeasured, maxAchievable,
+    } = calculateSecureScore(vulnData, awarenessData, mdrData);
+    const recommendations = generateRecommendations(vulnScore, awarenessScore, mdrScore, measured);
 
     // Determine rating
     let rating = 'Critical';
@@ -4770,10 +4776,14 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       score: composite,
       rating,
       components: {
-        vulnerabilities: { score: vulnScore, weight: 0.40 },
-        awareness: { score: awarenessScore, weight: 0.35 },
-        incidentResponse: { score: mdrScore, weight: 0.25 },
+        vulnerabilities:  { score: vulnScore,      weight: WEIGHTS.vulnerabilities,  measured: measured.vulnerabilities },
+        awareness:        { score: awarenessScore, weight: WEIGHTS.awareness,        measured: measured.awareness },
+        incidentResponse: { score: mdrScore,       weight: WEIGHTS.incidentResponse, measured: measured.incidentResponse },
       },
+      // Which components have no data behind them, what each is worth, and the
+      // ceiling the score cannot pass until they are supplied.
+      unmeasured,
+      maxAchievable,
       dataAge: {
         vulns: vulnData ? 'current' : 'no data',
         awareness: awarenessData ? awarenessData.upload.uploaded_at : 'no data',
