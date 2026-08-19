@@ -1316,12 +1316,33 @@ input[type="file"] {
 }
 
 /* Simple entrance motion to give the UI energy without visual noise */
-.tab-panel,
 .upload-card,
 .chart-card,
 .stat-card,
 .priority-card {
   animation: fade-in-up .35s ease both;
+}
+
+/* The panel fades only — it must NOT be given a transform.
+   `position: fixed` resolves against the nearest ancestor carrying a
+   transform, filter, backdrop-filter or perspective, not against the viewport.
+   .tab-panel used to share the fade-in-up animation above, and because that
+   keyframe sets `transform` with fill-mode `both`, translateY(0) stayed
+   applied for the life of the page — making every panel a containing block.
+   Any .modal-overlay nested inside one was then positioned against the panel
+   instead of the screen: measured at top:2312px, 3032px and 3448px rather
+   than 0. Only 3 of 15 tabs reparent their modal to <body>, so the rest were
+   affected. It stayed hidden while modals were centred boxes and became
+   obvious the moment they became bottom-anchored sheets.
+   Dropping the transform also stops a tab switch animating twice, once for
+   the panel and again for every card inside it. */
+.tab-panel {
+  animation: fade-in .35s ease both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @keyframes fade-in-up {
