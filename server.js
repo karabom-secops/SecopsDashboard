@@ -1296,6 +1296,51 @@ app.get('/api/vulns/trends', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/vulns/latest-summary
+ *
+ * Two callers, with genuinely different needs:
+ *   - tab-orgs.js asks with NO tenantId and wants one row per tenant for the
+ *     Org Health table.
+ *   - tab-reports.js asks WITH ?tenantId= for one client's deck.
+ *
+ * This used to ignore ?tenantId= entirely — the only vuln route that did — and
+ * left the report to filter the all-tenants array on the client. That worked
+ * by accident and made any scoping problem invisible in the response, so the
+ * parameter is honoured when present, matching every sibling vuln route.
+ *
+ * The LEFT JOIN LATERAL is deliberate: a tenant with no scans still comes back
+ * as a row with a NULL summary, so a caller can tell "no scan uploaded" apart
+ * from "tenant does not exist".
+ */
+app.get('/api/vulns/latest-summary', async (req, res) => {
+  try {
+    const isSA = req.session.role === 'superadmin';
+    const requested = parseInt(req.query.tenantId, 10);
+    const scopeTo = isSA
+      ? (isNaN(requested) || requested < 1 ? null : requested)
+      : req.session.tenantId;
+
+    if (!isSA && !scopeTo) return res.json([]);
+
+    const result = await pool.query(
+      `SELECT t.id AS "tenantId", t.name AS "tenantName",
+              vs.month_key AS "monthKey", vs.summary
+       FROM tenants t
+       LEFT JOIN LATERAL (
+         SELECT month_key, summary FROM vuln_scans
+         WHERE tenant_id = t.id ORDER BY month_key DESC LIMIT 1
+       ) vs ON true
+       ${scopeTo ? 'WHERE t.id = $1' : ''}
+       ORDER BY t.name ASC`,
+      scopeTo ? [scopeTo] : []
+    );
+    res.json(result.rows);
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
 app.get('/api/vulns/:monthKey', async (req, res) => {
   try {
     const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'query');
@@ -1353,88 +1398,6 @@ app.delete('/api/vulns/:monthKey', async (req, res) => {
 });
 
 // ── Bulk status update ────────────────────────────────────────────────────
-app.patch('/api/vulns/:monthKey/findings/bulk-status', async (req, res) => {
-  try {
-    const { monthKey } = req.params;
-    const { status, indices } = req.body;
-
-    if (!['open', 'in-progress', 'fixed', 'accepted'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status.' });
-    }
-    if (!Array.isArray(indices) || indices.length === 0) {
-      return res.status(400).json({ error: 'indices must be a non-empty array.' });
-    }
-    const idxList = indices.map(i => parseInt(i, 10)).filter(i => !isNaN(i) && i >= 0);
-    if (idxList.length === 0) return res.status(400).json({ error: 'No valid indices.' });
-
-    const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'body');
-    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
-
-    const scanResult = await pool.query(
-      'SELECT id FROM vuln_scans WHERE tenant_id=$1 AND month_key=$2',
-      [tenantId, monthKey]
-    );
-    if (scanResult.rows.length === 0) return res.status(404).json({ error: 'Scan not found.' });
-    const scanId = scanResult.rows[0].id;
-
-    await pool.query(
-      `UPDATE vuln_findings SET status = $1, status_updated_at = NOW()
-       WHERE scan_id = $2 AND finding_index = ANY($3::int[])`,
-      [status, scanId, idxList]
-    );
-
-    res.json({ ok: true, updated: idxList.length });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * GET /api/vulns/latest-summary
- *
- * Two callers, with genuinely different needs:
- *   - tab-orgs.js asks with NO tenantId and wants one row per tenant for the
- *     Org Health table.
- *   - tab-reports.js asks WITH ?tenantId= for one client's deck.
- *
- * This used to ignore ?tenantId= entirely — the only vuln route that did — and
- * left the report to filter the all-tenants array on the client. That worked
- * by accident and made any scoping problem invisible in the response, so the
- * parameter is honoured when present, matching every sibling vuln route.
- *
- * The LEFT JOIN LATERAL is deliberate: a tenant with no scans still comes back
- * as a row with a NULL summary, so a caller can tell "no scan uploaded" apart
- * from "tenant does not exist".
- */
-app.get('/api/vulns/latest-summary', async (req, res) => {
-  try {
-    const isSA = req.session.role === 'superadmin';
-    const requested = parseInt(req.query.tenantId, 10);
-    const scopeTo = isSA
-      ? (isNaN(requested) || requested < 1 ? null : requested)
-      : req.session.tenantId;
-
-    if (!isSA && !scopeTo) return res.json([]);
-
-    const result = await pool.query(
-      `SELECT t.id AS "tenantId", t.name AS "tenantName",
-              vs.month_key AS "monthKey", vs.summary
-       FROM tenants t
-       LEFT JOIN LATERAL (
-         SELECT month_key, summary FROM vuln_scans
-         WHERE tenant_id = t.id ORDER BY month_key DESC LIMIT 1
-       ) vs ON true
-       ${scopeTo ? 'WHERE t.id = $1' : ''}
-       ORDER BY t.name ASC`,
-      scopeTo ? [scopeTo] : []
-    );
-    res.json(result.rows);
-  } catch (err) {
-    return serverError(res, err);
-  }
-});
-
-// ── Bulk status update ──────────────────────────────────────────────────────
 app.patch('/api/vulns/:monthKey/findings/bulk-status', async (req, res) => {
   try {
     const { monthKey } = req.params;
