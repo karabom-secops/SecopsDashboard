@@ -653,7 +653,7 @@
       exportBtn.hidden = false;
       exportBtn.onclick = function () {
         var csvRows = [['Name', 'Email', 'Manager', 'Assigned', 'Completed', '%']];
-        rows.forEach(function (r) {
+        _sortRows(allRows).forEach(function (r) {
           var pct = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
           csvRows.push([r.name, r.email, r.manager, r.assigned, r.completed, pct + '%']);
         });
@@ -672,7 +672,7 @@
     if (exportLowBtn) {
       exportLowBtn.hidden = false;
       exportLowBtn.onclick = function () {
-        var lowRows = rows.filter(function (r) {
+        var lowRows = allRows.filter(function (r) {
           return r.assigned > 0 && Math.round(r.completed / r.assigned * 100) < 70;
         });
         if (!lowRows.length) {
@@ -707,7 +707,7 @@
           width: 960, height: 700, title: 'Manager Compliance Report',
         });
         if (!handle) return;
-        _generateManagerReport(rows, handle).catch(function () {
+        _generateManagerReport(allRows, handle).catch(function () {
           handle.fail('The manager report could not be generated.');
         });
       };
@@ -916,15 +916,22 @@
 
   // Exposed: generate the printable manager report popup
   window.generateManagerReport = async function generateManagerReport(rows) {
+    // Reserved here, synchronously, because this is called straight from a
+    // click handler in manager.html. _fetchAndBuildRows() and the logo fetch
+    // below both await, and a popup opened after an await is blocked.
+    var handle = window.ReportShell.reserveReportWindow({
+      width: 960, height: 700, title: 'Manager Compliance Report',
+    });
+    if (!handle) return;
     try {
       var r = rows || (await _fetchAndBuildRows());
       if (r.length === 0) {
-        alert('No session data available. Please ensure a history-format CSV has been uploaded.');
+        handle.fail('No session data available. Please ensure a history-format CSV has been uploaded.');
         return;
       }
-      _generateManagerReport(r);
+      await _generateManagerReport(r, handle);
     } catch (err) {
-      alert(err.message || 'Failed to generate report.');
+      handle.fail(err.message || 'Failed to generate report.');
     }
   };
 
