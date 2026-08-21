@@ -657,14 +657,13 @@
           var pct = r.assigned > 0 ? Math.round(r.completed / r.assigned * 100) : 0;
           csvRows.push([r.name, r.email, r.manager, r.assigned, r.completed, pct + '%']);
         });
-        var csv = csvRows.map(function (row) {
-          return row.map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(',');
-        }).join('\n');
-        var blob = new Blob([csv], { type: 'text/csv' });
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'awareness-completion.csv';
-        a.click();
+        // Shared helper: it attaches the anchor to the document before clicking
+        // it, which a detached <a download> requires in order to fire at all.
+        window.ReportShell.downloadFile(
+          'awareness-completion.csv',
+          window.ReportShell.toCsv(csvRows),
+          'text/csv;charset=utf-8'
+        );
       };
     }
 
@@ -676,21 +675,21 @@
         var lowRows = rows.filter(function (r) {
           return r.assigned > 0 && Math.round(r.completed / r.assigned * 100) < 70;
         });
+        if (!lowRows.length) {
+          alert('Every employee is at or above 70% completion — nothing to export.');
+          return;
+        }
         var csvRows = [['Name', 'Email', 'Manager', 'Assigned', 'Completed', '%', 'Missing Sessions']];
         lowRows.forEach(function (r) {
           var pct = Math.round(r.completed / r.assigned * 100);
-          var missing = r.missing.map(function (m) { return m.title || m.type; }).join('; ');
+          var missing = (r.missing || []).map(function (m) { return m.title || m.type; }).join('; ');
           csvRows.push([r.name, r.email, r.manager, r.assigned, r.completed, pct + '%', missing]);
         });
-        var csv = csvRows.map(function (row) {
-          return row.map(function (v) { return '"' + String(v ?? '').replace(/"/g, '""') + '"'; }).join(',');
-        }).join('\r\n');
-        var blob = new Blob([csv], { type: 'text/csv' });
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'awareness-below-70pct.csv';
-        a.click();
-        URL.revokeObjectURL(a.href);
+        window.ReportShell.downloadFile(
+          'awareness-below-70pct.csv',
+          window.ReportShell.toCsv(csvRows),
+          'text/csv;charset=utf-8'
+        );
       };
     }
 
@@ -698,7 +697,20 @@
     var mgrReportBtn = document.getElementById('awarenessManagerReportBtn');
     if (mgrReportBtn) {
       mgrReportBtn.hidden = false;
-      mgrReportBtn.onclick = function () { _generateManagerReport(rows); };
+      mgrReportBtn.onclick = function () {
+        // The popup MUST be opened synchronously here. _generateManagerReport
+        // awaits the logo fetch before building its HTML, and a window opened
+        // after an await has lost the page's transient user activation, so the
+        // browser blocks it as unrequested — which is why this button appeared
+        // to do nothing at all.
+        var handle = window.ReportShell.reserveReportWindow({
+          width: 960, height: 700, title: 'Manager Compliance Report',
+        });
+        if (!handle) return;
+        _generateManagerReport(rows, handle).catch(function () {
+          handle.fail('The manager report could not be generated.');
+        });
+      };
     }
   }
 
@@ -707,7 +719,7 @@
     return window.ReportShell.logoToDataUri();
   }
 
-  async function _generateManagerReport(rows) {
+  async function _generateManagerReport(rows, handle) {
     var logoDataUri = await _logoToDataUri();
     // Group users below 70% by manager
     var byManager = {};
@@ -852,7 +864,9 @@
       '</div>' +
       '</body></html>';
 
-    window.ReportShell.openReportWindow(html, { width: 960, height: 700 });
+    // Written into the window the click handler reserved. Opening one here
+    // instead would be blocked: this function has already awaited the logo.
+    handle.write(html);
   }
 
   // Shared: fetch awareness data and build per-user completion rows (history mode)

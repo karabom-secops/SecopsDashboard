@@ -466,6 +466,11 @@ const SecureScoreTab = (() => {
 
       document.getElementById('secure-score-refresh').addEventListener('click', loadAndRender);
       document.getElementById('secure-score-report').addEventListener('click', async () => {
+        // Reserved before any await — see reserveReportWindow().
+        const _handle = window.ReportShell.reserveReportWindow({
+          width: 1060, height: 860, title: 'Executive Report',
+        });
+        if (!_handle) return;
         let data = currentScore, hist = _cachedHistory, grc = _cachedGrcData;
         if (!data) {
           const btn = document.getElementById('secure-score-report');
@@ -475,9 +480,12 @@ const SecureScoreTab = (() => {
           [data, hist, grc] = await Promise.all([fetchSecureScore(), fetchScoreHistory(), fetchGrcSummary()]);
           btn.textContent = origText;
           btn.disabled = false;
-          if (!data) { alert('Unable to load score data. Please refresh and try again.'); return; }
+          if (!data) {
+            _handle.fail('Unable to load score data. Please refresh and try again.');
+            return;
+          }
         }
-        await generateExcoReport(data, hist || [], grc);
+        await generateExcoReport(_handle, data, hist || [], grc);
       });
       document.getElementById('secure-score-print').addEventListener('click', () => {
         // Temporarily remove hidden attribute so CSS can show the panel even if another tab is active
@@ -807,7 +815,7 @@ const SecureScoreTab = (() => {
     return window.ReportShell.logoToDataUri();
   }
 
-  async function generateExcoReport(scoreData, history, grcData) {
+  async function generateExcoReport(_handle, scoreData, history, grcData) {
     const score     = Math.round(scoreData.score);
     const rating    = scoreData.rating;
     const comp      = scoreData.components || {};
@@ -1066,7 +1074,7 @@ const SecureScoreTab = (() => {
 </body>
 </html>`;
 
-    window.ReportShell.openReportWindow(html, { width: 1060, height: 860 });
+    _handle.write(html);
   }
 
   return {

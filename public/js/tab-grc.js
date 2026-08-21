@@ -784,7 +784,7 @@ const GrcTab = (() => {
     return 'Client';
   }
 
-  async function generateGrcReport() {
+  async function generateGrcReport(_handle, ) {
     const S = window.ReportShell;
     const D = window.ReportDeck;
     if (!D) throw new Error('ReportDeck not loaded');
@@ -838,7 +838,7 @@ const GrcTab = (() => {
       // The alpha is baked into the stroke, so the layer-forming opacity goes.
       '\n.cover-wm{opacity:1}';
 
-    S.openReportWindow(
+    _handle.write(
       doc.replace('</head>', '<style>\n' + css + '\n</style>\n</head>'),
       { width: 940, height: 1000 }
     );
@@ -847,10 +847,20 @@ const GrcTab = (() => {
   /** Wired from the static header button — loads data first if the tab is cold. */
   async function handleGenerateReport() {
     const btn = document.getElementById('grc-report-btn');
+    // Reserve the popup while the click is still "user activated". Both
+    // loadAndRender() and generateGrcReport() await, and a window opened after
+    // an await is blocked by the browser as unrequested.
+    const handle = window.ReportShell.reserveReportWindow({
+      width: 1060, height: 860, title: 'GRC Report',
+    });
+    if (!handle) return;
     if (btn) { btn.disabled = true; btn.textContent = 'Building…'; }
     try {
       if (!Object.keys(_sections).length) await loadAndRender();
-      await generateGrcReport();
+      await generateGrcReport(handle);
+    } catch (err) {
+      handle.fail('The GRC report could not be generated.');
+      throw err;
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Generate Report'; }
     }

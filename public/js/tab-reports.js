@@ -507,6 +507,12 @@ window.ReportsTab = (function () {
 
   async function generate() {
     var btn = document.getElementById('rpt-generate-btn');
+    // Reserved before the data fetch: every source is awaited below, and a
+    // window opened after an await loses user activation and is blocked.
+    var deckWindow = S.reserveReportWindow({
+      width: 1280, height: 820, title: 'Client Report Deck',
+    });
+    if (!deckWindow) return;
     if (btn) { btn.disabled = true; btn.textContent = 'Building…'; }
 
     try {
@@ -595,7 +601,7 @@ window.ReportsTab = (function () {
       (_metrics && _metrics.warnings || []).forEach(function (w) { msgs.push(w); });
       notice(msgs.join(' '), !!problems);
 
-      S.openReportWindow(D.renderDeck(slides, full), { width: 1280, height: 820 });
+      deckWindow.write(D.renderDeck(slides, full));
 
       saveOverrides(period, prefs.overrides);
     } finally {

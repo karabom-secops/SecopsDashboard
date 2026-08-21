@@ -787,13 +787,8 @@
         ].map(esc).join(',');
       })
     ].join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = 'vulns-' + _currentScan.monthKey + '.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+    window.ReportShell.downloadFile(
+      'vulns-' + _currentScan.monthKey + '.csv', csv, 'text/csv;charset=utf-8');
   }
 
   // ── IT Escalation Report ──────────────────────────────────────────────────

@@ -92,6 +92,110 @@ window.ReportShell = (function () {
     return win;
   }
 
+
+  /**
+   * Trigger a file download.
+   *
+   * Two details that decide whether this works at all:
+   *
+   *   1. The anchor MUST be in the document. A synthetic click on a detached
+   *      <a download> is ignored by Firefox and by Chrome under some settings,
+   *      so every export in this app silently did nothing.
+   *   2. The object URL must NOT be revoked synchronously after .click().
+   *      Revoking it in the same task can cancel the download before the
+   *      browser has read the blob — a race that fails on slower machines and
+   *      larger files while appearing to work locally.
+   */
+  function downloadFile(filename, content, mime) {
+    var blob = content instanceof Blob
+      ? content
+      : new Blob([content], { type: mime || 'text/plain;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    // Give the browser a turn to start reading the blob before releasing it.
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  }
+
+  /** Quote a value for CSV: wrap in quotes and double any embedded quote. */
+  function csvCell(v) {
+    return '"' + String(v === null || v === undefined ? '' : v).replace(/"/g, '""') + '"';
+  }
+
+  /** Rows (array of arrays) to a CSV string with a UTF-8 BOM for Excel. */
+  function toCsv(rows) {
+    var BOM = String.fromCharCode(0xFEFF);
+    var CRLF = String.fromCharCode(13) + String.fromCharCode(10);
+    return BOM + rows.map(function (row) {
+      return row.map(csvCell).join(",");
+    }).join(CRLF);
+  }
+
+  /**
+   * Reserve a popup window NOW, fill it in later.
+   *
+   * A browser only allows window.open while the page has transient user
+   * activation. Awaiting anything — a fetch for the logo, a data call — spends
+   * that activation, so a window opened after an await is treated as
+   * unrequested and blocked. Every report in this app opened its window after
+   * at least one await, which is why the buttons appeared dead.
+   *
+   * Call this synchronously inside the click handler, then write() once the
+   * content is ready.
+   */
+  function reserveReportWindow(opts) {
+    var o = opts || {};
+    var width  = o.width  || 1060;
+    var height = o.height || 860;
+    var win = window.open('', '_blank',
+      'width=' + width + ',height=' + height + ',scrollbars=yes');
+
+    if (!win) {
+      alert('Pop-up blocked. Please allow pop-ups for this site and try again.');
+      return null;
+    }
+
+    // Something to look at while the caller assembles the document.
+    try {
+      win.document.open();
+      win.document.write(
+        '<!doctype html><meta charset="utf-8"><title>' +
+        esc(o.title || 'Preparing report…') +
+        '</title><body style="font:15px -apple-system,Segoe UI,sans-serif;' +
+        'color:#5B5B60;display:flex;align-items:center;justify-content:center;' +
+        'height:100vh;margin:0">Preparing report…</body>');
+      win.document.close();
+    } catch (_) { /* cross-origin shim, nothing to show */ }
+
+    return {
+      win: win,
+      write: function (html) {
+        if (win.closed) return null;
+        win.document.open();
+        win.document.write(html);
+        win.document.close();
+        return win;
+      },
+      fail: function (msg) {
+        if (win.closed) return;
+        win.document.open();
+        win.document.write(
+          '<!doctype html><meta charset="utf-8"><body style="font:15px ' +
+          '-apple-system,Segoe UI,sans-serif;color:#C7000F;padding:2rem">' +
+          esc(msg || 'The report could not be generated.') + '</body>');
+        win.document.close();
+      },
+    };
+  }
+
   return {
     LOGO_PATH:       LOGO_PATH,
     PALETTE:         PALETTE,
@@ -99,5 +203,9 @@ window.ReportShell = (function () {
     hexToRgba:       hexToRgba,
     logoToDataUri:   logoToDataUri,
     openReportWindow: openReportWindow,
+    reserveReportWindow: reserveReportWindow,
+    downloadFile:     downloadFile,
+    toCsv:            toCsv,
+    csvCell:          csvCell,
   };
 })();
