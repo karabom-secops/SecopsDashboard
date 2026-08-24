@@ -1363,7 +1363,66 @@ window.ReportSections = (function () {
   // ── Detection & Response KPIs ─────────────────────────────────────────────
 
   /** Target hours to resolution by ticket severity. */
-  var MDR_SLA_HOURS = { HIGH: 4, MEDIUM: 24, LOW: 72 };
+  // ── Business-hours SLA measurement ────────────────────────────────────────
+  //
+  // Response SLAs are worked in BUSINESS hours, not wall-clock. A MEDIUM
+  // ticket raised at 17:05 on Friday and closed at 09:00 on Monday is 64
+  // elapsed hours and fails a 24-hour target, even though the team picked it
+  // up in the first working hour available. Measuring elapsed time punished
+  // the service for the calendar rather than for its response.
+  //
+  // Change these to match the contracted service window. Holidays are NOT
+  // modelled: a public holiday counts as a working day, so a ticket spanning
+  // one is measured slightly harshly.
+  var BUSINESS_HOURS = {
+    startHour: 8,             // 08:00 local
+    endHour:   17,            // 17:00 local
+    workDays:  [1, 2, 3, 4, 5],   // Mon-Fri (0 = Sunday)
+    utcOffsetMinutes: 120,    // SAST, UTC+2, no daylight saving
+  };
+
+  /**
+   * Business hours between two timestamps, per BUSINESS_HOURS.
+   *
+   * Returns null when either stamp is unparseable or the end precedes the
+   * start; 0 is a legitimate result (raised and closed outside the window).
+   * Time outside the service window simply does not accrue, so the clock
+   * effectively starts when the office next opens.
+   */
+  function businessHoursBetween(startTs, endTs, cfg) {
+    var c = cfg || BUSINESS_HOURS;
+    // Reject empties explicitly: new Date(null) is the 1970 epoch, not an
+    // invalid date, so a ticket missing a timestamp would otherwise be measured
+    // from 1970 and report thousands of business hours.
+    if (!startTs || !endTs) return null;
+    var a = new Date(startTs), b = new Date(endTs);
+    if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+    if (b.getTime() < a.getTime()) return null;
+
+    var DAY = 86400000;
+    var off = c.utcOffsetMinutes * 60000;
+    // Shift into local time so UTC arithmetic below reads as local wall time.
+    var s = a.getTime() + off;
+    var e = b.getTime() + off;
+
+    var work = {};
+    c.workDays.forEach(function (d) { work[d] = true; });
+    var open  = c.startHour * 3600000;
+    var close = c.endHour   * 3600000;
+
+    var total = 0;
+    var day = Math.floor(s / DAY) * DAY;   // local midnight of the start day
+    // Guard against a nonsense range walking for ever on bad data.
+    var guard = 0;
+    for (; day < e && guard < 4000; day += DAY, guard++) {
+      if (!work[new Date(day).getUTCDay()]) continue;
+      var from = Math.max(s, day + open);
+      var to   = Math.min(e, day + close);
+      if (to > from) total += (to - from);
+    }
+    return total / 3600000;
+  }
+  var MDR_SLA_HOURS = { HIGH: 4, MEDIUM: 24, LOW: 72 };   // business hours, not elapsed
   var SLA_TARGET_PCT = 95;
 
   function irKpiBlock(ctx) {
@@ -1376,13 +1435,14 @@ window.ReportSections = (function () {
       return t.resolvedAt && monthOf(t.resolvedAt) === period;
     });
 
+    // Business hours throughout, so MTTR and the SLA figure in the same table
+    // are measured the same way. Mixing an elapsed-time MTTR with a
+    // business-hours SLA made the two rows contradict each other.
     var hours = [];
     var slaMet = 0, slaTotal = 0;
     resolved.forEach(function (t) {
-      var a = new Date(t.createdAt), b = new Date(t.resolvedAt);
-      if (isNaN(a.getTime()) || isNaN(b.getTime())) return;
-      var h = (b.getTime() - a.getTime()) / 3600000;
-      if (h < 0) return;
+      var h = businessHoursBetween(t.createdAt, t.resolvedAt);
+      if (h == null) return;
       hours.push(h);
       var target = MDR_SLA_HOURS[(t.severity || 'MEDIUM').toUpperCase()];
       if (target != null) { slaTotal++; if (h <= target) slaMet++; }
@@ -1429,9 +1489,14 @@ window.ReportSections = (function () {
       ],
       rows: rows,
     }) +
-    '<div class="rag-note">Response time is measured from ticket creation to resolution. ' +
-      'SLA targets: High ' + MDR_SLA_HOURS.HIGH + ' hrs, Medium ' + MDR_SLA_HOURS.MEDIUM +
-      ' hrs, Low ' + MDR_SLA_HOURS.LOW + ' hrs. ' +
+    '<div class="rag-note">Response time is measured from ticket creation to ' +
+      'resolution in <strong>business hours</strong> (' +
+      String(BUSINESS_HOURS.startHour).padStart(2, '0') + ':00–' +
+      String(BUSINESS_HOURS.endHour).padStart(2, '0') + ':00, Monday to Friday), ' +
+      'so time outside the service window does not count against the target. ' +
+      'Public holidays are treated as working days. ' +
+      'SLA targets: High ' + MDR_SLA_HOURS.HIGH + ' business hrs, Medium ' +
+      MDR_SLA_HOURS.MEDIUM + ' business hrs, Low ' + MDR_SLA_HOURS.LOW + ' business hrs. ' +
       'Mean time to detect is not reported: the ticket feed carries no detection ' +
       'timestamp, so mean time to mitigate from the EDR platform is shown instead.</div>';
   }
@@ -2334,9 +2399,19 @@ window.ReportSections = (function () {
     var risks = (data.risks || []).filter(function (r) { return r.stage !== 'closed'; });
     var sum   = vulnSummaryFor(ctx);
 
-    var incidents = (data.incidents || []).filter(function (i) {
+    // Incidents logged on the Incident Response tab PLUS the MDR tickets the
+    // Operations tab counts as incidents — previously only the former, so a
+    // month of MDR activity could read as zero incidents.
+    // These are separate systems with no shared key, so an event escalated
+    // from a ticket into a logged incident is counted in both; the footnote
+    // says so rather than pretending the total is deduplicated.
+    var irIncidents = (data.incidents || []).filter(function (i) {
       return monthOf(i.opened_at) === ctx.period;
     }).length;
+    var mdrRaised = ((ctx.data.mdr || {}).tickets || []).filter(function (t2) {
+      return monthOf(t2.createdAt) === ctx.period;
+    }).length;
+    var incidents = irIncidents + mdrRaised;
 
     var crit = sum ? (Number(sum.critical) || 0) + (Number(sum.high) || 0) : null;
     var above = risks.filter(function (r) {
@@ -2361,8 +2436,8 @@ window.ReportSections = (function () {
       tickets.forEach(function (t2) {
         var target = MDR_SLA_HOURS[(t2.severity || 'MEDIUM').toUpperCase()];
         if (target == null) return;
-        var h = (new Date(t2.resolvedAt) - new Date(t2.createdAt)) / 3600000;
-        if (h < 0) return;
+        var h = businessHoursBetween(t2.createdAt, t2.resolvedAt);
+        if (h == null) return;
         total++;
         if (h <= target) met++;
       });
@@ -2377,8 +2452,9 @@ window.ReportSections = (function () {
         l: 'Secure Score' + (band ? ' &middot; ' + band.label : '') +
            (t2.mark ? ' ' + t2.mark : '') },
       { v: crit == null ? null : String(crit), l: 'Critical &amp; high vulnerabilities open' },
-      { v: String(incidents),                   l: 'Security incidents this period' },
-      { v: slaPct == null ? null : slaPct + '%', l: 'MDR resolution SLA met' },
+      { v: String(incidents),                   l: 'Security incidents this period' +
+           (mdrRaised && irIncidents ? ' (' + mdrRaised + ' MDR, ' + irIncidents + ' logged)' : '') },
+      { v: slaPct == null ? null : slaPct + '%', l: 'MDR resolution SLA met (business hrs)' },
       { v: awPct == null ? null : awPct + '%',   l: 'Awareness completion' },
       { v: String(above),                        l: 'Open risks above appetite' },
     ];
@@ -2998,6 +3074,9 @@ window.ReportSections = (function () {
       render: renderDecisions, commentable: true },
   ];
 
+  // Exported for the business-hours test suite.
+  SECTIONS.businessHoursBetween = businessHoursBetween;
+  SECTIONS.BUSINESS_HOURS = BUSINESS_HOURS;
   SECTIONS.draftObservations = draftObservations;
   SECTIONS.draftAssurance    = draftAssurance;
   SECTIONS.draftExecSummary  = draftExecSummary;
