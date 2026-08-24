@@ -1422,7 +1422,7 @@ window.ReportSections = (function () {
     }
     return total / 3600000;
   }
-  var MDR_SLA_HOURS = { HIGH: 4, MEDIUM: 24, LOW: 72 };   // business hours, not elapsed
+  var MDR_SLA_HOURS = { HIGH: 8, MEDIUM: 24, LOW: 72 };   // business hours, not elapsed
   var SLA_TARGET_PCT = 95;
 
   function irKpiBlock(ctx) {
