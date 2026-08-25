@@ -257,11 +257,22 @@ const SecureScoreTab = (() => {
     let weighting = '';
     if (w && w.basis === 'exposure') {
       const vw = Math.round(w.vulnerabilities * 100);
+      // Managed patching lowers the exposure that produced the weight, so say
+      // so — otherwise the figure looks arbitrary to anyone who checks it.
+      const relief = (w.serverPatchCoverage != null && w.serverPatchCoverage > 0)
+        ? ', reduced by managed patching on ' +
+          Math.round(w.serverPatchCoverage * 100) + '% of servers'
+        : '';
+      const scale = w.users != null
+        ? ' Across <strong>' + w.users + '</strong> users, human risk takes ' +
+          Math.round(w.awareness * 100) + '% and incident response ' +
+          Math.round(w.incidentResponse * 100) + '%.'
+        : ' The remainder splits ' + Math.round(w.awareness * 100) + '% awareness / ' +
+          Math.round(w.incidentResponse * 100) + '% incident response.';
+
       weighting = ' Vulnerability management is weighted <strong>' + vw + '%</strong> ' +
         'for this client, from an internet-reachable exposure of <strong>' + w.exposure +
-        '</strong> — a smaller attack surface shifts weight onto awareness (' +
-        Math.round(w.awareness * 100) + '%) and incident response (' +
-        Math.round(w.incidentResponse * 100) + '%).';
+        '</strong>' + relief + '.' + scale;
     }
 
     el.hidden = false;

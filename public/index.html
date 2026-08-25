@@ -2126,17 +2126,38 @@
             <input id="estateCloud" type="number" min="0" step="1"
                    class="modal-status-select" placeholder="not recorded" autocomplete="off" />
           </div>
-          <div class="form-group admin-form-submit">
-            <label class="modal-label">&nbsp;</label>
-            <button id="estateSaveBtn" type="submit" class="btn btn-primary">Save Estate</button>
+          <div class="form-group">
+            <label class="modal-label" for="estateUsers">Users</label>
+            <input id="estateUsers" type="number" min="0" step="1"
+                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
           </div>
         </div>
+
+        <p class="admin-card-hint" style="margin:0.75rem 0 0.5rem">
+          Managed patching is a compensating control against exactly the risk this score
+          measures, so covered servers carry less weight. Enter how many of the above are
+          under managed patching (N-Able, Intune, WSUS or similar).
+        </p>
         <div class="admin-form-row">
-          <div class="form-group" style="flex:1 1 100%">
+          <div class="form-group">
+            <label class="modal-label" for="estateServersPatched">Servers under managed patching</label>
+            <input id="estateServersPatched" type="number" min="0" step="1"
+                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label class="modal-label" for="estateEndpointsPatched">Endpoints under managed patching</label>
+            <input id="estateEndpointsPatched" type="number" min="0" step="1"
+                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
+          </div>
+          <div class="form-group" style="grid-column: span 2">
             <label class="modal-label" for="estateNotes">Notes</label>
             <input id="estateNotes" type="text" class="modal-status-select"
                    placeholder="e.g. two unmanaged legacy servers excluded from scanning"
                    autocomplete="off" maxlength="2000" />
+          </div>
+          <div class="form-group admin-form-submit">
+            <label class="modal-label">&nbsp;</label>
+            <button id="estateSaveBtn" type="submit" class="btn btn-primary">Save Estate</button>
           </div>
         </div>
       </form>

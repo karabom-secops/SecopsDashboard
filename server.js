@@ -4699,7 +4699,8 @@ app.get('/api/secure-score/estate', requireAuth, async (req, res) => {
     let declared = null;
     try {
       const r = await pool.query(
-        `SELECT servers, public_assets, endpoints, cloud_tenancies, notes, updated_at
+        `SELECT servers, public_assets, endpoints, cloud_tenancies, users,
+                servers_patched, endpoints_patched, notes, updated_at
          FROM tenant_estate WHERE tenant_id = $1`, [tenantId]);
       if (r.rows.length) declared = r.rows[0];
     } catch (err) {
@@ -4712,12 +4713,15 @@ app.get('/api/secure-score/estate', requireAuth, async (req, res) => {
     return res.json({
       tenantId,
       declared: declared ? {
-        servers:        declared.servers,
-        publicAssets:   declared.public_assets,
-        endpoints:      declared.endpoints,
-        cloudTenancies: declared.cloud_tenancies,
-        notes:          declared.notes || '',
-        updatedAt:      declared.updated_at,
+        servers:          declared.servers,
+        publicAssets:     declared.public_assets,
+        endpoints:        declared.endpoints,
+        cloudTenancies:   declared.cloud_tenancies,
+        users:            declared.users,
+        serversPatched:   declared.servers_patched,
+        endpointsPatched: declared.endpoints_patched,
+        notes:            declared.notes || '',
+        updatedAt:        declared.updated_at,
       } : null,
       effective: estate,
       summary: estateLib.describeEstate(estate),
@@ -4760,18 +4764,23 @@ app.put('/api/secure-score/estate', requireAuth, async (req, res) => {
     try {
       await pool.query(
         `INSERT INTO tenant_estate
-           (tenant_id, servers, public_assets, endpoints, cloud_tenancies, notes, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+           (tenant_id, servers, public_assets, endpoints, cloud_tenancies, users,
+            servers_patched, endpoints_patched, notes, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
          ON CONFLICT (tenant_id) DO UPDATE SET
-           servers         = EXCLUDED.servers,
-           public_assets   = EXCLUDED.public_assets,
-           endpoints       = EXCLUDED.endpoints,
-           cloud_tenancies = EXCLUDED.cloud_tenancies,
-           notes           = EXCLUDED.notes,
-           updated_by      = EXCLUDED.updated_by,
-           updated_at      = NOW()`,
+           servers           = EXCLUDED.servers,
+           public_assets     = EXCLUDED.public_assets,
+           endpoints         = EXCLUDED.endpoints,
+           cloud_tenancies   = EXCLUDED.cloud_tenancies,
+           users             = EXCLUDED.users,
+           servers_patched   = EXCLUDED.servers_patched,
+           endpoints_patched = EXCLUDED.endpoints_patched,
+           notes             = EXCLUDED.notes,
+           updated_by        = EXCLUDED.updated_by,
+           updated_at        = NOW()`,
         [tenantId, vals.servers, vals.publicAssets, vals.endpoints,
-         vals.cloudTenancies, notes, req.session.userId || null]
+         vals.cloudTenancies, vals.users, vals.serversPatched, vals.endpointsPatched,
+         notes, req.session.userId || null]
       );
     } catch (err) {
       return res.status(503).json({
@@ -4791,26 +4800,31 @@ app.put('/api/secure-score/estate', requireAuth, async (req, res) => {
  * Every query is individually guarded: this must degrade to "estate unknown"
  * on an un-migrated database rather than taking the whole Secure Score with it.
  */
-async function loadEstate(tenantId, scanId) {
+async function loadEstate(tenantId, scanId, trainedUsers) {
   let declared = null;
   try {
     const r = await pool.query(
-      `SELECT servers, public_assets, endpoints, cloud_tenancies
+      `SELECT servers, public_assets, endpoints, cloud_tenancies, users,
+              servers_patched, endpoints_patched
        FROM tenant_estate WHERE tenant_id = $1`,
       [tenantId]
     );
     if (r.rows.length) {
       const row = r.rows[0];
       declared = {
-        servers:        row.servers,
-        publicAssets:   row.public_assets,
-        endpoints:      row.endpoints,
-        cloudTenancies: row.cloud_tenancies,
+        servers:          row.servers,
+        publicAssets:     row.public_assets,
+        endpoints:        row.endpoints,
+        cloudTenancies:   row.cloud_tenancies,
+        users:            row.users,
+        serversPatched:   row.servers_patched,
+        endpointsPatched: row.endpoints_patched,
       };
     }
   } catch (_) { /* table not migrated yet */ }
 
   const derived = {};
+  if (trainedUsers != null) derived.trainedUsers = trainedUsers;
   try {
     const r = await pool.query(
       `SELECT COUNT(*)::int AS n FROM edr_agents WHERE tenant_id = $1`, [tenantId]);
@@ -4876,10 +4890,6 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       }
     } catch (_) { /* table may not exist yet */ }
 
-    // The estate: how much this client actually has, and of what kind. Without
-    // it the vulnerability component judges everyone against absolute finding
-    // counts, which is unfair at both ends of the size range.
-    const estate = await loadEstate(tenantId, scanId);
     const edrHealth = await loadEdrHealth(tenantId);
 
     // Fetch latest awareness upload — normalise to session-level completion rate
@@ -4939,6 +4949,19 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       if (mdrResult.rows.length > 0) mdrData = { upload: mdrResult.rows[0] };
     } catch (_) { /* table may not exist yet */ }
 
+    // The estate: how much this client actually has, of what kind, and how many
+    // people. Without it the vulnerability component judges everyone against
+    // absolute finding counts, which is unfair at both ends of the size range.
+    //
+    // Loaded AFTER the awareness upload so the training roster can be compared
+    // against the declared headcount: a client with 500 staff and 50 people on
+    // the training list has an awareness score describing a tenth of their
+    // organisation, and that gap has to be visible.
+    const trainedUsers = awarenessData && awarenessData.upload
+      ? (parseInt(awarenessData.upload.total_users, 10) || 0)
+      : null;
+    const estate = await loadEstate(tenantId, scanId, trainedUsers);
+
     // Calculate score. `measured` says whether each component was actually
     // assessed; an unmeasured component scores 0 and must be labelled as such,
     // or a client reads "Vulnerabilities 0/100" as a failed scan rather than as
@@ -4948,7 +4971,7 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       measured, unmeasured, maxAchievable, vulnDetail, weights,
     } = calculateSecureScore(vulnData, awarenessData, mdrData, { estate, edr: edrHealth });
     const recommendations = generateRecommendations(
-      vulnScore, awarenessScore, mdrScore, measured, vulnDetail);
+      vulnScore, awarenessScore, mdrScore, measured, vulnDetail, estate);
 
     // Determine rating
     let rating = 'Critical';
@@ -4978,15 +5001,19 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       },
       weights,
       estate: {
-        servers:        estate.servers,
-        publicAssets:   estate.publicAssets,
-        endpoints:      estate.endpoints,
-        cloudTenancies: estate.cloudTenancies,
-        scannedHosts:   estate.scannedHosts,
-        infraAssets:    estate.infraAssets,
-        sources:        estate.sources,
-        recorded:       estate.anyDeclared,
-        summary:        estateLib.describeEstate(estate),
+        servers:          estate.servers,
+        publicAssets:     estate.publicAssets,
+        endpoints:        estate.endpoints,
+        cloudTenancies:   estate.cloudTenancies,
+        users:            estate.users,
+        serversPatched:   estate.serversPatched,
+        endpointsPatched: estate.endpointsPatched,
+        scannedHosts:     estate.scannedHosts,
+        trainedUsers:     estate.trainedUsers,
+        infraAssets:      estate.infraAssets,
+        sources:          estate.sources,
+        recorded:         estate.anyDeclared,
+        summary:          estateLib.describeEstate(estate),
       },
       // Which components have no data behind them, what each is worth, and the
       // ceiling the score cannot pass until they are supplied.

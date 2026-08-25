@@ -508,10 +508,13 @@
      input must therefore send null, never 0. */
 
   const ESTATE_FIELDS = [
-    ['servers',        'estateServers'],
-    ['publicAssets',   'estatePublicAssets'],
-    ['endpoints',      'estateEndpoints'],
-    ['cloudTenancies', 'estateCloud'],
+    ['servers',          'estateServers'],
+    ['publicAssets',     'estatePublicAssets'],
+    ['endpoints',        'estateEndpoints'],
+    ['cloudTenancies',   'estateCloud'],
+    ['users',            'estateUsers'],
+    ['serversPatched',   'estateServersPatched'],
+    ['endpointsPatched', 'estateEndpointsPatched'],
   ];
 
   function estateMsg(text, isError) {
@@ -532,6 +535,7 @@
     const LABELS = {
       servers: 'servers', publicAssets: 'public-facing assets',
       endpoints: 'endpoints', cloudTenancies: 'cloud tenancies',
+      users: 'users',
     };
     const parts = Object.keys(LABELS)
       .filter(k => effective[k] != null)
@@ -547,9 +551,22 @@
       return;
     }
 
+    // Managed patching is a control, not a quantity of estate, so it is stated
+    // separately rather than listed alongside the asset counts.
+    const patch = [];
+    if (effective.serversPatched != null && effective.servers) {
+      patch.push(effective.serversPatched + ' of ' + effective.servers + ' servers');
+    }
+    if (effective.endpointsPatched != null && effective.endpoints) {
+      patch.push(effective.endpointsPatched + ' of ' + effective.endpoints + ' endpoints');
+    }
+    const patchText = patch.length
+      ? 'Managed patching covers ' + patch.join(' and ') + '. '
+      : '';
+
     const infra = effective.infraAssets || 0;
     el.hidden = false;
-    el.textContent = 'In effect: ' + parts.join(', ') + '. ' +
+    el.textContent = 'In effect: ' + parts.join(', ') + '. ' + patchText +
       (infra > 0
         ? 'Scored on infrastructure scanning against ' + infra + ' asset' +
           (infra === 1 ? '' : 's') + '.'

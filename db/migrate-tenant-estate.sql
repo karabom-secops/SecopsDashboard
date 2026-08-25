@@ -27,6 +27,14 @@ CREATE TABLE IF NOT EXISTS tenant_estate (
   public_assets    INT,          -- internet-facing assets and applications
   endpoints        INT,          -- override; derived from edr_agents when NULL
   cloud_tenancies  INT,          -- cloud subscriptions/accounts in scope
+  users            INT,          -- headcount; drives the human-risk weighting
+
+  -- Managed patching, as a count rather than a flag, so partial coverage is
+  -- expressible. Patched servers carry less exposure — see PATCH_RELIEF in
+  -- lib/estate.js — because patching is a real control against exactly the
+  -- risk the vulnerability component measures.
+  servers_patched   INT,
+  endpoints_patched INT,
 
   notes            TEXT,
   updated_by       INT REFERENCES users(id) ON DELETE SET NULL,
@@ -35,12 +43,21 @@ CREATE TABLE IF NOT EXISTS tenant_estate (
   -- A negative asset count is always a data-entry error, and one that would
   -- silently invert the density calculation.
   CONSTRAINT tenant_estate_non_negative CHECK (
-    COALESCE(servers, 0)         >= 0 AND
-    COALESCE(public_assets, 0)   >= 0 AND
-    COALESCE(endpoints, 0)       >= 0 AND
-    COALESCE(cloud_tenancies, 0) >= 0
+    COALESCE(servers, 0)           >= 0 AND
+    COALESCE(public_assets, 0)     >= 0 AND
+    COALESCE(endpoints, 0)         >= 0 AND
+    COALESCE(cloud_tenancies, 0)   >= 0 AND
+    COALESCE(users, 0)             >= 0 AND
+    COALESCE(servers_patched, 0)   >= 0 AND
+    COALESCE(endpoints_patched, 0) >= 0
   )
 );
+
+-- Re-runnable: these three arrived after the table did, so an estate recorded
+-- before this migration keeps its values and simply gains the new columns.
+ALTER TABLE tenant_estate ADD COLUMN IF NOT EXISTS users             INT;
+ALTER TABLE tenant_estate ADD COLUMN IF NOT EXISTS servers_patched   INT;
+ALTER TABLE tenant_estate ADD COLUMN IF NOT EXISTS endpoints_patched INT;
 
 COMMENT ON TABLE  tenant_estate IS
   'Declared estate size per client; drives the Secure Score vulnerability yardstick.';
