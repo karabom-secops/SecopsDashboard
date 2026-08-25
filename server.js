@@ -40,6 +40,7 @@ const wazuhAdapter = require('./lib/integrations/wazuh-indexer');
 const { computeEdrSummary } = require('./lib/edr-metrics');
 const wazuhMetrics = require('./lib/wazuh-metrics');
 const { buildPentestReport, imageDimensions, DEFAULT_OWASP } = require('./lib/report-docx');
+const pptxRoute = require('./lib/report-pptx-route');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -4498,6 +4499,29 @@ app.post('/api/reports/metrics/sync', async (req, res) => {
 // The deck's awareness slide groups the raw rows from /api/awareness client-side
 // (see groupSessions in public/js/report-sections.js) rather than using a bespoke
 // aggregate here, so it can never disagree with the Awareness tab.
+
+/**
+ * POST /api/reports/pptx - the board deck as an editable PowerPoint file.
+ *
+ * The client sends the section HTML it has ALREADY rendered for the on-screen
+ * deck, and lib/report-pptx.js translates that into native slides. It works this
+ * way on purpose: the browser is where the data, the users overrides and the
+ * typed narrative come together, and re-fetching it here would create a second
+ * assembly path that could disagree with the deck the user is looking at.
+ *
+ * The HTML is never executed, only parsed with node-html-parser, and the only
+ * image embedded is the logo this server reads off its own disk - a
+ * client-supplied data URI never reaches the file.
+ *
+ * The handler lives in lib/report-pptx-route.js so a test can mount it over real
+ * HTTP without a database. Access is gated on the Reports page by the API prefix
+ * map in lib/pages.js.
+ */
+app.post('/api/reports/pptx', requireAuth, pptxRoute.createPptxHandler({
+  logoDataUri: pptxRoute.makeLogoReader(__dirname),
+  log:         msg => console.log(msg),
+  onError:     (res, err) => serverError(res, err),
+}));
 
 // ── Secure Score routes ────────────────────────────────────────────────────
 

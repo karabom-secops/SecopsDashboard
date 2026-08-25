@@ -505,6 +505,103 @@ window.ReportsTab = (function () {
 
   // ── Generate ──────────────────────────────────────────────────────────────
 
+  /**
+   * Gather the data, apply the overrides and render every selected section to
+   * HTML. Shared by the on-screen deck and the PowerPoint download so the two
+   * can never be built from different data, different overrides, or a different
+   * idea of which sections were skipped.
+   *
+   * Returns null when the user has to fix something first; the reason is already
+   * on screen via notice().
+   */
+  async function assembleDeck() {
+    var prefs = currentPrefs();
+    savePrefs(prefs);
+
+    if (isSuperAdmin() && !selectedTenantId()) {
+      notice('Select a client before generating a report.', true);
+      return null;
+    }
+
+    var period = prefs.period || new Date().toISOString().slice(0, 7);
+    var selected = window.ReportSections
+      .filter(function (s) { return prefs.sections[s.id]; })
+      .map(function (s) { return s.id; });
+
+    if (!selected.length) {
+      notice('Select at least one section to include.', true);
+      return null;
+    }
+
+    var ctx = { period: period, tenantId: selectedTenantId() };
+    var data = await fetchNeeded(selected, ctx);
+    if (data.metrics) _metrics = data.metrics;
+
+    // Overrides typed in the tab win over anything the server returned.
+    if (data.metrics && data.metrics.tiles) {
+      Object.keys(prefs.overrides).forEach(function (id) {
+        if (data.metrics.tiles[id]) data.metrics.tiles[id].override = prefs.overrides[id];
+        else data.metrics.tiles[id] = { derived: null, source: 'manual', override: prefs.overrides[id] };
+      });
+    }
+
+    var now = new Date();
+    var full = {
+      clientName:  clientName(),
+      period:      period,
+      periodLabel: periodLabel(period),
+      author:      prefs.author || defaultAuthor(),
+      dateStr:     now.toISOString().slice(0, 10).replace(/-/g, '/'),
+      year:        now.getFullYear(),
+      tenantId:    selectedTenantId(),
+      narrative:   prefs.narrative,
+      assurance:   prefs.assurance,
+      execSummary: prefs.execSummary,
+      comments:    prefs.comments || {},
+      overrides:   prefs.overrides,
+      data:        data,
+      logoDataUri: await S.logoToDataUri(),
+      P:           S.PALETTE,
+    };
+
+    var rendered = [];
+    var skipped  = [];
+
+    window.ReportSections.forEach(function (s) {
+      if (selected.indexOf(s.id) === -1) return;
+
+      var missing = s.requires.some(function (k) { return full.data[k] == null; });
+      if (missing) { skipped.push(s.label); return; }
+
+      var body = null;
+      try { body = s.render(full); }
+      catch (err) { body = null; }
+
+      if (!body) { skipped.push(s.label); return; }
+
+      // A section may return one body, or an array of bodies when its content
+      // does not fit a single fixed-height slide (slides never scroll — see
+      // .slide overflow:hidden in report-deck.js). Each body becomes a page.
+      var bodies = Array.isArray(body) ? body.filter(Boolean) : [body];
+      if (!bodies.length) { skipped.push(s.label); return; }
+
+      rendered.push({ label: s.label, bodies: bodies });
+    });
+
+    var msgs = [];
+    // Load failures first: they explain the blanks the other messages report,
+    // and are the difference between "this client has no scan" and "the
+    // request was refused".
+    var problems = fetchProblemSummary();
+    if (problems) msgs.push(problems);
+    if (skipped.length) msgs.push('Skipped: ' + skipped.join(', ') + ' (no data).');
+    (_metrics && _metrics.warnings || []).forEach(function (w) { msgs.push(w); });
+
+    saveOverrides(period, prefs.overrides);
+
+    return { full: full, rendered: rendered, msgs: msgs, problems: !!problems };
+  }
+
   async function generate() {
     var btn = document.getElementById('rpt-generate-btn');
     // Reserved before the data fetch: every source is awaited below, and a
@@ -516,97 +613,100 @@ window.ReportsTab = (function () {
     if (btn) { btn.disabled = true; btn.textContent = 'Building…'; }
 
     try {
-      var prefs = currentPrefs();
-      savePrefs(prefs);
+      var model = await assembleDeck();
+      if (!model) { deckWindow.fail('Nothing to render.'); return; }
 
-      if (isSuperAdmin() && !selectedTenantId()) {
-        notice('Select a client before generating a report.', true);
-        return;
-      }
+      notice(model.msgs.join(' '), model.problems);
 
-      var period = prefs.period || new Date().toISOString().slice(0, 7);
-      var selected = window.ReportSections
-        .filter(function (s) { return prefs.sections[s.id]; })
-        .map(function (s) { return s.id; });
-
-      if (!selected.length) {
-        notice('Select at least one section to include.', true);
-        return;
-      }
-
-      var ctx = { period: period, tenantId: selectedTenantId() };
-      var data = await fetchNeeded(selected, ctx);
-      if (data.metrics) _metrics = data.metrics;
-
-      // Overrides typed in the tab win over anything the server returned.
-      if (data.metrics && data.metrics.tiles) {
-        Object.keys(prefs.overrides).forEach(function (id) {
-          if (data.metrics.tiles[id]) data.metrics.tiles[id].override = prefs.overrides[id];
-          else data.metrics.tiles[id] = { derived: null, source: 'manual', override: prefs.overrides[id] };
-        });
-      }
-
-      var now = new Date();
-      var full = {
-        clientName:  clientName(),
-        period:      period,
-        periodLabel: periodLabel(period),
-        author:      prefs.author || defaultAuthor(),
-        dateStr:     now.toISOString().slice(0, 10).replace(/-/g, '/'),
-        year:        now.getFullYear(),
-        tenantId:    selectedTenantId(),
-        narrative:   prefs.narrative,
-        assurance:   prefs.assurance,
-        execSummary: prefs.execSummary,
-        comments:    prefs.comments || {},
-        overrides:   prefs.overrides,
-        data:        data,
-        logoDataUri: await S.logoToDataUri(),
-        P:           S.PALETTE,
-      };
-
-      var slides  = [D.coverSlide(full)];
-      var skipped = [];
-
-      window.ReportSections.forEach(function (s) {
-        if (selected.indexOf(s.id) === -1) return;
-
-        var missing = s.requires.some(function (k) { return full.data[k] == null; });
-        if (missing) { skipped.push(s.label); return; }
-
-        var body = null;
-        try { body = s.render(full); }
-        catch (err) { body = null; }
-
-        if (!body) { skipped.push(s.label); return; }
-
-        // A section may return one body, or an array of bodies when its content
-        // does not fit a single fixed-height slide (slides never scroll — see
-        // .slide overflow:hidden in report-deck.js). Each body becomes a page.
-        var bodies = Array.isArray(body) ? body.filter(Boolean) : [body];
-        if (!bodies.length) { skipped.push(s.label); return; }
-
-        bodies.forEach(function (b) {
-          slides.push(D.slide({ title: s.label, body: b, pageNo: slides.length + 1, ctx: full }));
+      var slides = [D.coverSlide(model.full)];
+      model.rendered.forEach(function (sec) {
+        sec.bodies.forEach(function (b) {
+          slides.push(D.slide({
+            title: sec.label, body: b, pageNo: slides.length + 1, ctx: model.full,
+          }));
         });
       });
 
-      var msgs = [];
-      // Load failures first: they explain the blanks the other messages report,
-      // and are the difference between "this client has no scan" and "the
-      // request was refused".
-      var problems = fetchProblemSummary();
-      if (problems) msgs.push(problems);
-      if (skipped.length) msgs.push('Skipped: ' + skipped.join(', ') + ' (no data).');
-      (_metrics && _metrics.warnings || []).forEach(function (w) { msgs.push(w); });
-      notice(msgs.join(' '), !!problems);
-
-      deckWindow.write(D.renderDeck(slides, full));
-
-      saveOverrides(period, prefs.overrides);
+      deckWindow.write(D.renderDeck(slides, model.full));
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Generate Deck'; }
     }
+  }
+
+  /**
+   * The same deck as an editable PowerPoint file.
+   *
+   * The section HTML is rendered here and POSTed; lib/report-pptx.js on the
+   * server translates it into native slides. Nothing about the deck's content is
+   * recomputed there, so the .pptx and the on-screen deck cannot disagree.
+   *
+   * No window is reserved: this is a download, not a popup, so it is immune to
+   * the popup-blocker problem that shapes generate().
+   */
+  async function downloadPptx() {
+    var btn = document.getElementById('rpt-pptx-btn');
+    var label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Building…'; }
+
+    try {
+      var model = await assembleDeck();
+      if (!model) return;
+
+      if (!model.rendered.length) {
+        notice('No section produced any content to export.', true);
+        return;
+      }
+
+      var res = await fetch('api/reports/pptx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ctx: {
+            clientName:  model.full.clientName,
+            period:      model.full.period,
+            periodLabel: model.full.periodLabel,
+            author:      model.full.author,
+            dateStr:     model.full.dateStr,
+          },
+          sections: model.rendered,
+        }),
+      });
+
+      if (!res.ok) {
+        // The error body is JSON on a handled failure and HTML on a crash —
+        // never assume, or the user gets "[object Object]" as the reason.
+        var reason = 'HTTP ' + res.status;
+        try {
+          var j = await res.json();
+          if (j && j.error) reason = j.error;
+        } catch (e) { /* keep the status */ }
+        notice('PowerPoint export failed: ' + reason, true);
+        return;
+      }
+
+      var blob = await res.blob();
+      var name = filenameFrom(res.headers.get('Content-Disposition')) ||
+        ((model.full.clientName || 'Client').replace(/[^A-Za-z0-9._-]+/g, '-') +
+         '-Cybersecurity-Board-Report-' + (model.full.period || '') + '.pptx');
+
+      S.downloadFile(name, blob,
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+
+      var slides = res.headers.get('X-Pptx-Slides');
+      notice(model.msgs.concat(
+        ['PowerPoint downloaded' + (slides ? ' (' + slides + ' slides)' : '') + '.']
+      ).join(' '), model.problems);
+    } catch (err) {
+      notice('PowerPoint export failed: ' + err.message, true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label || 'Download PowerPoint'; }
+    }
+  }
+
+  /** Pull the filename out of a Content-Disposition header, if it has one. */
+  function filenameFrom(header) {
+    var m = /filename="?([^";]+)"?/.exec(header || '');
+    return m ? m[1] : null;
   }
 
   async function redraftNarrative() {
@@ -702,6 +802,9 @@ window.ReportsTab = (function () {
 
       var gen = document.getElementById('rpt-generate-btn');
       if (gen) gen.onclick = generate;
+
+      var pptx = document.getElementById('rpt-pptx-btn');
+      if (pptx) pptx.onclick = downloadPptx;
 
       var rst = document.getElementById('rpt-reset-btn');
       if (rst) rst.onclick = reset;
