@@ -237,10 +237,22 @@ const SecureScoreTab = (() => {
         return '<strong>' + e[k] + '</strong> ' + label + tag;
       });
 
+    // Computed before the no-estate branch: an awareness declaration is a claim
+    // about a control, not about assets, so it applies to a client who has
+    // declared nothing else — and that is exactly when it needs explaining.
+    const w = scoreData.weights;
+    let awareness = '';
+    if (w && w.awarenessRelief != null && w.awarenessRelief < 1) {
+      awareness = ' Awareness is weighted <strong>' +
+        Math.round((1 - w.awarenessRelief) * 100) + '% below</strong> its usual share ' +
+        'because the client runs their own programme and no completion figures ' +
+        'have been recorded — the control is not scored, only weighted down.';
+    }
+
     if (!parts.length) {
       el.hidden = false;
       el.innerHTML = 'No estate recorded for this client, so the vulnerability measure ' +
-        'cannot be sized. <strong>Record it on the Admin tab.</strong>';
+        'cannot be sized. <strong>Record it on the Admin tab.</strong>' + awareness;
       el.className = 'score-estate-note warn';
       return;
     }
@@ -253,7 +265,6 @@ const SecureScoreTab = (() => {
 
     // The weighting is the part a client is most likely to challenge, so state
     // it plainly: what the vulnerability component is worth, and on what basis.
-    const w = scoreData.weights;
     let weighting = '';
     if (w && w.basis === 'exposure') {
       const vw = Math.round(w.vulnerabilities * 100);
@@ -277,10 +288,35 @@ const SecureScoreTab = (() => {
 
     el.hidden = false;
     el.className = 'score-estate-note';
-    el.innerHTML = 'Scored against an estate of ' + parts.join(', ') + '.' + extra + weighting;
+    el.innerHTML = 'Scored against an estate of ' + parts.join(', ') + '.' + extra +
+      weighting + awareness;
   }
 
-  function renderComponentScores(container, components) {
+  /**
+   * What to say on an awareness card with no figures behind it.
+   *
+   * A client running their own programme must not be told to "upload training
+   * records" as though they had none — that is advice for someone else's
+   * problem, and it hides the thing they can actually do.
+   */
+  function awarenessMissingText(comp, weights) {
+    const pts = ptsOf(comp, 35);
+    if (weights && weights.awarenessProgram === 'internal') {
+      return 'This client runs their own awareness programme, so this component is ' +
+             'weighted at half pending evidence rather than treated as absent — ' +
+             'but it still scores zero until figures exist. Record their completion ' +
+             'figures on the Awareness tab to recover up to ' + pts + ' points.';
+    }
+    if (weights && weights.awarenessProgram === 'none') {
+      return 'No awareness programme is in place, so this scores zero at full ' +
+             'weight (' + pts + ' points).';
+    }
+    return 'No awareness training data uploaded — upload training records, or ' +
+           'record an internally run programme on the Admin tab, to recover up ' +
+           'to ' + pts + ' points.';
+  }
+
+  function renderComponentScores(container, components, weights) {
     // `measured` comes from the scoring engine. A component with no data
     // scores 0 by design — an unmeasured control is an unmanaged one — but the
     // card MUST say so, or a client reads "0/100" as a scan they failed rather
@@ -295,8 +331,7 @@ const SecureScoreTab = (() => {
         score: components.awareness.score,
         measured: wasMeasured(components.awareness),
         desc: 'Training completion rate',
-        missing: 'No awareness training data uploaded — upload training records ' +
-                 'to recover up to ' + ptsOf(components.awareness, 35) + ' points.',
+        missing: awarenessMissingText(components.awareness, weights),
         tooltip: 'Score = % of training sessions completed (phishing simulations excluded).<br>100% completion = 100/100.<br><br><strong>No data scores 0</strong>, because an unmeasured control is an unmanaged one.',
       },
       {
@@ -680,7 +715,7 @@ const SecureScoreTab = (() => {
 
     // Render component scores
     const componentContainer = document.getElementById('secure-score-components');
-    renderComponentScores(componentContainer, scoreData.components);
+    renderComponentScores(componentContainer, scoreData.components, scoreData.weights);
 
     // Render trend chart (pass grc score for insurability overlay line)
     const trendContainer = document.getElementById('secure-score-trend');

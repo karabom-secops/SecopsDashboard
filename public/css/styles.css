@@ -2491,6 +2491,29 @@ body.login-page {
   color: var(--text);
 }
 
+/* Manual awareness figures — for clients running their own programme. */
+.awareness-manual-card {
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+  background: var(--fill-4);
+  border: 1px solid var(--card-edge, var(--separator));
+  border-radius: var(--radius);
+}
+.awareness-manual-hint {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--muted);
+  max-width: 70ch;
+}
+.awareness-manual-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  align-items: end;
+}
+#awarenessManualContent .awareness-manual-hint { margin-top: 1rem; }
+
 .table-scroll {
   max-height: 320px;
   overflow-y: auto;

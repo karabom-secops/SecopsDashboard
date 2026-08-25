@@ -1680,6 +1680,60 @@ app.get('/api/awareness', requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * POST /api/awareness/manual — record completion figures by hand.
+ *
+ * For a client who runs their own awareness programme. Their HR system or LMS
+ * produces "X of Y staff completed" perfectly well; it just does not produce an
+ * Arctic Wolf export, and until now that meant they scored zero on a control
+ * they actually operate.
+ *
+ * Stored as a normal awareness_uploads row with upload_type 'manual', so the
+ * scorer, the Secure Score history and the board report all read it through the
+ * existing path with no special cases. The provenance stays on the row: these
+ * are numbers a client gave us, not numbers we verified, and every surface that
+ * shows them says so.
+ */
+app.post('/api/awareness/manual', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error: tenantErr } = resolveAwarenessTenant(req, 'body');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+
+    const body = req.body || {};
+    const total     = estateLib.count(body.totalUsers);
+    const completed = estateLib.count(body.completedUsers);
+
+    if (total === null || total < 1) {
+      return res.status(400).json({ error: 'Staff covered must be a whole number of one or more.' });
+    }
+    if (completed === null) {
+      return res.status(400).json({ error: 'Staff completed must be a whole number of zero or more.' });
+    }
+    // Silently clamping would manufacture a 100% completion rate out of a typo.
+    if (completed > total) {
+      return res.status(400).json({
+        error: 'Staff completed (' + completed + ') cannot exceed staff covered (' + total + ').',
+      });
+    }
+
+    // Replaces rather than appends, matching every other awareness write path —
+    // the tenant holds one current set of figures, not a pile of them.
+    await pool.query('DELETE FROM awareness_uploads WHERE tenant_id = $1', [tenantId]);
+    const r = await pool.query(
+      `INSERT INTO awareness_uploads (tenant_id, uploaded_by, total_users, total_incomplete, upload_type)
+       VALUES ($1, $2, $3, $4, 'manual') RETURNING id, uploaded_at`,
+      [tenantId, req.session.userId || null, total, total - completed]
+    );
+
+    return res.json({
+      tenantId, uploadType: 'manual',
+      uploadedAt: r.rows[0].uploaded_at,
+      totalUsers: total, completedUsers: completed,
+      completionPct: Math.round((completed / total) * 100),
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
 app.delete('/api/awareness', async (req, res) => {
   try {
     const { tenantId, error: tenantErr } = resolveAwarenessTenant(req, 'query');
@@ -4700,7 +4754,8 @@ app.get('/api/secure-score/estate', requireAuth, async (req, res) => {
     try {
       const r = await pool.query(
         `SELECT servers, public_assets, endpoints, cloud_tenancies, users,
-                servers_patched, endpoints_patched, notes, updated_at
+                servers_patched, endpoints_patched, awareness_program,
+                notes, updated_at
          FROM tenant_estate WHERE tenant_id = $1`, [tenantId]);
       if (r.rows.length) declared = r.rows[0];
     } catch (err) {
@@ -4720,6 +4775,7 @@ app.get('/api/secure-score/estate', requireAuth, async (req, res) => {
         users:            declared.users,
         serversPatched:   declared.servers_patched,
         endpointsPatched: declared.endpoints_patched,
+        awarenessProgram: declared.awareness_program,
         notes:            declared.notes || '',
         updatedAt:        declared.updated_at,
       } : null,
@@ -4759,14 +4815,29 @@ app.put('/api/secure-score/estate', requireAuth, async (req, res) => {
       vals[f] = n;
     }
 
+    // An unrecognised programme is rejected rather than normalised to NULL: a
+    // typo would otherwise cost the client their awareness relief silently.
+    let program = null;
+    if (body.awarenessProgram !== null && body.awarenessProgram !== undefined &&
+        body.awarenessProgram !== '') {
+      program = estateLib.awarenessProgram(body.awarenessProgram);
+      if (program === null) {
+        return res.status(400).json({
+          error: 'Awareness programme must be one of: ' +
+                 estateLib.AWARENESS_PROGRAMS.join(', ') + '.',
+        });
+      }
+    }
+
     const notes = typeof body.notes === 'string' ? body.notes.slice(0, 2000) : null;
 
     try {
       await pool.query(
         `INSERT INTO tenant_estate
            (tenant_id, servers, public_assets, endpoints, cloud_tenancies, users,
-            servers_patched, endpoints_patched, notes, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+            servers_patched, endpoints_patched, awareness_program,
+            notes, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
          ON CONFLICT (tenant_id) DO UPDATE SET
            servers           = EXCLUDED.servers,
            public_assets     = EXCLUDED.public_assets,
@@ -4775,12 +4846,13 @@ app.put('/api/secure-score/estate', requireAuth, async (req, res) => {
            users             = EXCLUDED.users,
            servers_patched   = EXCLUDED.servers_patched,
            endpoints_patched = EXCLUDED.endpoints_patched,
+           awareness_program = EXCLUDED.awareness_program,
            notes             = EXCLUDED.notes,
            updated_by        = EXCLUDED.updated_by,
            updated_at        = NOW()`,
         [tenantId, vals.servers, vals.publicAssets, vals.endpoints,
          vals.cloudTenancies, vals.users, vals.serversPatched, vals.endpointsPatched,
-         notes, req.session.userId || null]
+         program, notes, req.session.userId || null]
       );
     } catch (err) {
       return res.status(503).json({
@@ -4805,13 +4877,14 @@ async function loadEstate(tenantId, scanId, trainedUsers) {
   try {
     const r = await pool.query(
       `SELECT servers, public_assets, endpoints, cloud_tenancies, users,
-              servers_patched, endpoints_patched
+              servers_patched, endpoints_patched, awareness_program
        FROM tenant_estate WHERE tenant_id = $1`,
       [tenantId]
     );
     if (r.rows.length) {
       const row = r.rows[0];
       declared = {
+        awarenessProgram: row.awareness_program,
         servers:          row.servers,
         publicAssets:     row.public_assets,
         endpoints:        row.endpoints,
@@ -5010,6 +5083,7 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
         endpointsPatched: estate.endpointsPatched,
         scannedHosts:     estate.scannedHosts,
         trainedUsers:     estate.trainedUsers,
+        awarenessProgram: estate.awarenessProgram,
         infraAssets:      estate.infraAssets,
         sources:          estate.sources,
         recorded:         estate.anyDeclared,

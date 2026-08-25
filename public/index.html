@@ -455,8 +455,46 @@
       <a href="upload.html" class="btn btn-primary">Upload CSV</a>
     </div>
 
+    <!--
+      Manual figures — for a client who runs their own awareness programme.
+      Their LMS produces "X of Y completed" perfectly well; it just does not
+      produce an Arctic Wolf export. Without this they scored zero on a control
+      they actually operate. Recorded as client-supplied, never as verified.
+    -->
+    <div id="awarenessManualCard" class="awareness-manual-card" hidden>
+      <h3 class="awareness-card-title">Record figures from an internal programme</h3>
+      <p class="awareness-manual-hint">
+        For clients who run awareness training outside this platform. These are
+        client-supplied figures — they are scored at full weight and labelled as
+        unverified wherever they appear.
+      </p>
+      <form id="awarenessManualForm" class="awareness-manual-form">
+        <div class="form-group">
+          <label class="modal-label" for="awarenessManualTotal">Staff covered</label>
+          <input id="awarenessManualTotal" type="number" min="1" step="1"
+                 class="modal-status-select" autocomplete="off" required />
+        </div>
+        <div class="form-group">
+          <label class="modal-label" for="awarenessManualCompleted">Staff completed</label>
+          <input id="awarenessManualCompleted" type="number" min="0" step="1"
+                 class="modal-status-select" autocomplete="off" required />
+        </div>
+        <div class="form-group">
+          <label class="modal-label">&nbsp;</label>
+          <button id="awarenessManualSaveBtn" type="submit" class="btn btn-primary">Save Figures</button>
+        </div>
+      </form>
+      <p id="awarenessManualMsg" class="admin-form-msg" hidden></p>
+    </div>
+
     <!-- Content (hidden until data loaded) -->
     <div id="awarenessContent" hidden>
+
+      <!-- ── Manually recorded figures ───────────────────────────────────── -->
+      <div id="awarenessManualContent" hidden>
+        <div id="awareness-manual-stat-cards" class="stat-grid"></div>
+        <p class="awareness-manual-hint" id="awarenessManualProvenance"></p>
+      </div>
 
       <!-- ── Summary format ─────────────────────────────────────────────── -->
       <div id="awarenessSummaryContent">
@@ -2148,6 +2186,15 @@
             <label class="modal-label" for="estateEndpointsPatched">Endpoints under managed patching</label>
             <input id="estateEndpointsPatched" type="number" min="0" step="1"
                    class="modal-status-select" placeholder="not recorded" autocomplete="off" />
+          </div>
+          <div class="form-group" style="grid-column: span 2">
+            <label class="modal-label" for="estateAwarenessProgram">Security awareness programme</label>
+            <select id="estateAwarenessProgram" class="modal-status-select">
+              <option value="">Not recorded</option>
+              <option value="platform">Run through this platform</option>
+              <option value="internal">Client runs their own programme</option>
+              <option value="none">No programme in place</option>
+            </select>
           </div>
           <div class="form-group" style="grid-column: span 2">
             <label class="modal-label" for="estateNotes">Notes</label>

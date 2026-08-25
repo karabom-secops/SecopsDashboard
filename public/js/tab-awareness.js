@@ -77,17 +77,49 @@
       }
     }
 
+    // The manual-entry card is a write action, so it follows the same gate as
+    // the delete button rather than being shown to read-only viewers.
+    var manualCard = document.getElementById('awarenessManualCard');
+    if (manualCard) {
+      manualCard.hidden = !window.canWrite('awareness');
+      var mForm = document.getElementById('awarenessManualForm');
+      if (mForm && !mForm.dataset.handlerSet) {
+        mForm.dataset.handlerSet = '1';
+        mForm.addEventListener('submit', _saveManual);
+      }
+      // Prefill from figures already recorded, so an edit starts from what is
+      // there rather than from blank boxes that look like nothing was saved.
+      if (hasData && (_data.upload.upload_type === 'manual')) {
+        var t = parseInt(_data.upload.total_users, 10) || 0;
+        var i = parseInt(_data.upload.total_incomplete, 10) || 0;
+        var tEl = document.getElementById('awarenessManualTotal');
+        var cEl = document.getElementById('awarenessManualCompleted');
+        if (tEl && !tEl.value) tEl.value = t;
+        if (cEl && !cEl.value) cEl.value = Math.max(0, t - i);
+      }
+    }
+
     if (!hasData) return;
 
-    var isHistory = (_data.upload.upload_type === 'history');
+    var type      = _data.upload.upload_type || 'summary';
+    var isHistory = (type === 'history');
+    var isManual  = (type === 'manual');
     var summaryEl = document.getElementById('awarenessSummaryContent');
     var historyEl = document.getElementById('awarenessHistoryContent');
-    if (summaryEl) summaryEl.hidden = isHistory;
+    var manualEl  = document.getElementById('awarenessManualContent');
+    if (summaryEl) summaryEl.hidden = isHistory || isManual;
     if (historyEl) historyEl.hidden = !isHistory;
+    if (manualEl)  manualEl.hidden  = !isManual;
 
     var exportBtn = document.getElementById('awarenessExportCsvBtn');
 
-    if (isHistory) {
+    if (isManual) {
+      // Deliberately NOT the summary path: manual figures carry no per-user
+      // rows, and the distribution chart and offender tables would render as
+      // empty boxes that read as missing data rather than as absent detail.
+      if (exportBtn) exportBtn.hidden = true;
+      _renderManualCards();
+    } else if (isHistory) {
       _renderHistoryStatCards();
       _renderTypeBreakdownChart();
       _renderMonthlyTrendChart();
@@ -113,6 +145,86 @@
       _renderAll();
     } catch (err) {
       alert('Network error: ' + err.message);
+    }
+  }
+
+  function _manualMsg(text, isError) {
+    var el = document.getElementById('awarenessManualMsg');
+    if (!el) return;
+    if (!text) { el.hidden = true; el.textContent = ''; return; }
+    el.hidden = false;
+    el.textContent = text;
+    el.className = isError ? 'admin-form-error' : 'admin-form-success';
+  }
+
+  /** Save client-supplied completion figures, replacing whatever is recorded. */
+  async function _saveManual(e) {
+    if (e) e.preventDefault();
+    var btn = document.getElementById('awarenessManualSaveBtn');
+    var tEl = document.getElementById('awarenessManualTotal');
+    var cEl = document.getElementById('awarenessManualCompleted');
+
+    var total     = tEl ? Number(tEl.value.trim()) : NaN;
+    var completed = cEl ? Number(cEl.value.trim()) : NaN;
+
+    function whole(n) { return Number.isFinite(n) && n >= 0 && Math.floor(n) === n; }
+    if (!whole(total) || total < 1) {
+      _manualMsg('Staff covered must be a whole number of one or more.', true); return;
+    }
+    if (!whole(completed)) {
+      _manualMsg('Staff completed must be a whole number of zero or more.', true); return;
+    }
+    // Checked here as well as on the server: clamping this silently would turn a
+    // typo into a 100% completion rate on a board report.
+    if (completed > total) {
+      _manualMsg('Staff completed cannot exceed staff covered.', true); return;
+    }
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      var body = { totalUsers: total, completedUsers: completed };
+      if (window.currentUser && window.currentUser.role === 'superadmin' && window.globalTenantId) {
+        body.tenantId = window.globalTenantId;
+      }
+      var r = await fetch('api/awareness/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+      var data = await r.json().catch(function () { return {}; });
+      if (!r.ok) { _manualMsg(data.error || ('Save failed (HTTP ' + r.status + ').'), true); return; }
+      _manualMsg('Figures saved. The Secure Score will use them on next refresh.', false);
+      await window.renderAwareness();
+    } catch (err) {
+      _manualMsg('Save failed: ' + err.message, true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save Figures'; }
+    }
+  }
+
+  // ── Manually recorded figures ───────────────────────────────────────────────
+  function _renderManualCards() {
+    var el = document.getElementById('awareness-manual-stat-cards');
+    var up = _data && _data.upload;
+    if (!el || !up) return;
+
+    var total      = parseInt(up.total_users, 10) || 0;
+    var incomplete = parseInt(up.total_incomplete, 10) || 0;
+    var completed  = Math.max(0, total - incomplete);
+    var pct        = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+    el.innerHTML =
+      _card('Staff Covered', total, 'accent-blue', '') +
+      _card('Completed', completed, 'accent-blue', '') +
+      _card('Outstanding', incomplete, incomplete > 0 ? 'accent-amber' : 'accent-blue', '') +
+      _card('Completion Rate', pct + '%', pct >= 90 ? 'accent-blue' : 'accent-amber', '');
+
+    var prov = document.getElementById('awarenessManualProvenance');
+    if (prov) {
+      prov.textContent = 'Client-supplied figures from an internally run awareness ' +
+        'programme. These are scored at full weight but have not been verified ' +
+        'against training records held by this platform.';
     }
   }
 

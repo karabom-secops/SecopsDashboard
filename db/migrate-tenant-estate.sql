@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS tenant_estate (
   servers_patched   INT,
   endpoints_patched INT,
 
+  -- Who runs security awareness training. 'internal' means the client runs
+  -- their own programme outside this platform: the control plausibly exists but
+  -- we have not seen it, so the awareness weight is halved rather than the
+  -- client being scored as though they had no programme. It never earns points
+  -- — see AWARENESS_RELIEF in lib/estate.js.
+  awareness_program TEXT,
+
   notes            TEXT,
   updated_by       INT REFERENCES users(id) ON DELETE SET NULL,
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -53,11 +60,20 @@ CREATE TABLE IF NOT EXISTS tenant_estate (
   )
 );
 
--- Re-runnable: these three arrived after the table did, so an estate recorded
--- before this migration keeps its values and simply gains the new columns.
+-- Re-runnable: these arrived after the table did, so an estate recorded before
+-- this migration keeps its values and simply gains the new columns.
 ALTER TABLE tenant_estate ADD COLUMN IF NOT EXISTS users             INT;
 ALTER TABLE tenant_estate ADD COLUMN IF NOT EXISTS servers_patched   INT;
 ALTER TABLE tenant_estate ADD COLUMN IF NOT EXISTS endpoints_patched INT;
+ALTER TABLE tenant_estate ADD COLUMN IF NOT EXISTS awareness_program TEXT;
+
+-- Only the three the scorer understands. An unrecognised value would be
+-- normalised to NULL in lib/estate.js and silently lose the client their
+-- relief, so it is refused at the door instead.
+ALTER TABLE tenant_estate DROP CONSTRAINT IF EXISTS tenant_estate_awareness_program;
+ALTER TABLE tenant_estate ADD  CONSTRAINT tenant_estate_awareness_program
+  CHECK (awareness_program IS NULL OR
+         awareness_program IN ('platform', 'internal', 'none'));
 
 COMMENT ON TABLE  tenant_estate IS
   'Declared estate size per client; drives the Secure Score vulnerability yardstick.';

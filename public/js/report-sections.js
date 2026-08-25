@@ -174,7 +174,25 @@ window.ReportSections = (function () {
    * "Based on critical, high, medium and low findings" would describe an
    * assessment that never happened.
    */
-  function componentCaption(c, comp) {
+  function componentCaption(c, comp, score) {
+    // Awareness run by the client, with no figures recorded, is weighted down
+    // rather than treated as absent. "Training completion rate" beside a zero
+    // would describe a measurement nobody took, and would read to a board as a
+    // programme that failed rather than one we have not been shown.
+    if (c.key === 'awareness') {
+      var w = (score && score.weights) || {};
+      if (comp.measured === false && w.awarenessProgram === 'internal') {
+        return {
+          label: c.label,
+          desc: 'Client-run programme — no completion figures recorded, weighted down',
+        };
+      }
+      if (comp.measured === false && w.awarenessProgram === 'none') {
+        return { label: c.label, desc: 'No awareness programme in place' };
+      }
+      return { label: c.label, desc: c.desc };
+    }
+
     if (c.key !== 'vulnerabilities') return { label: c.label, desc: c.desc };
 
     var d = comp.detail || {};
@@ -203,11 +221,11 @@ window.ReportSections = (function () {
     return { label: c.label, desc: c.desc };
   }
 
-  function componentCard(c, comp) {
+  function componentCard(c, comp, scoreData) {
     var score  = Math.round(Number(comp.score) || 0);
     var weight = comp.weight != null ? Math.round(comp.weight * 100) + '%' : '';
     var band   = scoreBand(score);
-    var cap    = componentCaption(c, comp);
+    var cap    = componentCaption(c, comp, scoreData);
 
     return '<div class="cmp-card">' +
         '<div class="cmp-head">' +
@@ -224,12 +242,13 @@ window.ReportSections = (function () {
 
   /** The weighted breakdown row, or '' when no score data is available. */
   function componentRow(ctx) {
-    var comps = (ctx.data.secureScore || {}).components;
+    var sc = ctx.data.secureScore || {};
+    var comps = sc.components;
     if (!comps) return '';
 
     var cards = COMPONENTS
       .filter(function (c) { return comps[c.key] && comps[c.key].score != null; })
-      .map(function (c) { return componentCard(c, comps[c.key]); });
+      .map(function (c) { return componentCard(c, comps[c.key], sc); });
 
     if (!cards.length) return '';
     return '<div class="cmp-row">' + cards.join('') + '</div>';
@@ -1560,12 +1579,20 @@ window.ReportSections = (function () {
       var cur = now[d.key], was = prev[d.key];
       var t = trendFor(cur, was);
       return {
-        domain: d.label, prev: was, cur: cur, target: d.target, trend: t,
+        domain: d.label, key: d.key, prev: was, cur: cur, target: d.target, trend: t,
         gap: cur == null ? null : cur - d.target,
         measured: measured[d.key] !== false,
       };
     });
     var unmeasured = rows.filter(function (r) { return !r.measured; });
+
+    // "No data has been supplied" is true but incomplete for a client who runs
+    // their own awareness programme: the control exists, we have simply not been
+    // shown it, and the weighting already reflects that. A board reading the
+    // unqualified sentence would conclude their people are untrained.
+    var w = (ctx.data.secureScore || {}).weights || {};
+    var ownProgramme = !!(w.awarenessProgram === 'internal' &&
+      rows.some(function (r) { return r.key === 'awareness' && !r.measured; }));
 
     return D.dataTable({
       cols: [
@@ -1605,6 +1632,13 @@ window.ReportSections = (function () {
           ', not because of an adverse result.</strong> An unmeasured control is ' +
           'treated as unmanaged rather than excluded, so the overall score reflects ' +
           'the gap in visibility.'
+        : '') +
+      (ownProgramme
+        ? ' Security awareness training is run internally rather than through this ' +
+          'platform, and no completion figures have been recorded. That component ' +
+          'is therefore weighted below its usual share rather than assessed as ' +
+          'absent — recording the completion figures would have it scored on its ' +
+          'own merits.'
         : '') +
       (prev.source === 'reconstructed'
         ? ' Prior-month figures are reconstructed from dated scan, training and ' +

@@ -564,9 +564,24 @@
       ? 'Managed patching covers ' + patch.join(' and ') + '. '
       : '';
 
+    // The awareness declaration changes the WEIGHT, never the score, and the
+    // difference is worth stating here — otherwise a halved forfeit on the
+    // Secure Score looks like a bug.
+    const AWARE_TEXT = {
+      internal: ' Awareness runs on the client\'s own programme, so it is weighted ' +
+                'at half pending evidence. Record their completion figures on the ' +
+                'Awareness tab to have it scored on their own numbers at full weight.',
+      platform: ' Awareness runs through this platform and is scored from the ' +
+                'uploaded training records.',
+      none:     ' No awareness programme is in place, so that component scores zero ' +
+                'at full weight.',
+    };
+    const awareText = AWARE_TEXT[effective.awarenessProgram] || '';
+
     const infra = effective.infraAssets || 0;
     el.hidden = false;
-    el.textContent = 'In effect: ' + parts.join(', ') + '. ' + patchText +
+    el.textContent = 'In effect: ' + parts.join(', ') + '. ' + patchText + awareText.trim() +
+      (awareText ? ' ' : '') +
       (infra > 0
         ? 'Scored on infrastructure scanning against ' + infra + ' asset' +
           (infra === 1 ? '' : 's') + '.'
@@ -594,6 +609,9 @@
         // null must render as an EMPTY box, not "0" — they mean different things.
         if (el) el.value = (dec[key] === null || dec[key] === undefined) ? '' : dec[key];
       });
+      // Not a count, so it is not in ESTATE_FIELDS: '' is its "not recorded".
+      const prog = document.getElementById('estateAwarenessProgram');
+      if (prog) prog.value = dec.awarenessProgram || '';
       const notes = document.getElementById('estateNotes');
       if (notes) notes.value = dec.notes || '';
       renderEstateEffective(data.effective);
@@ -621,6 +639,9 @@
         }
         body[key] = n;
       }
+      const prog = document.getElementById('estateAwarenessProgram');
+      body.awarenessProgram = (prog && prog.value) ? prog.value : null;
+
       const notes = document.getElementById('estateNotes');
       body.notes = notes ? notes.value : '';
 
