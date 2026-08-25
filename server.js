@@ -4945,7 +4945,7 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
     // a scan that was never uploaded.
     const {
       composite, vulnScore, awarenessScore, mdrScore,
-      measured, unmeasured, maxAchievable, vulnDetail,
+      measured, unmeasured, maxAchievable, vulnDetail, weights,
     } = calculateSecureScore(vulnData, awarenessData, mdrData, { estate, edr: edrHealth });
     const recommendations = generateRecommendations(
       vulnScore, awarenessScore, mdrScore, measured, vulnDetail);
@@ -4961,17 +4961,22 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       tenantId,
       score: composite,
       rating,
+      // Weights come from `weights`, not the flat WEIGHTS table: they follow the
+      // client's exposure. Anything that reports a weight must read the same
+      // object the composite was computed from, or the breakdown will not
+      // reconcile with the score printed beside it.
       components: {
         vulnerabilities:  {
-          score: vulnScore, weight: WEIGHTS.vulnerabilities, measured: measured.vulnerabilities,
+          score: vulnScore, weight: weights.vulnerabilities, measured: measured.vulnerabilities,
           // Which yardstick applied, and the workings behind it. A client shown
           // a number they cannot interrogate will not trust it.
           basis: vulnDetail.basis,
           detail: vulnDetail,
         },
-        awareness:        { score: awarenessScore, weight: WEIGHTS.awareness,        measured: measured.awareness },
-        incidentResponse: { score: mdrScore,       weight: WEIGHTS.incidentResponse, measured: measured.incidentResponse },
+        awareness:        { score: awarenessScore, weight: weights.awareness,        measured: measured.awareness },
+        incidentResponse: { score: mdrScore,       weight: weights.incidentResponse, measured: measured.incidentResponse },
       },
+      weights,
       estate: {
         servers:        estate.servers,
         publicAssets:   estate.publicAssets,

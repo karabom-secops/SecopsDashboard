@@ -117,6 +117,25 @@ const SecureScoreTab = (() => {
   }
 
   /**
+   * A component's weight, from the payload rather than a constant.
+   *
+   * Weights follow the client's exposure now, so nothing may hardcode 40/35/25:
+   * a card reading "40%" beside a score the engine weighted at 18% would not
+   * reconcile with the composite printed above it. The fallbacks cover payloads
+   * from an older server, where the weights really were fixed.
+   */
+  function pctOf(comp, fallback) {
+    const w = comp && comp.weight;
+    return (typeof w === 'number' && isFinite(w)) ? Math.round(w * 100) + '%' : fallback;
+  }
+
+  /** The same weight expressed as score points, for "recover up to N points". */
+  function ptsOf(comp, fallback) {
+    const w = comp && comp.weight;
+    return (typeof w === 'number' && isFinite(w)) ? Math.round(w * 100) : fallback;
+  }
+
+  /**
    * The vulnerability card, which is now three different cards depending on
    * what the client actually has. Showing an endpoint-only client a breakdown
    * of infrastructure scan findings — or telling them to upload a scan — is
@@ -134,14 +153,14 @@ const SecureScoreTab = (() => {
 
     if (basis === 'endpoint') {
       return {
-        label: 'Endpoint Hygiene', weight: '40%',
+        label: 'Endpoint Hygiene', weight: pctOf(comp, '40%'),
         score: comp.score, measured,
         desc: d.endpoints
           ? n(d.currencyPct) + '% of ' + d.endpoints + ' endpoints patched and reporting'
           : 'Endpoint patch currency and agent health',
         missing: 'This client has endpoints and no in-scope infrastructure, so patch ' +
                  'currency is the measure — but no EDR agent data is available. ' +
-                 'Connect the EDR feed to recover up to 40 points.',
+                 'Connect the EDR feed to recover up to ' + ptsOf(comp, 40) + ' points.',
         tooltip: 'This client has <strong>no servers, public-facing assets or cloud ' +
                  'tenancies</strong> recorded, so an infrastructure scan is not expected ' +
                  'and its absence is not penalised.<br><br>' +
@@ -155,7 +174,7 @@ const SecureScoreTab = (() => {
 
     if (basis === 'unknown') {
       return {
-        label: 'Vulnerabilities', weight: '40%',
+        label: 'Vulnerabilities', weight: pctOf(comp, '40%'),
         score: comp.score, measured: false,
         desc: 'Estate not recorded',
         missing: 'No estate has been recorded for this client, so the right measure ' +
@@ -172,14 +191,15 @@ const SecureScoreTab = (() => {
       ? ' across ' + d.assets + ' asset' + (d.assets === 1 ? '' : 's') + ' in scope'
       : '';
     return {
-      label: 'Vulnerabilities', weight: '40%',
+      label: 'Vulnerabilities', weight: pctOf(comp, '40%'),
       score: comp.score, measured,
       desc: d.density != null
         ? d.density + ' weighted findings per asset' + scale +
           (d.capped ? ' — capped by open criticals' : '')
         : 'Based on critical, high, medium, and low findings',
       missing: 'No vulnerability scan uploaded. An unscanned estate is treated ' +
-               'as unknown, not clean — upload a scan to recover up to 40 points.',
+               'as unknown, not clean — upload a scan to recover up to ' +
+               ptsOf(comp, 40) + ' points.',
       tooltip: 'Scored on finding <strong>density</strong>, so estate size does not ' +
                'decide the result:<br>' +
                '• Weighted findings = Critical×10, High×5, Medium×2, Low×0.5<br>' +
@@ -230,9 +250,23 @@ const SecureScoreTab = (() => {
       extra = ' Last scan reached <strong>' + e.scannedHosts + '</strong> host' +
         (e.scannedHosts === 1 ? '' : 's') + '.';
     }
+
+    // The weighting is the part a client is most likely to challenge, so state
+    // it plainly: what the vulnerability component is worth, and on what basis.
+    const w = scoreData.weights;
+    let weighting = '';
+    if (w && w.basis === 'exposure') {
+      const vw = Math.round(w.vulnerabilities * 100);
+      weighting = ' Vulnerability management is weighted <strong>' + vw + '%</strong> ' +
+        'for this client, from an internet-reachable exposure of <strong>' + w.exposure +
+        '</strong> — a smaller attack surface shifts weight onto awareness (' +
+        Math.round(w.awareness * 100) + '%) and incident response (' +
+        Math.round(w.incidentResponse * 100) + '%).';
+    }
+
     el.hidden = false;
     el.className = 'score-estate-note';
-    el.innerHTML = 'Scored against an estate of ' + parts.join(', ') + '.' + extra;
+    el.innerHTML = 'Scored against an estate of ' + parts.join(', ') + '.' + extra + weighting;
   }
 
   function renderComponentScores(container, components) {
@@ -246,21 +280,21 @@ const SecureScoreTab = (() => {
     const items = [
       vulnCard(components.vulnerabilities),
       {
-        label: 'Security Awareness', weight: '35%',
+        label: 'Security Awareness', weight: pctOf(components.awareness, '35%'),
         score: components.awareness.score,
         measured: wasMeasured(components.awareness),
         desc: 'Training completion rate',
         missing: 'No awareness training data uploaded — upload training records ' +
-                 'to recover up to 35 points.',
+                 'to recover up to ' + ptsOf(components.awareness, 35) + ' points.',
         tooltip: 'Score = % of training sessions completed (phishing simulations excluded).<br>100% completion = 100/100.<br><br><strong>No data scores 0</strong>, because an unmeasured control is an unmanaged one.',
       },
       {
-        label: 'Incident Response', weight: '25%',
+        label: 'Incident Response', weight: pctOf(components.incidentResponse, '25%'),
         score: components.incidentResponse.score,
         measured: wasMeasured(components.incidentResponse),
         desc: 'Ticket resolution & speed',
         missing: 'No MDR or incident data available — connect the MDR feed to ' +
-                 'recover up to 25 points.',
+                 'recover up to ' + ptsOf(components.incidentResponse, 25) + ' points.',
         tooltip: 'Score based on ticket resolution rate minus a speed penalty.<br>• Resolution rate forms the base score.<br>• Avg resolution &gt; 24 hrs deducts up to 20 pts.<br><br><strong>No data scores 0</strong>, because an unmeasured control is an unmanaged one.',
       },
     ];
@@ -461,9 +495,9 @@ const SecureScoreTab = (() => {
     const drivers = [];
     const comp = scoreData.components || {};
     const compItems = [
-      { label: 'Vulnerabilities',    score: (comp.vulnerabilities || {}).score || 0,    weight: '40%' },
-      { label: 'Security Awareness', score: (comp.awareness || {}).score || 0,          weight: '35%' },
-      { label: 'Incident Response',  score: (comp.incidentResponse || {}).score || 0,   weight: '25%' },
+      { label: 'Vulnerabilities',    score: (comp.vulnerabilities || {}).score || 0,    weight: pctOf(comp.vulnerabilities, '40%') },
+      { label: 'Security Awareness', score: (comp.awareness || {}).score || 0,          weight: pctOf(comp.awareness, '35%') },
+      { label: 'Incident Response',  score: (comp.incidentResponse || {}).score || 0,   weight: pctOf(comp.incidentResponse, '25%') },
     ];
     compItems.sort((a, b) => a.score - b.score).forEach(c => {
       const dotCls = c.score >= 70 ? 'driver-dot-green' : c.score >= 40 ? 'driver-dot-amber' : 'driver-dot-red';
@@ -531,7 +565,10 @@ const SecureScoreTab = (() => {
     }
 
     // Compute month-over-month delta
-    const history = historyData ? historyData.history : [];
+    // Tolerate both {history:[...]} and a bare array. A truthy payload without
+    // a `history` key threw here and took the whole tab down with it.
+    const history = (historyData && (historyData.history ||
+      (Array.isArray(historyData) ? historyData : null))) || [];
     let delta = null;
     if (history.length >= 2) {
       delta = Math.round(scoreData.score) - Math.round(history[1].score);
@@ -936,6 +973,16 @@ const SecureScoreTab = (() => {
     const awarScore = Math.round((comp.awareness          || {}).score || 0);
     const mdrScore  = Math.round((comp.incidentResponse   || {}).score || 0);
 
+    // The printable report must name the same yardstick the tab does — an
+    // endpoint-only client is not being assessed on scan findings.
+    const vulnBasisA4 = (comp.vulnerabilities || {}).basis || 'infrastructure';
+    const vulnLabel = vulnBasisA4 === 'endpoint' ? 'Endpoint Hygiene' : 'Vulnerabilities';
+    const vulnDesc  = vulnBasisA4 === 'endpoint'
+      ? 'Endpoint patch currency and agent health'
+      : (vulnBasisA4 === 'unknown'
+          ? 'Estate not recorded — measure cannot be selected'
+          : 'Finding density across the assets in scope');
+
     const hist = Array.isArray(history) ? history : (history && history.history ? history.history : []);
     let delta = null;
     if (hist.length >= 2) delta = score - Math.round(hist[1].score);
@@ -1156,9 +1203,9 @@ const SecureScoreTab = (() => {
 
   <h2 class="section-heading">2. Security Posture Breakdown</h2>
   <div class="comp-grid">
-    ${buildCompCard('Vulnerabilities', '40%', vulnScore, 'Based on critical, high, medium and low findings')}
-    ${buildCompCard('Security Awareness', '35%', awarScore, 'Training completion rate across all sessions')}
-    ${buildCompCard('Incident Response', '25%', mdrScore, 'Ticket resolution rate and response speed')}
+    ${buildCompCard(vulnLabel, pctOf(comp.vulnerabilities, '40%'), vulnScore, vulnDesc)}
+    ${buildCompCard('Security Awareness', pctOf(comp.awareness, '35%'), awarScore, 'Training completion rate across all sessions')}
+    ${buildCompCard('Incident Response', pctOf(comp.incidentResponse, '25%'), mdrScore, 'Ticket resolution rate and response speed')}
   </div>
 
   <h2 class="section-heading">3. 6-Month Score Trend</h2>
