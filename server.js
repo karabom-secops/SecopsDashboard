@@ -41,6 +41,7 @@ const { computeEdrSummary } = require('./lib/edr-metrics');
 const wazuhMetrics = require('./lib/wazuh-metrics');
 const { buildPentestReport, imageDimensions, DEFAULT_OWASP } = require('./lib/report-docx');
 const pptxRoute = require('./lib/report-pptx-route');
+const estateLib = require('./lib/estate');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -4684,6 +4685,176 @@ async function snapshotSecureScore(tenantId, score) {
   }
 }
 
+/**
+ * GET /api/secure-score/estate — the estate profile, declared and derived.
+ *
+ * Sits under the secure-score prefix so it inherits that page's access gate;
+ * the estate is only meaningful as an input to the score.
+ */
+app.get('/api/secure-score/estate', requireAuth, async (req, res) => {
+  try {
+    const tenantId = resolveScoreTenant(req);
+    if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
+
+    let declared = null;
+    try {
+      const r = await pool.query(
+        `SELECT servers, public_assets, endpoints, cloud_tenancies, notes, updated_at
+         FROM tenant_estate WHERE tenant_id = $1`, [tenantId]);
+      if (r.rows.length) declared = r.rows[0];
+    } catch (err) {
+      return res.status(503).json({
+        error: 'Estate table not available. Run db/migrate-tenant-estate.sql.',
+      });
+    }
+
+    const estate = await loadEstate(tenantId, null);
+    return res.json({
+      tenantId,
+      declared: declared ? {
+        servers:        declared.servers,
+        publicAssets:   declared.public_assets,
+        endpoints:      declared.endpoints,
+        cloudTenancies: declared.cloud_tenancies,
+        notes:          declared.notes || '',
+        updatedAt:      declared.updated_at,
+      } : null,
+      effective: estate,
+      summary: estateLib.describeEstate(estate),
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * PUT /api/secure-score/estate — record the estate.
+ *
+ * null clears a field back to "not recorded"; 0 is a positive claim of "none"
+ * and is what moves a client onto the endpoint yardstick. The two must stay
+ * distinguishable all the way down, so empty strings become null, not 0.
+ */
+// No explicit role guard: app.use('/api', pageGate) already requires WRITE on
+// the secure-score page for any PUT (see lib/auth-middleware.js). Using that
+// rather than a hardcoded role check keeps the per-user access overrides in
+// lib/pages.js authoritative instead of quietly bypassing them.
+app.put('/api/secure-score/estate', requireAuth, async (req, res) => {
+  try {
+    const tenantId = resolveScoreTenant(req);
+    if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
+
+    const body = req.body || {};
+    const vals = {};
+    for (const f of estateLib.DECLARED_FIELDS) {
+      const raw = body[f];
+      if (raw === null || raw === undefined || raw === '') { vals[f] = null; continue; }
+      const n = estateLib.count(raw);
+      if (n === null) {
+        return res.status(400).json({
+          error: estateLib.FIELD_LABELS[f] + ' must be a whole number of zero or more.',
+        });
+      }
+      vals[f] = n;
+    }
+
+    const notes = typeof body.notes === 'string' ? body.notes.slice(0, 2000) : null;
+
+    try {
+      await pool.query(
+        `INSERT INTO tenant_estate
+           (tenant_id, servers, public_assets, endpoints, cloud_tenancies, notes, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+         ON CONFLICT (tenant_id) DO UPDATE SET
+           servers         = EXCLUDED.servers,
+           public_assets   = EXCLUDED.public_assets,
+           endpoints       = EXCLUDED.endpoints,
+           cloud_tenancies = EXCLUDED.cloud_tenancies,
+           notes           = EXCLUDED.notes,
+           updated_by      = EXCLUDED.updated_by,
+           updated_at      = NOW()`,
+        [tenantId, vals.servers, vals.publicAssets, vals.endpoints,
+         vals.cloudTenancies, notes, req.session.userId || null]
+      );
+    } catch (err) {
+      return res.status(503).json({
+        error: 'Estate table not available. Run db/migrate-tenant-estate.sql.',
+      });
+    }
+
+    const estate = await loadEstate(tenantId, null);
+    return res.json({ ok: true, effective: estate, summary: estateLib.describeEstate(estate) });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * Resolve a tenant's estate: what an admin declared, merged with what the
+ * telemetry already knows. Declared always wins — see lib/estate.js.
+ *
+ * Every query is individually guarded: this must degrade to "estate unknown"
+ * on an un-migrated database rather than taking the whole Secure Score with it.
+ */
+async function loadEstate(tenantId, scanId) {
+  let declared = null;
+  try {
+    const r = await pool.query(
+      `SELECT servers, public_assets, endpoints, cloud_tenancies
+       FROM tenant_estate WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    if (r.rows.length) {
+      const row = r.rows[0];
+      declared = {
+        servers:        row.servers,
+        publicAssets:   row.public_assets,
+        endpoints:      row.endpoints,
+        cloudTenancies: row.cloud_tenancies,
+      };
+    }
+  } catch (_) { /* table not migrated yet */ }
+
+  const derived = {};
+  try {
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM edr_agents WHERE tenant_id = $1`, [tenantId]);
+    if (r.rows[0].n > 0) derived.endpoints = r.rows[0].n;
+  } catch (_) { /* edr not migrated */ }
+
+  // Hosts the last scan actually reached — the honest denominator for density,
+  // and the numerator for scan coverage against the declared estate.
+  if (scanId) {
+    try {
+      const r = await pool.query(
+        `SELECT COUNT(DISTINCT NULLIF(TRIM(host), ''))::int AS n
+         FROM vuln_findings WHERE scan_id = $1`, [scanId]);
+      if (r.rows[0].n > 0) derived.scannedHosts = r.rows[0].n;
+    } catch (_) { /* findings table not migrated */ }
+  }
+
+  return estateLib.resolveEstate(declared, derived);
+}
+
+/** Endpoint patch currency and agent health — the endpoint-only yardstick. */
+async function loadEdrHealth(tenantId) {
+  try {
+    const r = await pool.query(
+      `SELECT COUNT(*)::int                                                       AS total,
+              COUNT(*) FILTER (WHERE is_up_to_date)::int                          AS up_to_date,
+              COUNT(*) FILTER (WHERE last_active_at < NOW() - INTERVAL '7 days')::int AS stale,
+              COALESCE(SUM(active_threats), 0)::int                               AS active_threats
+       FROM edr_agents WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    const row = r.rows[0];
+    if (!row || !row.total) return null;
+    return {
+      agents: {
+        total:         row.total,
+        upToDate:      row.up_to_date,
+        stale:         row.stale,
+        activeThreats: row.active_threats,
+      },
+    };
+  } catch (_) { return null; }
+}
+
 app.get('/api/secure-score', requireAuth, async (req, res) => {
   try {
     const tenantId = resolveScoreTenant(req);
@@ -4693,13 +4864,23 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
 
     // Fetch latest vulnerability scan
     let vulnData = null;
+    let scanId = null;
     try {
       const vulnResult = await pool.query(
-        `SELECT summary FROM vuln_scans WHERE tenant_id = $1 ORDER BY month_key DESC LIMIT 1`,
+        `SELECT id, summary FROM vuln_scans WHERE tenant_id = $1 ORDER BY month_key DESC LIMIT 1`,
         [tenantId]
       );
-      if (vulnResult.rows.length > 0) vulnData = { summary: vulnResult.rows[0].summary };
+      if (vulnResult.rows.length > 0) {
+        vulnData = { summary: vulnResult.rows[0].summary };
+        scanId = vulnResult.rows[0].id;
+      }
     } catch (_) { /* table may not exist yet */ }
+
+    // The estate: how much this client actually has, and of what kind. Without
+    // it the vulnerability component judges everyone against absolute finding
+    // counts, which is unfair at both ends of the size range.
+    const estate = await loadEstate(tenantId, scanId);
+    const edrHealth = await loadEdrHealth(tenantId);
 
     // Fetch latest awareness upload — normalise to session-level completion rate
     let awarenessData = null;
@@ -4764,9 +4945,10 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
     // a scan that was never uploaded.
     const {
       composite, vulnScore, awarenessScore, mdrScore,
-      measured, unmeasured, maxAchievable,
-    } = calculateSecureScore(vulnData, awarenessData, mdrData);
-    const recommendations = generateRecommendations(vulnScore, awarenessScore, mdrScore, measured);
+      measured, unmeasured, maxAchievable, vulnDetail,
+    } = calculateSecureScore(vulnData, awarenessData, mdrData, { estate, edr: edrHealth });
+    const recommendations = generateRecommendations(
+      vulnScore, awarenessScore, mdrScore, measured, vulnDetail);
 
     // Determine rating
     let rating = 'Critical';
@@ -4780,9 +4962,26 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       score: composite,
       rating,
       components: {
-        vulnerabilities:  { score: vulnScore,      weight: WEIGHTS.vulnerabilities,  measured: measured.vulnerabilities },
+        vulnerabilities:  {
+          score: vulnScore, weight: WEIGHTS.vulnerabilities, measured: measured.vulnerabilities,
+          // Which yardstick applied, and the workings behind it. A client shown
+          // a number they cannot interrogate will not trust it.
+          basis: vulnDetail.basis,
+          detail: vulnDetail,
+        },
         awareness:        { score: awarenessScore, weight: WEIGHTS.awareness,        measured: measured.awareness },
         incidentResponse: { score: mdrScore,       weight: WEIGHTS.incidentResponse, measured: measured.incidentResponse },
+      },
+      estate: {
+        servers:        estate.servers,
+        publicAssets:   estate.publicAssets,
+        endpoints:      estate.endpoints,
+        cloudTenancies: estate.cloudTenancies,
+        scannedHosts:   estate.scannedHosts,
+        infraAssets:    estate.infraAssets,
+        sources:        estate.sources,
+        recorded:       estate.anyDeclared,
+        summary:        estateLib.describeEstate(estate),
       },
       // Which components have no data behind them, what each is worth, and the
       // ceiling the score cannot pass until they are supplied.

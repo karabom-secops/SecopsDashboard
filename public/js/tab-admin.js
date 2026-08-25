@@ -500,8 +500,141 @@
 
   // ── Event wiring ──────────────────────────────────────────────────────────
 
+  /* ── Client estate ────────────────────────────────────────────────────────
+     Sizes the Secure Score's vulnerability component. The blank/zero
+     distinction is the whole point of this form and has to survive the round
+     trip: blank means "not recorded", 0 means "declared none", and only the
+     latter moves a client onto the endpoint patch-currency measure. An empty
+     input must therefore send null, never 0. */
+
+  const ESTATE_FIELDS = [
+    ['servers',        'estateServers'],
+    ['publicAssets',   'estatePublicAssets'],
+    ['endpoints',      'estateEndpoints'],
+    ['cloudTenancies', 'estateCloud'],
+  ];
+
+  function estateMsg(text, isError) {
+    const el = document.getElementById('estateMsg');
+    if (!el) return;
+    if (!text) { el.hidden = true; el.textContent = ''; return; }
+    el.hidden = false;
+    el.textContent = text;
+    el.className = isError ? 'admin-form-error' : 'admin-form-success';
+  }
+
+  /** Restate the effective estate, marking anything the system derived. */
+  function renderEstateEffective(effective) {
+    const el = document.getElementById('estateEffective');
+    if (!el) return;
+    if (!effective) { el.hidden = true; return; }
+
+    const LABELS = {
+      servers: 'servers', publicAssets: 'public-facing assets',
+      endpoints: 'endpoints', cloudTenancies: 'cloud tenancies',
+    };
+    const parts = Object.keys(LABELS)
+      .filter(k => effective[k] != null)
+      .map((k) => {
+        const src = (effective.sources || {})[k];
+        return effective[k] + ' ' + LABELS[k] + (src === 'derived' ? ' (detected)' : '');
+      });
+
+    if (!parts.length) {
+      el.hidden = false;
+      el.textContent = 'Nothing recorded yet — the vulnerability component cannot be ' +
+        'sized and will score zero.';
+      return;
+    }
+
+    const infra = effective.infraAssets || 0;
+    el.hidden = false;
+    el.textContent = 'In effect: ' + parts.join(', ') + '. ' +
+      (infra > 0
+        ? 'Scored on infrastructure scanning against ' + infra + ' asset' +
+          (infra === 1 ? '' : 's') + '.'
+        : (effective.infraDeclared
+            ? 'No infrastructure in scope — scored on endpoint patch currency.'
+            : 'No infrastructure recorded. Enter 0 for servers, public-facing assets ' +
+              'and cloud tenancies to confirm there is none.'));
+  }
+
+  async function loadEstate() {
+    const section = document.getElementById('estateSection');
+    if (!section) return;
+    try {
+      const res = await fetch(apiUrl('secure-score/estate') + tenantQS(),
+        { credentials: 'same-origin' });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        estateMsg(j.error || ('Could not load the estate (HTTP ' + res.status + ').'), true);
+        return;
+      }
+      const data = await res.json();
+      const dec = data.declared || {};
+      ESTATE_FIELDS.forEach(([key, id]) => {
+        const el = document.getElementById(id);
+        // null must render as an EMPTY box, not "0" — they mean different things.
+        if (el) el.value = (dec[key] === null || dec[key] === undefined) ? '' : dec[key];
+      });
+      const notes = document.getElementById('estateNotes');
+      if (notes) notes.value = dec.notes || '';
+      renderEstateEffective(data.effective);
+      estateMsg('');
+    } catch (err) {
+      estateMsg('Could not load the estate: ' + err.message, true);
+    }
+  }
+
+  async function handleSaveEstate(e) {
+    if (e) e.preventDefault();
+    const btn = document.getElementById('estateSaveBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    try {
+      const body = Object.assign({}, tenantBody());
+      for (const [key, id] of ESTATE_FIELDS) {
+        const el = document.getElementById(id);
+        const raw = el ? el.value.trim() : '';
+        if (raw === '') { body[key] = null; continue; }
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < 0 || Math.floor(n) !== n) {
+          estateMsg('Enter a whole number of zero or more for each field.', true);
+          return;
+        }
+        body[key] = n;
+      }
+      const notes = document.getElementById('estateNotes');
+      body.notes = notes ? notes.value : '';
+
+      const res = await fetch(apiUrl('secure-score/estate') + tenantQS(), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        estateMsg(data.error || ('Save failed (HTTP ' + res.status + ').'), true);
+        return;
+      }
+      renderEstateEffective(data.effective);
+      estateMsg('Estate saved. The Secure Score will use it on next refresh.', false);
+    } catch (err) {
+      estateMsg('Save failed: ' + err.message, true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save Estate'; }
+    }
+  }
+
   async function initAdmin() {
     configureTableForRole();
+
+    const estateForm = document.getElementById('estateForm');
+    if (estateForm) {
+      estateForm.addEventListener('submit', handleSaveEstate);
+      loadEstate();
+    }
 
     if (isSuperAdmin()) {
       await Promise.all([renderTenants(), populateTenantDropdowns()]);

@@ -2917,6 +2917,32 @@ body.login-page {
   flex-direction: column;
 }
 
+/* Explanatory copy under an admin card title. The estate form needs it: the
+   blank-versus-zero distinction is not guessable from the inputs alone. */
+.admin-card-hint {
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0 0 1rem;
+  max-width: 78ch;
+}
+.admin-card-hint strong { color: var(--text); font-weight: 590; }
+.admin-card-hint em { font-style: normal; font-weight: 590; color: var(--text); }
+
+/* The estate form has five fields plus a full-width notes row, so it cannot use
+   the 4-column grid the other admin forms share. */
+#estateForm .admin-form-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+}
+#estateForm .admin-form-row + .admin-form-row {
+  grid-template-columns: 1fr;
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 900px) {
+  #estateForm .admin-form-row { grid-template-columns: 1fr 1fr; }
+}
+
 .admin-form-error {
   color: #dc2626;
   font-size: 0.85rem;
@@ -4645,6 +4671,34 @@ h1, h2, h3, h4,
   text-align: left;
 }
 .score-unmeasured-note strong { font-weight: 590; }
+
+/* The estate the vulnerability score was sized against. Informational by
+   default — the denominator is doing real work now, so it has to be visible
+   and challengeable — and amber only when nothing has been recorded. */
+.score-estate-note {
+  max-width: 62ch;
+  margin: var(--space-3) auto 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-card);
+  background: var(--surface2);
+  color: var(--muted);
+  border: 1px solid var(--card-edge, transparent);
+  font-size: var(--text-footnote);
+  line-height: 1.5;
+  text-align: left;
+}
+.score-estate-note strong { font-weight: 590; color: var(--text); }
+.score-estate-note.warn {
+  background: var(--orange-dim);
+  color: var(--orange-text);
+}
+.score-estate-note.warn strong { color: inherit; }
+/* "(detected)" marks a figure the system derived rather than one somebody
+   typed — the difference matters when a number looks wrong. */
+.score-estate-note .estate-src {
+  font-size: .92em;
+  opacity: .75;
+}
 
 /* Dashed edge reads as "absent", not "failed". */
 .component-card.component-unmeasured {

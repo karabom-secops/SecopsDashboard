@@ -2092,6 +2092,59 @@
       </div>
     </div>
 
+    <!-- Estate profile — sizes the Secure Score's vulnerability component -->
+    <div id="estateSection" class="admin-card">
+      <h3 class="admin-card-title">Client Estate</h3>
+      <p class="admin-card-hint">
+        Sizes the Secure Score's vulnerability measure. A client with
+        <strong>0 servers, 0 public-facing assets and 0 cloud tenancies</strong> is scored
+        on endpoint patch currency instead of an infrastructure scan, so they are not
+        penalised for not running a scan they do not need.
+        Leave a field <em>blank</em> for "not recorded" — that is not the same as entering
+        <em>0</em>, which is a positive statement that they have none.
+      </p>
+
+      <form id="estateForm" class="admin-add-form" novalidate>
+        <div class="admin-form-row">
+          <div class="form-group">
+            <label class="modal-label" for="estateServers">Servers</label>
+            <input id="estateServers" type="number" min="0" step="1"
+                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label class="modal-label" for="estatePublicAssets">Public-facing assets / apps</label>
+            <input id="estatePublicAssets" type="number" min="0" step="1"
+                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label class="modal-label" for="estateEndpoints">Endpoints</label>
+            <input id="estateEndpoints" type="number" min="0" step="1"
+                   class="modal-status-select" placeholder="auto from EDR" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label class="modal-label" for="estateCloud">Cloud tenancies</label>
+            <input id="estateCloud" type="number" min="0" step="1"
+                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
+          </div>
+          <div class="form-group admin-form-submit">
+            <label class="modal-label">&nbsp;</label>
+            <button id="estateSaveBtn" type="submit" class="btn btn-primary">Save Estate</button>
+          </div>
+        </div>
+        <div class="admin-form-row">
+          <div class="form-group" style="flex:1 1 100%">
+            <label class="modal-label" for="estateNotes">Notes</label>
+            <input id="estateNotes" type="text" class="modal-status-select"
+                   placeholder="e.g. two unmanaged legacy servers excluded from scanning"
+                   autocomplete="off" maxlength="2000" />
+          </div>
+        </div>
+      </form>
+
+      <p id="estateEffective" class="admin-card-hint" hidden></p>
+      <p id="estateMsg" class="admin-form-msg" hidden></p>
+    </div>
+
     <!-- Add User Form -->
     <div class="admin-card">
       <h3 class="admin-card-title">Add New User</h3>

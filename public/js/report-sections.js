@@ -167,21 +167,58 @@ window.ReportSections = (function () {
     { key: 'incidentResponse', label: 'Incident Response',  desc: 'Ticket resolution & speed' },
   ];
 
+  /**
+   * The vulnerability component is scored by whichever yardstick fits the
+   * client's estate, so its label and description have to follow. A client with
+   * no servers is measured on endpoint patch currency, and captioning that card
+   * "Based on critical, high, medium and low findings" would describe an
+   * assessment that never happened.
+   */
+  function componentCaption(c, comp) {
+    if (c.key !== 'vulnerabilities') return { label: c.label, desc: c.desc };
+
+    var d = comp.detail || {};
+    var basis = comp.basis || 'infrastructure';
+
+    if (basis === 'endpoint') {
+      return {
+        label: 'Endpoint Hygiene',
+        desc: d.endpoints
+          ? (d.currencyPct != null ? d.currencyPct + '% of ' : '') + d.endpoints +
+            ' endpoints patched and reporting'
+          : 'Endpoint patch currency and agent health',
+      };
+    }
+    if (basis === 'unknown') {
+      return { label: c.label, desc: 'Estate not recorded — measure cannot be selected' };
+    }
+    if (d.density != null && d.assets) {
+      return {
+        label: c.label,
+        desc: d.density + ' weighted findings per asset across ' + d.assets +
+              ' asset' + (d.assets === 1 ? '' : 's') +
+              (d.capped ? ', capped by open criticals' : ''),
+      };
+    }
+    return { label: c.label, desc: c.desc };
+  }
+
   function componentCard(c, comp) {
     var score  = Math.round(Number(comp.score) || 0);
     var weight = comp.weight != null ? Math.round(comp.weight * 100) + '%' : '';
     var band   = scoreBand(score);
+    var cap    = componentCaption(c, comp);
 
     return '<div class="cmp-card">' +
         '<div class="cmp-head">' +
-          '<span class="cmp-t">' + esc(c.label) + '</span>' +
+          '<span class="cmp-t">' + esc(cap.label) + '</span>' +
           (weight ? '<span class="cmp-w">(' + esc(weight) + ')</span>' : '') +
         '</div>' +
         '<div class="cmp-bar">' +
           '<div class="cmp-fill" style="width:' + score + '%;background:' + band.color + '"></div>' +
         '</div>' +
         '<div class="cmp-score">' + score + '/100</div>' +
-        '<div class="cmp-d">' + esc(c.desc) + '</div>' +
+        '<div class="cmp-d">' + esc(cap.desc) + '</div>' +
       '</div>';
   }
 

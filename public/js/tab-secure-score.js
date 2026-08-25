@@ -116,6 +116,125 @@ const SecureScoreTab = (() => {
       '<strong>' + ceil + '/100</strong> (' + lost + ' points unavailable).';
   }
 
+  /**
+   * The vulnerability card, which is now three different cards depending on
+   * what the client actually has. Showing an endpoint-only client a breakdown
+   * of infrastructure scan findings — or telling them to upload a scan — is
+   * advice for somebody else's estate.
+   *
+   * `basis` is absent on payloads from an older server, in which case this
+   * falls back to the infrastructure wording, matching previous behaviour.
+   */
+  function vulnCard(c) {
+    const comp = c || {};
+    const d = comp.detail || {};
+    const basis = comp.basis || 'infrastructure';
+    const measured = comp.measured !== false;
+    const n = (v) => (v == null ? '—' : v);
+
+    if (basis === 'endpoint') {
+      return {
+        label: 'Endpoint Hygiene', weight: '40%',
+        score: comp.score, measured,
+        desc: d.endpoints
+          ? n(d.currencyPct) + '% of ' + d.endpoints + ' endpoints patched and reporting'
+          : 'Endpoint patch currency and agent health',
+        missing: 'This client has endpoints and no in-scope infrastructure, so patch ' +
+                 'currency is the measure — but no EDR agent data is available. ' +
+                 'Connect the EDR feed to recover up to 40 points.',
+        tooltip: 'This client has <strong>no servers, public-facing assets or cloud ' +
+                 'tenancies</strong> recorded, so an infrastructure scan is not expected ' +
+                 'and its absence is not penalised.<br><br>' +
+                 'Scored instead on endpoint hygiene:<br>' +
+                 '• Base = % of agents up to date<br>' +
+                 '• Agents not seen for 7 days deduct up to 30 pts<br>' +
+                 '• Active threats deduct 5 pts each, up to 25<br><br>' +
+                 'Change the estate on the Admin tab to switch measure.',
+      };
+    }
+
+    if (basis === 'unknown') {
+      return {
+        label: 'Vulnerabilities', weight: '40%',
+        score: comp.score, measured: false,
+        desc: 'Estate not recorded',
+        missing: 'No estate has been recorded for this client, so the right measure ' +
+                 'cannot be chosen. Record the server, public-facing asset and endpoint ' +
+                 'counts on the Admin tab, then upload a scan or connect EDR.',
+        tooltip: 'The vulnerability measure depends on what the client has. With no ' +
+                 'estate recorded and no data supplied, this cannot be assessed and ' +
+                 'scores 0.<br><br><strong>Record the estate on the Admin tab</strong> to ' +
+                 'choose between infrastructure scanning and endpoint patch currency.',
+      };
+    }
+
+    const scale = d.assets
+      ? ' across ' + d.assets + ' asset' + (d.assets === 1 ? '' : 's') + ' in scope'
+      : '';
+    return {
+      label: 'Vulnerabilities', weight: '40%',
+      score: comp.score, measured,
+      desc: d.density != null
+        ? d.density + ' weighted findings per asset' + scale +
+          (d.capped ? ' — capped by open criticals' : '')
+        : 'Based on critical, high, medium, and low findings',
+      missing: 'No vulnerability scan uploaded. An unscanned estate is treated ' +
+               'as unknown, not clean — upload a scan to recover up to 40 points.',
+      tooltip: 'Scored on finding <strong>density</strong>, so estate size does not ' +
+               'decide the result:<br>' +
+               '• Weighted findings = Critical×10, High×5, Medium×2, Low×0.5<br>' +
+               '• Density = weighted findings ÷ assets in scope<br>' +
+               '• Score = 100 ÷ (1 + density ÷ 3)<br><br>' +
+               'Open criticals then cap the score regardless of estate size ' +
+               '(1 critical caps at 65, 3 at 50, 5 at 40, 10 at 30), so a dangerous ' +
+               'finding cannot be diluted away by a large estate.<br><br>' +
+               '<strong>No data scores 0</strong>, because an unmeasured control is an ' +
+               'unmanaged one.',
+    };
+  }
+
+  /**
+   * A line under the component cards naming the estate the score was computed
+   * against, and where each number came from. The denominator is doing real
+   * work now, so it has to be visible and challengeable.
+   */
+  function renderEstateNote(el, scoreData) {
+    if (!el) return;
+    const e = scoreData && scoreData.estate;
+    if (!e) { el.hidden = true; el.innerHTML = ''; return; }
+
+    const FIELDS = [
+      ['servers', 'servers'],
+      ['publicAssets', 'public-facing assets'],
+      ['endpoints', 'endpoints'],
+      ['cloudTenancies', 'cloud tenancies'],
+    ];
+    const parts = FIELDS
+      .filter(([k]) => e[k] != null)
+      .map(([k, label]) => {
+        const src = (e.sources || {})[k];
+        const tag = src === 'derived' ? ' <span class="estate-src">(detected)</span>' : '';
+        return '<strong>' + e[k] + '</strong> ' + label + tag;
+      });
+
+    if (!parts.length) {
+      el.hidden = false;
+      el.innerHTML = 'No estate recorded for this client, so the vulnerability measure ' +
+        'cannot be sized. <strong>Record it on the Admin tab.</strong>';
+      el.className = 'score-estate-note warn';
+      return;
+    }
+
+    let extra = '';
+    if (e.scannedHosts != null) {
+      extra = ' Last scan reached <strong>' + e.scannedHosts + '</strong> host' +
+        (e.scannedHosts === 1 ? '' : 's') + '.';
+    }
+    el.hidden = false;
+    el.className = 'score-estate-note';
+    el.innerHTML = 'Scored against an estate of ' + parts.join(', ') + '.' + extra;
+  }
+
   function renderComponentScores(container, components) {
     // `measured` comes from the scoring engine. A component with no data
     // scores 0 by design — an unmeasured control is an unmanaged one — but the
@@ -125,15 +244,7 @@ const SecureScoreTab = (() => {
     const wasMeasured = (c) => c && c.measured !== false;
 
     const items = [
-      {
-        label: 'Vulnerabilities', weight: '40%',
-        score: components.vulnerabilities.score,
-        measured: wasMeasured(components.vulnerabilities),
-        desc: 'Based on critical, high, medium, and low findings',
-        missing: 'No vulnerability scan uploaded. An unscanned estate is treated ' +
-                 'as unknown, not clean — upload a scan to recover up to 40 points.',
-        tooltip: 'Score starts at 100. Each finding deducts points:<br>• Critical: −20 pts<br>• High: −10 pts<br>• Medium: −5 pts<br>• Low: −1 pt<br>Minimum score is 0.<br><br><strong>No data scores 0</strong>, because an unmeasured control is an unmanaged one.',
-      },
+      vulnCard(components.vulnerabilities),
       {
         label: 'Security Awareness', weight: '35%',
         score: components.awareness.score,
@@ -449,6 +560,7 @@ const SecureScoreTab = (() => {
         <div class="secure-score-main">
           <div id="secure-score-gauge" class="score-gauge-container"></div>
           <div id="secure-score-unmeasured" class="score-unmeasured-note" hidden></div>
+          <div id="secure-score-estate" class="score-estate-note" hidden></div>
           <div id="secure-score-data-age" class="data-age-info"></div>
           <div id="secure-score-grc-indicator"></div>
         </div>
@@ -512,6 +624,7 @@ const SecureScoreTab = (() => {
     // Without this the score looks like a verdict on the client's security,
     // when part of it is really a verdict on what has been uploaded.
     renderUnmeasuredNote(document.getElementById('secure-score-unmeasured'), scoreData);
+    renderEstateNote(document.getElementById('secure-score-estate'), scoreData);
 
     // Render insurability panel
     const insurabilityContainer = document.getElementById('secure-score-insurability');
