@@ -101,10 +101,6 @@
             <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
             <span class="side-nav-text">Operations</span>
           </button>
-          <button class="side-nav-item" type="button" data-tab="metrics" hidden>
-            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-            <span class="side-nav-text">Metrics &amp; Trends</span>
-          </button>
           <button class="side-nav-item" type="button" data-tab="secure-score" hidden>
             <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
             <span class="side-nav-text">Secure Score</span>
@@ -325,57 +321,6 @@
           </div>
         </div>
         <div id="operations-carousel-controls" class="carousel-controls"></div>
-      </div>
-    </section>
-
-    <!-- Tab: Metrics -->
-    <section id="tab-metrics" class="tab-panel" hidden role="tabpanel">
-      <div id="metrics-stat-cards" class="stat-grid"></div>
-
-      <div class="charts-grid">
-        <div class="chart-card">
-          <h3 class="chart-title">Open vs Escalated Alerts (12 weeks)</h3>
-          <div class="chart-wrap">
-            <canvas id="chartAlerts"></canvas>
-            <div id="tooltipAlerts" class="chart-tooltip" hidden></div>
-          </div>
-        </div>
-        <div class="chart-card">
-          <h3 class="chart-title">Resolution Rate % (12 weeks)</h3>
-          <div class="chart-wrap">
-            <canvas id="chartResolution"></canvas>
-            <div id="tooltipResolution" class="chart-tooltip" hidden></div>
-          </div>
-        </div>
-        <div class="chart-card">
-          <h3 class="chart-title">Avg Coverage Score (12 weeks)</h3>
-          <div class="chart-wrap">
-            <canvas id="chartCoverage"></canvas>
-            <div id="tooltipCoverage" class="chart-tooltip" hidden></div>
-          </div>
-        </div>
-        <div class="chart-card">
-          <h3 class="chart-title">Critical Open Tickets (12 weeks)</h3>
-          <div class="chart-wrap">
-            <canvas id="chartCritical"></canvas>
-            <div id="tooltipCritical" class="chart-tooltip" hidden></div>
-          </div>
-        </div>
-      </div>
-
-      <h3 class="section-heading">Org Health — Last 8 Weeks</h3>
-      <div class="table-wrapper">
-        <table class="data-table" id="org-health-table">
-          <thead>
-            <tr>
-              <th>Org</th>
-              <th>8-Week Alerts Trend</th>
-              <th>Latest Alerts</th>
-              <th>Latest Coverage</th>
-            </tr>
-          </thead>
-          <tbody id="org-health-tbody"></tbody>
-        </table>
       </div>
     </section>
 
@@ -2308,7 +2253,6 @@
   <script src="js/carousel.js"></script>
   <script src="js/tab-priorities.js"></script>
   <script src="js/tab-orgs.js"></script>
-  <script src="js/tab-metrics.js"></script>
   <script src="js/tab-vulns.js"></script>
   <script src="js/tab-incidents.js"></script>
   <script src="js/tab-awareness.js"></script>

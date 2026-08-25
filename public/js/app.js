@@ -5,12 +5,10 @@
 
   // Shared state
   window.currentWeekKey = null;
-  window._summaryData = [];
 
   const dashboard     = document.getElementById('dashboard');
   const tabPanels     = {
     operations:   document.getElementById('tab-operations'),
-    metrics:      document.getElementById('tab-metrics'),
     redteam:      document.getElementById('tab-redteam'),
     vulns:        document.getElementById('tab-vulns'),
     awareness:    document.getElementById('tab-awareness'),
@@ -36,7 +34,6 @@
 
   const TAB_LABELS = {
     operations: 'Operations',
-    metrics:    'Metrics & Trends',
     redteam:    'Red Team',
     vulns:      'Vulnerabilities',
     awareness:  'Awareness',
@@ -88,10 +85,6 @@
    */
   function renderTab(target) {
     // Lazy-render tabs that need it
-    if (target === 'metrics' && window._summaryData.length && window.currentWeekKey) {
-      const weekData = window._lastWeekData;
-      if (weekData) renderMetrics(weekData, window._summaryData);
-    }
     if (target === 'vulns') {
       renderVulns();
     }
@@ -197,13 +190,9 @@
   window.loadWeek = async function loadWeek(weekKey) {
     window.currentWeekKey = weekKey;
 
-    // Fetch week data and metrics summary in parallel
-    let weekData, summaryData;
+    let weekData;
     try {
-      [weekData, summaryData] = await Promise.all([
-        fetch(`api/week/${weekKey}`).then(r => r.json()),
-        fetch('api/metrics/summary').then(r => r.json()),
-      ]);
+      weekData = await fetch(`api/week/${weekKey}`).then(r => r.json());
     } catch (err) {
       console.error('Failed to load week data:', err);
       return;
@@ -212,7 +201,6 @@
     if (weekData.error) { console.error(weekData.error); return; }
 
     window._lastWeekData = weekData;
-    window._summaryData  = summaryData;
 
     // Dynamic page title
     const wLabel = weekData.weekCommencing || weekKey;
@@ -221,12 +209,7 @@
     // Ensure dashboard is visible
     dashboard.hidden = false;
 
-    // Render the operations section and other visible tabs (metrics only if panel is visible to avoid 0-size canvas)
-    const metricsPanel = tabPanels.metrics;
-    if (!metricsPanel.hidden) {
-      renderMetrics(weekData, summaryData);
-    }
-
+    // Render the operations section and any other visible tab.
     const vulnsPanel = tabPanels.vulns;
     if (!vulnsPanel.hidden) {
       renderVulns();
@@ -250,13 +233,8 @@
   window.refreshCurrentWeek = async function refreshCurrentWeek() {
     if (!window.currentWeekKey) return;
     try {
-      const [weekData, summaryData] = await Promise.all([
-        fetch(`api/week/${window.currentWeekKey}`).then(r => r.json()),
-        fetch('api/metrics/summary').then(r => r.json()),
-      ]);
+      const weekData = await fetch(`api/week/${window.currentWeekKey}`).then(r => r.json());
       window._lastWeekData = weekData;
-      window._summaryData  = summaryData;
-      if (!tabPanels.metrics.hidden) renderMetrics(weekData, summaryData);
       if (!tabPanels.vulns.hidden) renderVulns();
       if (!tabPanels.operations.hidden) {
              // Reinitialize carousel after data refresh

@@ -17,7 +17,7 @@ const pool = require('./lib/db');
 const { requireAuth, requireSuperAdmin, pageGate, loadPageAccess } = require('./lib/auth-middleware');
 const { ROLES, ROLE_LABELS, PAGES, PAGE_KEYS, LEVELS, LEVEL_RANK, resolveAccess } = require('./lib/pages');
 const { parseReport } = require('./lib/parser');
-const { computeAllMetrics, getSummary, getOrgHistory } = require('./lib/metrics');
+const { computeAllMetrics } = require('./lib/metrics');
 const { parseVulnFile, computeVulnSummary, computeDueDate } = require('./lib/vuln-parser');
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
 const XLSX = require('xlsx');
@@ -1057,26 +1057,6 @@ app.patch('/api/week/:weekKey/priority/:index', (req, res) => {
     writeData(WEEKS_FILE, weeks);
     recomputeMetrics();
     res.json(week);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/metrics/summary', (req, res) => {
-  try {
-    const metrics = readData(METRICS_FILE);
-    const summary = getSummary(metrics, 12);
-    res.json(summary);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/metrics/orgs', (req, res) => {
-  try {
-    const weeks   = readData(WEEKS_FILE);
-    const history = getOrgHistory(weeks);
-    res.json(history);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
