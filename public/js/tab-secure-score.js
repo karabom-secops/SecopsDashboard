@@ -215,9 +215,13 @@ const SecureScoreTab = (() => {
                '(1 critical caps at 65, 3 at 50, 5 at 40, 10 at 30), so a dangerous ' +
                'finding cannot be diluted away by a large estate.<br><br>' +
                '<strong>Scan coverage caps it too:</strong> the score cannot exceed ' +
-               'the share of the recorded estate the scan actually reached. An ' +
-               'unscanned asset is unexamined, not clean — and it is usually the ' +
-               'same asset missing from managed patching and the MDR feed.<br><br>' +
+               'the share of the <strong>external-facing</strong> assets the scan ' +
+               'actually reached. An unscanned asset is unexamined, not clean — and ' +
+               'it is usually the same asset missing from managed patching and the ' +
+               'MDR feed.<br><br>' +
+               'The scan is external-facing only. Servers and cloud tenancies are ' +
+               'never in its scope, so they do not count against coverage here — ' +
+               'their patch state is covered by managed patching instead.<br><br>' +
                '<strong>No data scores 0</strong>, because an unmeasured control is an ' +
                'unmanaged one.',
     };
@@ -270,17 +274,29 @@ const SecureScoreTab = (() => {
     // Scan scope, and what it leaves unexamined. Stating the gap in assets
     // rather than only as a percentage keeps it concrete: "12 assets nobody
     // looked at" is actionable in a way that "76% coverage" is not.
+    // Scan scope, against the EXTERNAL estate — the only population the scan
+    // addresses. Measuring it against servers would cap a client at 11/100 for
+    // owning infrastructure the scan was never going to touch.
     let extra = '';
     if (e.scannedHosts != null) {
       extra = ' Last scan reached <strong>' + e.scannedHosts + '</strong> host' +
         (e.scannedHosts === 1 ? '' : 's');
-      const infra = e.infraAssets || 0;
-      const gap = infra - e.scannedHosts;
+      const ext = e.scannableAssets || 0;
+      const gap = ext - e.scannedHosts;
       extra += (gap > 0)
-        ? ' of <strong>' + infra + '</strong> recorded — <strong>' + gap + '</strong> asset' +
-          (gap === 1 ? '' : 's') + ' unexamined, which caps this component at ' +
-          Math.round((e.scannedHosts / infra) * 100) + '/100.'
+        ? ' of <strong>' + ext + '</strong> external-facing assets — <strong>' + gap +
+          '</strong> unexamined, which caps this component at ' +
+          Math.round((e.scannedHosts / ext) * 100) + '/100.'
         : '.';
+    }
+
+    // The internal estate the scan cannot reach at all. Stated separately so a
+    // clean external scan is never read as a clean estate.
+    if (e.unscannableAssets > 0) {
+      extra += ' <strong>' + e.unscannableAssets + '</strong> internal asset' +
+        (e.unscannableAssets === 1 ? '' : 's') + ' (servers, cloud) sit outside the ' +
+        'external scan entirely — their patch state is covered by managed patching, ' +
+        'not by this component.';
     }
 
     // The weighting is the part a client is most likely to challenge, so state

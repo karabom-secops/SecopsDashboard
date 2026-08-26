@@ -5132,6 +5132,10 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
         trainedUsers:     estate.trainedUsers,
         awarenessProgram: estate.awarenessProgram,
         infraAssets:      estate.infraAssets,
+        // The scan is external-facing only, so coverage and the internal gap are
+        // different numbers and the UI has to be able to tell them apart.
+        scannableAssets:   estate.scannableAssets,
+        unscannableAssets: estate.unscannableAssets,
         sources:          estate.sources,
         recorded:         estate.anyDeclared,
         summary:          estateLib.describeEstate(estate),
