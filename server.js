@@ -1103,7 +1103,7 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) =>
 
     const fileText = req.file.buffer.toString('utf8');
 
-    let { findings, format: usedFormat, mergedCount } = parseVulnFile(fileText, {
+    let { findings, format: usedFormat, mergedCount, scannedHosts } = parseVulnFile(fileText, {
       format:   (req.body.fileFormat || 'auto').trim(),
       fileName: req.file.originalname || '',
       mimeType: req.file.mimetype     || '',
@@ -1197,9 +1197,13 @@ app.post('/api/vulns/upload', vulnUpload.single('vulnFile'), async (req, res) =>
     await client.query('BEGIN');
     await client.query('DELETE FROM vuln_scans WHERE tenant_id=$1 AND month_key=$2', [tenantId, monthKey]);
 
+    // scanned_hosts is the scan's real SCOPE — every host it touched, including
+    // the clean ones that leave no finding behind. Null for a format that
+    // cannot report scope (Arctic Wolf), which the score treats as unknown.
     const scanResult = await client.query(
-      `INSERT INTO vuln_scans (tenant_id, month_key, summary, uploaded_by) VALUES ($1, $2, $3, $4) RETURNING id`,
-      [tenantId, monthKey, JSON.stringify(summary), req.session.userId]
+      `INSERT INTO vuln_scans (tenant_id, month_key, summary, uploaded_by, scanned_hosts)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [tenantId, monthKey, JSON.stringify(summary), req.session.userId, scannedHosts || null]
     );
     const scanId = scanResult.rows[0].id;
 
@@ -4905,15 +4909,22 @@ async function loadEstate(tenantId, scanId, trainedUsers) {
     if (r.rows[0].n > 0) derived.endpoints = r.rows[0].n;
   } catch (_) { /* edr not migrated */ }
 
-  // Hosts the last scan actually reached — the honest denominator for density,
-  // and the numerator for scan coverage against the declared estate.
+  // Hosts the last scan actually reached — the denominator for density and the
+  // numerator for coverage.
+  //
+  // This USED TO count DISTINCT host in vuln_findings, which counts hosts that
+  // had findings, not hosts that were scanned: informational rows are dropped
+  // at parse time, so a clean host leaves no row anywhere. The cleaner an estate
+  // was, the worse its coverage looked. It now reads the scope the parser
+  // recorded; a scan uploaded before that column existed reports NULL and is
+  // scored without a coverage cap rather than with a fabricated one.
   if (scanId) {
     try {
       const r = await pool.query(
-        `SELECT COUNT(DISTINCT NULLIF(TRIM(host), ''))::int AS n
-         FROM vuln_findings WHERE scan_id = $1`, [scanId]);
-      if (r.rows[0].n > 0) derived.scannedHosts = r.rows[0].n;
-    } catch (_) { /* findings table not migrated */ }
+        `SELECT scanned_hosts FROM vuln_scans WHERE id = $1`, [scanId]);
+      const n = r.rows.length ? r.rows[0].scanned_hosts : null;
+      if (n != null && n > 0) derived.scannedHosts = n;
+    } catch (_) { /* scanned_hosts not migrated yet — scope stays unknown */ }
   }
 
   return estateLib.resolveEstate(declared, derived);
