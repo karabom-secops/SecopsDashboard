@@ -30,6 +30,7 @@ const {
   calculateSecureScore, calculateVulnScore, calculateAwarenessScore,
   calculateMdrScore, generateRecommendations, WEIGHTS,
 } = require('./lib/secure-score');
+const secureScore = require('./lib/secure-score');
 const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils');
 const arcticWolfAdapter = require('./lib/integrations/arctic-wolf');
 const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
@@ -4918,6 +4919,32 @@ async function loadEstate(tenantId, scanId, trainedUsers) {
   return estateLib.resolveEstate(declared, derived);
 }
 
+/**
+ * Incident load, as tickets per month — the driver behind the incident-response
+ * weight. The arithmetic lives in secureScore.incidentRateFrom() so it can be
+ * tested without a database; this is only the query.
+ *
+ * Degrades to null ("unknown", which the curve treats as neutral) on an
+ * un-migrated table rather than taking the Secure Score with it.
+ */
+async function loadIncidentRate(uploadId) {
+  if (!uploadId) return null;
+  try {
+    const r = await pool.query(
+      `SELECT COUNT(*) FILTER (WHERE created_at IS NOT NULL)::int AS dated,
+              MIN(created_at) AS first_at,
+              MAX(created_at) AS last_at
+       FROM mdr_tickets WHERE upload_id = $1`,
+      [uploadId]
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    return secureScore.incidentRateFrom({
+      dated: row.dated, firstAt: row.first_at, lastAt: row.last_at,
+    });
+  } catch (_) { return null; }   // mdr_tickets not migrated
+}
+
 /** Endpoint patch currency and agent health — the endpoint-only yardstick. */
 async function loadEdrHealth(tenantId) {
   try {
@@ -5011,16 +5038,24 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
 
     // Fetch latest MDR upload for this tenant
     let mdrData = null;
+    let mdrUploadId = null;
     try {
       const mdrResult = await pool.query(
-        `SELECT total_tickets, resolved_count, avg_resolution_hours, uploaded_at
+        `SELECT id, total_tickets, resolved_count, avg_resolution_hours, uploaded_at
          FROM mdr_uploads
          WHERE tenant_id = $1
          ORDER BY uploaded_at DESC LIMIT 1`,
         [tenantId]
       );
-      if (mdrResult.rows.length > 0) mdrData = { upload: mdrResult.rows[0] };
+      if (mdrResult.rows.length > 0) {
+        mdrData = { upload: mdrResult.rows[0] };
+        mdrUploadId = mdrResult.rows[0].id;
+      }
     } catch (_) { /* table may not exist yet */ }
+
+    // How much there has actually been to respond to. Incident response is no
+    // longer the leftover of two other decisions — see incidentPull().
+    const incidentRate = await loadIncidentRate(mdrUploadId);
 
     // The estate: how much this client actually has, of what kind, and how many
     // people. Without it the vulnerability component judges everyone against
@@ -5042,7 +5077,8 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
     const {
       composite, vulnScore, awarenessScore, mdrScore,
       measured, unmeasured, maxAchievable, vulnDetail, weights,
-    } = calculateSecureScore(vulnData, awarenessData, mdrData, { estate, edr: edrHealth });
+    } = calculateSecureScore(vulnData, awarenessData, mdrData,
+                             { estate, edr: edrHealth, incidentRate });
     const recommendations = generateRecommendations(
       vulnScore, awarenessScore, mdrScore, measured, vulnDetail, estate);
 

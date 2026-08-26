@@ -274,12 +274,20 @@ const SecureScoreTab = (() => {
         ? ', reduced by managed patching on ' +
           Math.round(w.serverPatchCoverage * 100) + '% of servers'
         : '';
+      // Incident response is no longer the leftover: it has its own driver, so
+      // say what moved it. A client whose IR weight has risen from 17% to 25%
+      // is entitled to know it was their own ticket volume that did it.
+      const load = (w.incidentRate != null && w.incidentPull > 1)
+        ? ' Incident response is weighted up on a load of <strong>' +
+          w.incidentRate + '</strong> MDR tickets a month.'
+        : '';
+
       const scale = w.users != null
         ? ' Across <strong>' + w.users + '</strong> users, human risk takes ' +
           Math.round(w.awareness * 100) + '% and incident response ' +
-          Math.round(w.incidentResponse * 100) + '%.'
+          Math.round(w.incidentResponse * 100) + '%.' + load
         : ' The remainder splits ' + Math.round(w.awareness * 100) + '% awareness / ' +
-          Math.round(w.incidentResponse * 100) + '% incident response.';
+          Math.round(w.incidentResponse * 100) + '% incident response.' + load;
 
       weighting = ' Vulnerability management is weighted <strong>' + vw + '%</strong> ' +
         'for this client, from an internet-reachable exposure of <strong>' + w.exposure +
