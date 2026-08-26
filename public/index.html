@@ -2152,7 +2152,13 @@
           <div class="form-group">
             <label class="modal-label" for="estatePublicAssets">Public-facing assets / apps</label>
             <input id="estatePublicAssets" type="number" min="0" step="1"
-                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
+                   class="modal-status-select" placeholder="auto — from scan" autocomplete="off" />
+            <!-- Left blank this follows the scan. A typed value is a CHALLENGE to
+                 the scan: say 10 when it reached 6 and the score is held at 60
+                 until the missing four are brought into scope. -->
+            <small class="admin-field-hint">Leave blank to follow the vulnerability
+              scan. Enter a number only to assert assets the scan is missing — that
+              caps the score until they are scanned.</small>
           </div>
           <div class="form-group">
             <label class="modal-label" for="estateEndpoints">Endpoints</label>

@@ -4923,7 +4923,20 @@ async function loadEstate(tenantId, scanId, trainedUsers) {
       const r = await pool.query(
         `SELECT scanned_hosts FROM vuln_scans WHERE id = $1`, [scanId]);
       const n = r.rows.length ? r.rows[0].scanned_hosts : null;
-      if (n != null && n > 0) derived.scannedHosts = n;
+      if (n != null && n > 0) {
+        derived.scannedHosts = n;
+        // The external estate IS what the scan addresses: Reflex scans the
+        // client's public IP range, so the hosts it touched are the best
+        // available statement of how many external-facing assets exist. Filling
+        // it here means the coverage cap works for every scanned client instead
+        // of only those whose admin remembered to type a number.
+        //
+        // Declared still beats derived (resolveEstate), and that is the point:
+        // a declaration is a CHALLENGE to the scan. An admin who says 10 when
+        // the scan reached 6 is asserting four assets the scan is missing, and
+        // the cap will hold the score at 60 until they are brought into scope.
+        derived.publicAssets = n;
+      }
     } catch (_) { /* scanned_hosts not migrated yet — scope stays unknown */ }
   }
 

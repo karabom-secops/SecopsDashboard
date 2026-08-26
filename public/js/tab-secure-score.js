@@ -283,11 +283,26 @@ const SecureScoreTab = (() => {
         (e.scannedHosts === 1 ? '' : 's');
       const ext = e.scannableAssets || 0;
       const gap = ext - e.scannedHosts;
+      const derived = (e.sources || {}).publicAssets === 'derived';
       extra += (gap > 0)
-        ? ' of <strong>' + ext + '</strong> external-facing assets — <strong>' + gap +
-          '</strong> unexamined, which caps this component at ' +
+        ? ' of <strong>' + ext + '</strong> external-facing assets recorded — <strong>' +
+          gap + '</strong> unexamined, which caps this component at ' +
           Math.round((e.scannedHosts / ext) * 100) + '/100.'
-        : '.';
+        // Derived: the external estate IS the scan's reach, so coverage is
+        // complete by construction. Say so, rather than showing a silent 100%
+        // that looks like a verified result.
+        : (derived
+            ? ', which is what the external estate is taken to be. ' +
+              '<span class="estate-src">(no declared asset count to check it against)</span>'
+            : '.');
+    }
+
+    // The scan found internet-facing hosts the client has not recorded. Not a
+    // scoring problem — but an unrecorded internet-facing host is one nobody owns.
+    if (e.undeclaredExternal > 0) {
+      extra += ' <strong>' + e.undeclaredExternal + '</strong> scanned host' +
+        (e.undeclaredExternal === 1 ? ' is' : 's are') + ' not in the recorded asset ' +
+        'inventory.';
     }
 
     // The internal estate the scan cannot reach at all. Stated separately so a

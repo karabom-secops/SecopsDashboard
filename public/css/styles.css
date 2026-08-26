@@ -2949,6 +2949,16 @@ body.login-page {
   margin: 0 0 1rem;
   max-width: 78ch;
 }
+/* Per-field note under an estate input, where the field's behaviour is not
+   obvious from its label (e.g. blank means "follow the scan"). */
+.admin-field-hint {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
 .admin-card-hint strong { color: var(--text); font-weight: 590; }
 .admin-card-hint em { font-style: normal; font-weight: 590; color: var(--text); }
 
