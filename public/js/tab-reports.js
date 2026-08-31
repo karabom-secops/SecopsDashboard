@@ -970,11 +970,20 @@ window.ReportsTab = (function () {
 
       // Publishing writes to the archive the client portal reads, so it needs
       // write on the reports page — the same gate the server enforces.
+      // The button ships hidden in the markup so it never flashes for a reader
+      // who cannot use it — which means the writable branch has to REVEAL it.
+      // Setting only the handler leaves it hidden for everyone, which is how it
+      // stayed invisible until now.
       var pub = document.getElementById('rpt-publish-btn');
       if (pub) {
+        pub.hidden = !canPersist();
         if (canPersist()) pub.onclick = publishReport;
-        else pub.hidden = true;
       }
+
+      // Without this, a readonly user sits on a permanent "Loading…" for an
+      // archive that is never fetched.
+      var pubWrap = document.getElementById('rpt-published-wrap');
+      if (pubWrap) pubWrap.hidden = !canPersist();
       if (canPersist()) renderPublications();
 
       var rst = document.getElementById('rpt-reset-btn');
@@ -1023,6 +1032,10 @@ window.ReportsTab = (function () {
         if (e) e.value = p.execSummary || '';
         _comments = {};
         renderCommentBoxes(p);
+        // The archive is per-tenant. Leaving the previous client's table on
+        // screen would not just mislead — its Withdraw buttons carry that
+        // client's publication ids, so a click would retract the wrong report.
+        if (canPersist()) renderPublications();
         refreshMetrics();
       };
 
