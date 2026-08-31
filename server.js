@@ -935,11 +935,45 @@ async function applyPageAccess(userId, entries) {
   }
 }
 
+/**
+ * Does this database have the account-lifecycle columns?
+ *
+ * Cached after the first successful answer: it is a deployment fact, not a
+ * per-request one, and the admin tab would otherwise pay a catalog lookup on
+ * every load. Deliberately NOT cached on false, so running the migration takes
+ * effect without a restart.
+ */
+let _lifecycleColumns = null;
+async function hasUserLifecycleColumns() {
+  if (_lifecycleColumns) return true;
+  try {
+    const r = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'is_active' LIMIT 1`);
+    if (r.rows.length) _lifecycleColumns = true;
+    return r.rows.length > 0;
+  } catch (_) { return false; }
+}
+
 app.get('/api/users', async (req, res) => {
   try {
     const isSA = req.session.role === 'superadmin';
+
+    // Lifecycle columns arrive with db/migrate-user-lifecycle.sql. On a
+    // deployment that has not run it the whole admin tab would 42703 and go
+    // blank, so they are selected only when present and defaulted otherwise.
+    const lifecycle = await hasUserLifecycleColumns();
+    const lifecycleCols = lifecycle
+      ? `u.is_active, u.must_change_password, u.password_changed_at, u.totp_enabled,`
+      : `TRUE AS is_active, FALSE AS must_change_password,
+         NULL::timestamptz AS password_changed_at, u.totp_enabled,`;
+    const lifecycleGroup = lifecycle
+      ? `, u.is_active, u.must_change_password, u.password_changed_at, u.totp_enabled`
+      : `, u.totp_enabled`;
+
     const baseSelect = `
       SELECT u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name AS tenant_name,
+             ${lifecycleCols}
              u.created_at, u.last_login,
              COALESCE(
                ARRAY_AGG(DISTINCT ut.tenant_id) FILTER (WHERE ut.tenant_id IS NOT NULL),
@@ -954,7 +988,8 @@ app.get('/api/users', async (req, res) => {
       LEFT JOIN user_tenants ut    ON ut.user_id = u.id
       LEFT JOIN user_page_access pa ON pa.user_id = u.id`;
     const groupBy = `
-      GROUP BY u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name, u.created_at, u.last_login
+      GROUP BY u.id, u.username, u.role, u.auth_type, u.tenant_id, t.name,
+               u.created_at, u.last_login${lifecycleGroup}
       ORDER BY u.created_at ASC`;
 
     const result = isSA
@@ -1069,9 +1104,41 @@ app.put('/api/users/:id', async (req, res) => {
       if (check.rows.length > 0) targetAuthType = check.rows[0].auth_type || 'local';
     }
 
-    const { role, password, tenantIds, pageAccess } = req.body;
+    const { role, password, tenantIds, pageAccess,
+            isActive, mustChangePassword, resetMfa } = req.body;
     const updates = [];
     const values  = [];
+
+    /* ── Account lifecycle ──────────────────────────────────────────────
+       These exist for client-portal accounts but apply to everyone. All
+       three are self-inflicted-lockout risks, so each refuses to act on
+       the caller's own account. */
+
+    if (isActive !== undefined) {
+      if (targetId === req.session.userId) {
+        return res.status(400).json({ error: 'You cannot suspend your own account.' });
+      }
+      updates.push(`is_active = $${values.length + 1}`);
+      values.push(!!isActive);
+    }
+
+    if (mustChangePassword !== undefined) {
+      updates.push(`must_change_password = $${values.length + 1}`);
+      values.push(!!mustChangePassword);
+    }
+
+    // Clearing the secret sends the user back through forced enrolment on
+    // their next sign-in, which is what "they lost their phone" needs.
+    // totp_required is left alone: for a client it is implied by the role,
+    // and for a superadmin it is a separate policy decision.
+    if (resetMfa) {
+      if (targetId === req.session.userId) {
+        return res.status(400).json({
+          error: 'Reset your own MFA from the security settings, not from user administration.',
+        });
+      }
+      updates.push('totp_secret = NULL', 'totp_enabled = FALSE');
+    }
 
     // Per-page overrides can be updated on their own, without a role change.
     let accessEntries = null;
@@ -1106,6 +1173,13 @@ app.put('/api/users/:id', async (req, res) => {
       const hash = await bcrypt.hash(String(password), 12);
       updates.push(`password_hash = $${values.length + 1}`);
       values.push(hash);
+
+      // An admin-set password has been typed by someone else and probably read
+      // out loud, so it is a handover credential, not the user's own. Force a
+      // change on next sign-in unless the caller explicitly says otherwise.
+      if (mustChangePassword === undefined && targetId !== req.session.userId) {
+        updates.push('must_change_password = TRUE');
+      }
     }
 
     // Superadmin can update tenant assignments

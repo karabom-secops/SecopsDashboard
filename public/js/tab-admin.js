@@ -198,12 +198,12 @@
       const data = await res.json();
 
       if (!res.ok) {
-        tbody.innerHTML = `<tr><td colspan="6" class="admin-table-empty">${escapeHtml(data.error || 'Failed to load users.')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="admin-table-empty">${escapeHtml(data.error || 'Failed to load users.')}</td></tr>`;
         return;
       }
 
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="admin-table-empty">No users found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="admin-table-empty">No users found.</td></tr>';
         return;
       }
 
@@ -220,7 +220,12 @@
               ? '<span class="role-badge role-manager">Manager</span>'
               : u.role === 'sales'
                 ? '<span class="role-badge role-sales">Sales</span>'
-                : '<span class="role-badge role-readonly">Read-only</span>';
+                // An external account must never be mistaken for an internal
+                // one; the old chain fell through to "Read-only", which is a
+                // staff role with read on every tab.
+                : u.role === 'client'
+                  ? '<span class="role-badge role-client">Client</span>'
+                  : '<span class="role-badge role-readonly">Read-only</span>';
         const ssoTag   = isSso ? ' <span class="role-badge">SSO</span>' : '';
         const tenantCell = showTenantCol
           ? `<td>${escapeHtml(u.tenant_name || '—')}</td>`
@@ -229,10 +234,43 @@
           ? '<span class="admin-self-label">you</span>'
           : `<button class="btn btn-danger btn-sm" data-action="delete-user" data-id="${u.id}" data-username="${escapeHtml(u.username)}">Delete</button>`;
 
-        return `<tr>
+        /* ── Account state ────────────────────────────────────────────────
+           Suspended is the one that changes what the account can do, so it
+           reads as a warning; the other two are informational. Shown for
+           every user, not only clients — the columns apply to everyone. */
+        const suspended = u.is_active === false;
+        const stateTags = [
+          suspended ? '<span class="role-badge state-suspended">Suspended</span>' : '',
+          u.must_change_password ? '<span class="role-badge state-pending">Password reset</span>' : '',
+          // Only meaningful where MFA is actually required of the role.
+          (u.role === 'client' || u.role === 'superadmin')
+            ? (u.totp_enabled
+                ? '<span class="role-badge state-ok">MFA</span>'
+                : '<span class="role-badge state-pending">MFA pending</span>')
+            : '',
+        ].filter(Boolean).join(' ') || '<span class="admin-muted">—</span>';
+
+        // Suspending, reactivating and resetting MFA are all self-lockout
+        // risks, so the server refuses them on your own account and the UI
+        // does not offer them.
+        const lifecycleBtns = isSelf ? '' : `
+            <button class="btn btn-secondary btn-sm" data-action="toggle-active"
+              data-id="${u.id}" data-username="${escapeHtml(u.username)}"
+              data-active="${suspended ? '0' : '1'}"
+              title="${suspended ? 'Restore access for this account' : 'Block sign-in without deleting the account'}">
+              ${suspended ? 'Reactivate' : 'Suspend'}
+            </button>
+            ${isSso ? '' : `<button class="btn btn-secondary btn-sm" data-action="reset-mfa"
+              data-id="${u.id}" data-username="${escapeHtml(u.username)}"
+              ${u.totp_enabled ? '' : 'disabled title="No authenticator is enrolled"'}>
+              Reset MFA
+            </button>`}`;
+
+        return `<tr${suspended ? ' class="admin-row-suspended"' : ''}>
           <td>${escapeHtml(u.username)}${isSelf ? ' <span class="admin-self-label">(you)</span>' : ''}</td>
           <td>${roleTag}${ssoTag}</td>
           ${tenantCell}
+          <td>${stateTags}</td>
           <td>${formatDate(u.created_at)}</td>
           <td>${formatDate(u.last_login)}</td>
           <td class="admin-actions">
@@ -244,12 +282,13 @@
               ${isSelf ? 'disabled title="Cannot change your own role"' : ''}>
               Edit
             </button>
+            ${lifecycleBtns}
             ${delBtn}
           </td>
         </tr>`;
       }).join('');
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="6" class="admin-table-empty">Error: ${escapeHtml(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="admin-table-empty">Error: ${escapeHtml(err.message)}</td></tr>`;
     }
   }
 
@@ -443,8 +482,65 @@
 
   // ── Delete user ───────────────────────────────────────────────────────────
 
+  /** PUT a partial user update and re-render. Shared by the lifecycle actions. */
+  async function patchUser(userId, body, successMsg) {
+    showAdminError('');
+    try {
+      const res  = await fetch(apiUrl(`users/${userId}`), {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showAdminError(data.error || 'Update failed.'); return false; }
+      showAdminSuccess(successMsg);
+      await renderUsers();
+      return true;
+    } catch (err) {
+      showAdminError('Network error: ' + err.message);
+      return false;
+    }
+  }
+
+  /**
+   * Suspend or reactivate.
+   *
+   * Suspension is the answer to "this person has left" that DELETE is not:
+   * the account stops working on its next request — is_active is checked per
+   * request, not cached on the session — while the record of who had access
+   * survives. Deleting destroys that record.
+   */
+  async function handleToggleActive(userId, username, isCurrentlyActive) {
+    const msg = isCurrentlyActive
+      ? `Suspend "${username}"?\n\nThey will be signed out on their next request and cannot sign in again until reactivated. Nothing is deleted.`
+      : `Reactivate "${username}"?\n\nThey will be able to sign in again immediately.`;
+    if (!confirm(msg)) return;
+
+    await patchUser(userId, { isActive: !isCurrentlyActive },
+      isCurrentlyActive ? `"${username}" suspended.` : `"${username}" reactivated.`);
+  }
+
+  /**
+   * Clear the enrolled authenticator.
+   *
+   * The "they lost their phone" path. It does not disable MFA — for a portal
+   * client MFA is required by their role, so the next sign-in walks them
+   * through enrolment again with a fresh secret.
+   */
+  async function handleResetMfa(userId, username) {
+    if (!confirm(
+      `Reset multi-factor authentication for "${username}"?\n\n` +
+      `Their current authenticator will stop working and they will be asked to ` +
+      `enrol a new one at their next sign-in.\n\n` +
+      `Only do this once you are satisfied you are talking to the right person.`
+    )) return;
+
+    await patchUser(userId, { resetMfa: true },
+      `MFA reset for "${username}". They will re-enrol at next sign-in.`);
+  }
+
   async function handleDeleteUser(userId, username) {
-    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+    if (!confirm(`Delete user "${username}"? This cannot be undone.\n\nTo revoke access without losing the record of who had it, use Suspend instead.`)) return;
     showAdminError('');
     try {
       const res  = await fetch(apiUrl(`users/${userId}`), {
@@ -726,6 +822,8 @@
         const authType   = btn.dataset.authType || 'local';
         if (action === 'delete-user') handleDeleteUser(userId, username);
         else if (action === 'edit-user') openEditModal(userId, username, btn.dataset.role, tenantIds, authType, pageAccess);
+        else if (action === 'toggle-active') handleToggleActive(userId, username, btn.dataset.active === '1');
+        else if (action === 'reset-mfa') handleResetMfa(userId, username);
       });
     }
 

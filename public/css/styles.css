@@ -4779,3 +4779,48 @@ h1, h2, h3, h4,
   font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--orange, var(--amber)); margin-left: 0.4rem;
 }
+
+/* ── Admin: account state ─────────────────────────────────────────────────
+   A client is an EXTERNAL account and must never read as an internal one —
+   before this it fell through the badge chain to "Read-only", which is a
+   staff role with read access to every tab. */
+.role-badge.role-client {
+  background: rgba(109, 40, 217, .14);
+  color: #6d28d9;
+  border: 1px solid rgba(109, 40, 217, .3);
+}
+
+/* Suspended is the only one that changes what the account can do, so it is
+   the only one coloured as a warning. */
+.role-badge.state-suspended {
+  background: rgba(220, 38, 38, .14);
+  color: #b91c1c;
+  border: 1px solid rgba(220, 38, 38, .3);
+}
+.role-badge.state-pending {
+  background: rgba(202, 138, 4, .16);
+  color: #a16207;
+  border: 1px solid rgba(202, 138, 4, .3);
+}
+.role-badge.state-ok {
+  background: rgba(22, 163, 74, .14);
+  color: #15803d;
+  border: 1px solid rgba(22, 163, 74, .3);
+}
+
+/* Dimmed rather than hidden: a suspended account is still part of the record
+   of who had access, and hiding it would make it easy to forget. */
+.admin-row-suspended > td { opacity: 0.6; }
+.admin-row-suspended > td:first-child { opacity: 1; }
+.admin-muted { color: var(--muted); }
+
+:root[data-theme="dark"] .role-badge.role-client     { color: #c4b5fd; }
+:root[data-theme="dark"] .role-badge.state-suspended { color: #fca5a5; }
+:root[data-theme="dark"] .role-badge.state-pending   { color: #fcd34d; }
+:root[data-theme="dark"] .role-badge.state-ok        { color: #86efac; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .role-badge.role-client     { color: #c4b5fd; }
+  :root:not([data-theme="light"]) .role-badge.state-suspended { color: #fca5a5; }
+  :root:not([data-theme="light"]) .role-badge.state-pending   { color: #fcd34d; }
+  :root:not([data-theme="light"]) .role-badge.state-ok        { color: #86efac; }
+}
