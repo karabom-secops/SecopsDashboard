@@ -11,72 +11,144 @@
     this file is world-readable. That is fine and deliberate: there is no tenant
     data here. Every figure arrives from /api/portal/*, which is authenticated,
     confined to client sessions, and scoped by the session's tenant.
+
+    STRUCTURE IS THE DASHBOARD'S, DELIBERATELY. Same header, same side drawer,
+    same tab panels, same stylesheet — so the portal reads as part of the same
+    product rather than a separate app that happens to share a logo. The only
+    things that differ are what is in the nav and the absence of every write
+    control.
   -->
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="stylesheet" href="css/portal.css" />
 
   <script>
-    // Theme, pre-paint. Duplicated from js/theme.js on purpose: an external
-    // file loads too late to avoid a flash of the wrong colour scheme.
+    // Pre-paint bootstrap, duplicated from index.html on purpose: an external
+    // file loads too late to avoid a flash of the wrong nav state and theme.
     (function () {
+      var d = document.documentElement;
+      try {
+        var nav = localStorage.getItem('secops.sidenav.v1');
+        var state = nav ? (JSON.parse(nav).mode || 'expanded') : 'expanded';
+        d.classList.add(window.innerWidth < 900 ? 'nav-hidden' : 'nav-' + state);
+        if (window.innerWidth < 900) d.classList.add('nav-mobile');
+      } catch (e) { d.classList.add('nav-expanded'); }
+      d.classList.add('nav-boot');
       try {
         var t = localStorage.getItem('secops.theme.v1');
-        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+        if (t === 'dark' || t === 'light') d.setAttribute('data-theme', t);
       } catch (e) { /* private mode */ }
     })();
   </script>
 </head>
-<body class="portal-body">
+<body>
 
-  <header class="portal-header">
-    <div class="portal-header-inner">
-      <div class="portal-brand">
-        <img src="img/reflex-logo.png" alt="Reflex" class="portal-logo" />
-        <div class="portal-brand-text">
-          <span class="portal-brand-name">Client Portal</span>
-          <span class="portal-brand-client" id="portalClientName"></span>
-        </div>
-      </div>
-      <div class="portal-header-actions">
-        <button id="portalThemeToggle" class="portal-icon-btn" type="button"
-                title="Switch appearance" aria-label="Switch appearance">◐</button>
-        <span class="portal-user" id="portalUser"></span>
-        <button id="portalLogout" class="btn btn-secondary btn-sm" type="button">Sign out</button>
+  <!-- Staff previewing a client's view must never mistake it for their own. -->
+  <div id="portalPreviewBanner" class="mfa-banner" hidden role="status">
+    <span>&#9888; Staff preview — this is the client's view. Nothing here can be changed.</span>
+    <a href="" class="mfa-banner-link">Back to the dashboard</a>
+  </div>
+
+  <!-- ── Header ───────────────────────────────────────────────────────────── -->
+  <header class="site-header">
+    <div class="header-left">
+      <button id="navBurger" class="nav-burger" type="button"
+              aria-controls="sideMenu" aria-expanded="true" aria-label="Hide navigation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <img class="header-logo-svg" src="img/reflex-logo.png" alt="Reflex logo" />
+      <div class="header-brand">
+        <span class="brand-secops">SECOPS</span>
       </div>
     </div>
-    <div class="portal-preview-banner" id="portalPreviewBanner" hidden>
-      Staff preview — this is what the client sees. Nothing here can be changed.
+    <div class="header-center">
+      <span class="current-tab-label" id="currentTabLabel" aria-hidden="true"></span>
+    </div>
+    <div class="header-right">
+      <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Appearance"></button>
+      <span id="portalClientName" class="portal-client-chip" hidden></span>
     </div>
   </header>
 
-  <nav class="portal-nav" aria-label="Sections">
-    <div class="portal-nav-inner" id="portalNav">
-      <button class="portal-tab" data-view="overview"   type="button">Overview</button>
-      <button class="portal-tab" data-view="incidents"  type="button">Incidents</button>
-      <button class="portal-tab" data-view="reports"    type="button">Reports</button>
-      <button class="portal-tab" data-view="vulns"      type="button">Vulnerabilities</button>
-      <button class="portal-tab" data-view="awareness"  type="button">Training</button>
+  <!-- ── Side navigation ──────────────────────────────────────────────────── -->
+  <aside id="sideMenu" class="side-menu" aria-label="Navigation">
+    <div class="side-user-info">
+      <div class="side-user-details">
+        <span id="headerUsername" class="side-username"></span>
+        <span id="headerRole" class="header-role-badge"></span>
+      </div>
+      <button id="logoutBtn" class="btn btn-secondary btn-sm side-logout-btn">Sign out</button>
     </div>
-  </nav>
 
-  <main class="portal-main" id="portalMain">
-    <div class="portal-loading" id="portalLoading">Loading…</div>
+    <nav class="side-nav" aria-label="Sections">
+      <div class="side-nav-group" data-group="portal">
+        <h2 class="side-nav-group-h">
+          <button class="side-nav-group-btn" type="button" id="grp-portal-btn"
+                  aria-controls="grp-portal-panel" aria-expanded="true" data-label="Your security">
+            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span class="side-nav-text">Your security</span>
+            <svg class="side-nav-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+          </button>
+        </h2>
+        <div class="side-nav-group-items" id="grp-portal-panel" role="group"
+             aria-labelledby="grp-portal-btn">
+          <button class="side-nav-item" type="button" data-tab="overview">
+            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 18a9 9 0 1 1 18 0"/><path d="M12 14l4.5-4.5"/><circle cx="12" cy="14" r="1.4"/></svg>
+            <span class="side-nav-text">Overview</span>
+          </button>
+          <button class="side-nav-item" type="button" data-tab="incidents">
+            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+            <span class="side-nav-text">Incidents</span>
+          </button>
+          <button class="side-nav-item" type="button" data-tab="reports">
+            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+            <span class="side-nav-text">Reports</span>
+          </button>
+          <button class="side-nav-item" type="button" data-tab="vulns">
+            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <span class="side-nav-text">Vulnerabilities</span>
+          </button>
+          <button class="side-nav-item" type="button" data-tab="awareness">
+            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"/></svg>
+            <span class="side-nav-text">Training</span>
+          </button>
+        </div>
+      </div>
+    </nav>
+  </aside>
 
-    <section class="portal-view" id="view-overview"  hidden></section>
-    <section class="portal-view" id="view-incidents" hidden></section>
-    <section class="portal-view" id="view-reports"   hidden></section>
-    <section class="portal-view" id="view-vulns"     hidden></section>
-    <section class="portal-view" id="view-awareness" hidden></section>
-  </main>
+  <!-- Must sit OUTSIDE .side-menu: it has overflow-y:auto, which would clip them. -->
+  <div id="navOverlay" class="nav-overlay" hidden></div>
+  <div id="navFlyout" class="nav-flyout" hidden></div>
 
-  <footer class="portal-footer">
-    <span>Reflex Solutions (Pty) Ltd</span>
-    <span id="portalFooterNote"></span>
-  </footer>
+  <!-- ── Views ────────────────────────────────────────────────────────────── -->
+  <div id="dashboard">
+    <div class="loading-overlay" id="portalLoading">
+      <div class="loading-spinner"></div><span>Loading…</span>
+    </div>
 
-  <!-- Deliberately NOT app.js, sidenav.js or any of the 25 staff tab modules.
-       The portal shares the design tokens in styles.css and nothing else. -->
+    <section id="tab-overview"  class="tab-panel" role="tabpanel" hidden></section>
+    <section id="tab-incidents" class="tab-panel" role="tabpanel" hidden></section>
+    <section id="tab-reports"   class="tab-panel" role="tabpanel" hidden></section>
+    <section id="tab-vulns"     class="tab-panel" role="tabpanel" hidden></section>
+    <section id="tab-awareness" class="tab-panel" role="tabpanel" hidden></section>
+  </div>
+
+  <!--
+    Shares the dashboard's theme and side-navigation behaviour, so the drawer
+    collapses to a rail and remembers its state exactly as it does there.
+    Deliberately NOT app.js: its renderTab chain, week loading and deep-link
+    handling are all staff concerns.
+  -->
   <script src="js/theme.js"></script>
+  <script src="js/sidenav.js"></script>
   <script src="portal/js/portal-shell.js"></script>
   <script src="portal/js/portal-incidents.js"></script>
   <script src="portal/js/portal-reports.js"></script>

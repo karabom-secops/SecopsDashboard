@@ -11,21 +11,28 @@
   var P = window.Portal;
 
   function band(score) {
-    if (score >= 80) return { label: 'Excellent', tone: 'good' };
-    if (score >= 70) return { label: 'Good',      tone: 'good' };
-    if (score >= 50) return { label: 'Fair',      tone: 'warn' };
-    return { label: 'Needs attention', tone: 'bad' };
+    var n = Number(score) || 0;
+    if (n >= 80) return { label: 'Excellent', accent: 'green' };
+    if (n >= 70) return { label: 'Good',      accent: 'green' };
+    if (n >= 50) return { label: 'Fair',      accent: 'amber' };
+    return { label: 'Needs attention', accent: 'red' };
   }
 
   /** A sparkline as inline SVG — no chart library on this page. */
   function sparkline(points) {
     if (points.length < 2) return '';
     var w = 240, h = 48, pad = 4;
-    var xs = points.map(function (p, i) { return pad + (i * (w - pad * 2)) / (points.length - 1); });
+    var xs = points.map(function (p, i) {
+      return pad + (i * (w - pad * 2)) / (points.length - 1);
+    });
     // Fixed 0-100 domain: an auto-scaled axis makes a two-point wobble look
     // like a collapse, which is the classic way a sparkline misleads.
-    var ys = points.map(function (p) { return h - pad - (Math.max(0, Math.min(100, p.score)) / 100) * (h - pad * 2); });
-    var d = xs.map(function (x, i) { return (i ? 'L' : 'M') + x.toFixed(1) + ' ' + ys[i].toFixed(1); }).join(' ');
+    var ys = points.map(function (p) {
+      return h - pad - (Math.max(0, Math.min(100, p.score)) / 100) * (h - pad * 2);
+    });
+    var d = xs.map(function (x, i) {
+      return (i ? 'L' : 'M') + x.toFixed(1) + ' ' + ys[i].toFixed(1);
+    }).join(' ');
 
     return '<svg class="portal-spark" viewBox="0 0 ' + w + ' ' + h + '" role="img" ' +
       'aria-label="Score trend over the last ' + points.length + ' readings">' +
@@ -37,41 +44,41 @@
 
   function render(d) {
     if (!d || !d.available) {
-      return '<section class="portal-card">' +
-        '<h2 class="portal-card-title">Security posture</h2>' +
-        P.emptyState('◍', 'No score yet',
+      return '<div class="portal-card">' +
+        '<h3 class="portal-card-title">Security posture</h3>' +
+        P.emptyState('No score yet',
           (d && d.reason) || 'Your score appears once we have assessed your environment.') +
-        '</section>';
+        '</div>';
     }
 
     var b = band(d.score);
     var trend = d.trend || [];
     var delta = trend.length > 1 ? d.score - trend[0].score : null;
     var deltaTxt = delta === null ? ''
-      : (delta > 0 ? '+' + delta + ' since ' + P.fmtDate(trend[0].date)
-         : delta < 0 ? delta + ' since ' + P.fmtDate(trend[0].date)
-         : 'Unchanged since ' + P.fmtDate(trend[0].date));
+      : delta > 0 ? '+' + delta + ' since ' + P.fmtDate(trend[0].date)
+      : delta < 0 ? delta + ' since ' + P.fmtDate(trend[0].date)
+      : 'Unchanged since ' + P.fmtDate(trend[0].date);
 
-    return '<section class="portal-card portal-score-card">' +
-      '<h2 class="portal-card-title">Security posture</h2>' +
-      '<div class="portal-score-main tone-' + b.tone + '">' +
+    return '<div class="portal-card">' +
+      '<h3 class="portal-card-title">Security posture</h3>' +
+      '<div class="portal-score accent-' + b.accent + '">' +
         '<div class="portal-score-number">' + P.esc(d.score) + '<span>/100</span></div>' +
         '<div class="portal-score-band">' + P.esc(b.label) +
           (deltaTxt ? '<span class="portal-score-delta">' + P.esc(deltaTxt) + '</span>' : '') +
         '</div>' +
-        '<div class="portal-score-spark tone-' + b.tone + '">' + sparkline(trend) + '</div>' +
+        '<div class="portal-score-spark">' + sparkline(trend) + '</div>' +
       '</div>' +
-      '<ul class="portal-score-components">' +
+      '<ul class="portal-components">' +
         (d.components || []).map(function (c) {
           var cb = band(c.score);
-          return '<li><span class="portal-score-clabel">' + P.esc(c.label) + '</span>' +
-            '<span class="portal-score-bar tone-' + cb.tone + '">' +
+          return '<li><span class="portal-component-label">' + P.esc(c.label) + '</span>' +
+            '<span class="portal-bar accent-' + cb.accent + '">' +
               '<i style="width:' + Math.max(0, Math.min(100, c.score)) + '%"></i></span>' +
-            '<span class="portal-score-cvalue">' + P.esc(c.score) + '</span></li>';
+            '<span class="portal-bar-num">' + P.esc(c.score) + '</span></li>';
         }).join('') +
       '</ul>' +
-      '<p class="portal-card-foot">As at ' + P.esc(P.fmtDate(d.asOf)) + '.</p>' +
-      '</section>';
+      '<p class="portal-note">As at ' + P.esc(P.fmtDate(d.asOf)) + '.</p>' +
+      '</div>';
   }
 
   window.PortalScore = { render: render };

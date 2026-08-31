@@ -1,8 +1,13 @@
 /* portal-boot.js — session check, navigation, and first paint.
  *
- * Loaded last. Nothing else in the portal touches the DOM until this has
- * confirmed there is a session, because a client should never see a flash of
- * an empty dashboard before being bounced to the login page.
+ * Loaded last. Nothing touches the DOM until there is a confirmed session, so a
+ * client never sees a flash of an empty dashboard before being bounced to login.
+ *
+ * Navigation is the DASHBOARD'S: sidenav.js owns the drawer, the rail, the
+ * flyout and the persisted state, and calls window.switchTab — which this file
+ * provides, the same contract app.js fulfils on the staff side. That is why the
+ * portal collapses and remembers its nav exactly as the dashboard does, without
+ * a second state machine.
  */
 (function () {
   'use strict';
@@ -10,107 +15,130 @@
   var P = window.Portal;
 
   var VIEWS = {
-    overview:  { load: renderOverview },
-    incidents: { load: function () { return window.PortalIncidents.load(); } },
-    reports:   { load: function () { return window.PortalReports.load(); } },
-    vulns:     { load: function () { return window.PortalVulns.load(); } },
-    awareness: { load: function () { return window.PortalAwareness.load(); } },
+    overview:  { label: 'Overview',        load: renderOverview },
+    incidents: { label: 'Incidents',       load: function () { return window.PortalIncidents.load(); } },
+    reports:   { label: 'Reports',         load: function () { return window.PortalReports.load(); } },
+    vulns:     { label: 'Vulnerabilities', load: function () { return window.PortalVulns.load(); } },
+    awareness: { label: 'Security Awareness', load: function () { return window.PortalAwareness.load(); } },
   };
 
   var _loaded = {};
   var _current = null;
 
+  /**
+   * The view asked for in the URL, captured AT LOAD.
+   *
+   * It cannot be read later. sidenav.js's refresh() calls switchTab() with the
+   * first visible tab whenever no nav item is active yet — which is the case
+   * during boot — and switchTab rewrites the URL to match. So by the time the
+   * session check resolves, location.hash says 'overview' no matter what the
+   * client actually opened, and every bookmarked view silently lands on the
+   * landing page.
+   */
+  var _requested = (location.hash || '').replace('#', '');
+
   /* ── Overview ─────────────────────────────────────────────────────────── */
 
   /**
-   * The landing view: posture, then the two things a client came to check.
-   *
    * Loads score, incidents and reports together with allSettled rather than
-   * await-in-sequence: one section being unavailable (an un-migrated table, a
-   * client with no scans yet) must not blank the other two.
+   * awaiting in sequence: one section being unavailable — an un-migrated table,
+   * a client with no scans yet — must not blank the other two.
    */
   async function renderOverview() {
-    var el = document.getElementById('view-overview');
-    el.innerHTML = '<div class="portal-loading">Loading…</div>';
+    var el = document.getElementById('tab-overview');
+    el.innerHTML = P.viewHead('Overview', 'Your security position at a glance.') +
+      '<div class="loading-overlay"><div class="loading-spinner"></div><span>Loading…</span></div>';
 
-    var results = await Promise.allSettled([
-      P.get('secure-score'),
-      P.get('incidents'),
-      P.get('reports'),
+    var r = await Promise.allSettled([
+      P.get('secure-score'), P.get('incidents'), P.get('reports'),
     ]);
-    var score     = results[0].status === 'fulfilled' ? results[0].value : null;
-    var incidents = results[1].status === 'fulfilled' ? results[1].value : null;
-    var reports   = results[2].status === 'fulfilled' ? results[2].value : null;
+    var score     = r[0].status === 'fulfilled' ? r[0].value : null;
+    var incidents = r[1].status === 'fulfilled' ? r[1].value : null;
+    var reports   = r[2].status === 'fulfilled' ? r[2].value : null;
 
-    var openCount = incidents ? incidents.openCount : null;
     var latest = reports && reports.reports && reports.reports.length ? reports.reports[0] : null;
-
     var cards = [];
-    if (openCount !== null) {
+
+    if (incidents) {
       cards.push({
-        label: 'Open incidents', value: openCount,
-        tone: openCount > 0 ? 'warn' : 'good',
-        sub: incidents.total ? incidents.total + ' in total' : '',
+        label: 'Open incidents', value: incidents.openCount,
+        accent: incidents.openCount > 0 ? 'amber' : 'green',
+        sub: incidents.total ? incidents.total + ' recorded in total' : '',
+      });
+    }
+    if (score && score.available) {
+      cards.push({
+        label: 'Secure Score', value: score.score,
+        accent: P.scoreAccent(score.score), sub: score.rating,
       });
     }
     if (latest) {
       cards.push({
         label: 'Latest report', value: latest.periodLabel || latest.period,
-        tone: 'neutral', sub: 'Published ' + P.fmtDate(latest.publishedAt),
+        accent: 'blue', sub: 'Published ' + P.fmtDate(latest.publishedAt),
       });
     }
 
     el.innerHTML =
-      '<div class="portal-view-head">' +
-        '<h1>Overview</h1>' +
-        '<p class="portal-view-intro">Your security position at a glance.</p>' +
-      '</div>' +
+      P.viewHead('Overview', 'Your security position at a glance.') +
       (cards.length ? P.statCards(cards) : '') +
       window.PortalScore.render(score) +
-      (latest
-        ? '<section class="portal-card">' +
-            '<h2 class="portal-card-title">' + P.esc(latest.periodLabel || latest.period) +
-              ' board report</h2>' +
-            (latest.coverNote ? '<p class="portal-dialog-summary">' +
-              P.esc(latest.coverNote) + '</p>' : '') +
-            '<p><a class="btn btn-primary btn-sm" href="' + P.BASE +
-              'api/portal/reports/' + encodeURIComponent(latest.id) + '/download.pptx">' +
-              'Download report</a> ' +
-              (latest.canView
-                ? '<a class="btn btn-secondary btn-sm" target="_blank" rel="noopener" href="' +
-                  P.BASE + 'api/portal/reports/' + encodeURIComponent(latest.id) +
-                  '/view">View in browser</a>'
-                : '') +
-            '</p>' +
-          '</section>'
-        : '');
+      (latest ? reportCard(latest) : '');
+  }
+
+  function reportCard(latest) {
+    var base = P.BASE + 'api/portal/reports/' + encodeURIComponent(latest.id);
+    return '<div class="portal-card">' +
+      '<h3 class="portal-card-title">' + P.esc(latest.periodLabel || latest.period) +
+        ' board report</h3>' +
+      (latest.coverNote
+        ? '<p class="portal-card-lead">' + P.esc(latest.coverNote) + '</p>' : '') +
+      '<div class="portal-card-actions">' +
+        '<a class="btn btn-primary btn-sm" href="' + base + '/download.pptx">Download report</a>' +
+        (latest.canView
+          ? ' <a class="btn btn-secondary btn-sm" target="_blank" rel="noopener" href="' +
+            base + '/view">View in browser</a>'
+          : '') +
+      '</div></div>';
   }
 
   /* ── Navigation ───────────────────────────────────────────────────────── */
 
-  async function show(view) {
+  /**
+   * window.switchTab — the contract sidenav.js calls into.
+   *
+   * Same name and shape as app.js's, so the shared drawer needs no knowledge of
+   * which of the two shells it is running in.
+   */
+  window.switchTab = async function switchTab(view) {
     if (!VIEWS[view]) view = 'overview';
     _current = view;
+    window.currentTab = view;
 
     Object.keys(VIEWS).forEach(function (k) {
-      var panel = document.getElementById('view-' + k);
+      var panel = document.getElementById('tab-' + k);
       if (panel) panel.hidden = k !== view;
     });
-    Array.prototype.forEach.call(document.querySelectorAll('.portal-tab'), function (b) {
-      var on = b.dataset.view === view;
-      b.classList.toggle('is-active', on);
-      b.setAttribute('aria-current', on ? 'page' : 'false');
-    });
 
-    // The hash is the only routing this page has, but it means a client can
-    // bookmark "my incidents" and use the back button.
-    //
-    // Guarded: replaceState throws a SecurityError in restricted contexts
-    // (file://, some embedded webviews). Losing the bookmarkable URL there is a
-    // small loss; letting it take the whole navigation down is not.
+    if (window.SideNav && window.SideNav.syncActive) window.SideNav.syncActive(view);
+
+    var label = document.getElementById('currentTabLabel');
+    if (label) label.textContent = VIEWS[view].label;
+    document.title = (window.__clientName ? window.__clientName + ' — ' : '') +
+      VIEWS[view].label + ' — Reflex Client Portal';
+
+    // The hash is the only routing here, but it makes a view bookmarkable and
+    // the back button work. Guarded: replaceState throws a SecurityError in
+    // restricted contexts (file://, some embedded webviews), and losing the URL
+    // there must not take navigation down with it.
     try {
       if (location.hash !== '#' + view) history.replaceState(null, '', '#' + view);
-    } catch (e) { location.hash = view; }
+    } catch (e) {
+      // Falling back keeps the view bookmarkable where replaceState is blocked.
+      // This fires hashchange, but the handler below ignores a hash that
+      // already matches the current view, so there is no loop.
+      location.hash = view;
+    }
 
     // Each view loads once; returning to it does not re-fetch.
     if (!_loaded[view]) {
@@ -118,33 +146,27 @@
       try {
         await VIEWS[view].load();
       } catch (err) {
-        _loaded[view] = false;    // let a retry happen
-        var panel = document.getElementById('view-' + view);
-        if (panel) panel.innerHTML = P.errorState(err.message);
+        _loaded[view] = false;                   // allow a retry
+        var panel = document.getElementById('tab-' + view);
+        if (panel) panel.innerHTML = P.viewHead(VIEWS[view].label) + P.errorState(err.message);
       }
     }
-  }
+  };
 
-  function wireNav() {
-    document.getElementById('portalNav').addEventListener('click', function (ev) {
-      var btn = ev.target.closest('.portal-tab');
-      if (btn) show(btn.dataset.view);
-    });
+  function wireChrome() {
     window.addEventListener('hashchange', function () {
       var v = location.hash.replace('#', '');
-      if (v && v !== _current) show(v);
+      if (v && v !== _current) window.switchTab(v);
     });
 
-    document.getElementById('portalLogout').addEventListener('click', async function () {
-      try {
-        await fetch(P.BASE + 'api/auth/logout', { method: 'POST', credentials: 'same-origin' });
-      } catch (e) { /* sign out locally regardless */ }
-      location.replace(P.BASE + 'login.html');
-    });
-
-    var themeBtn = document.getElementById('portalThemeToggle');
-    if (themeBtn && window.Theme) {
-      themeBtn.addEventListener('click', function () { window.Theme.cycle(); });
+    var logout = document.getElementById('logoutBtn');
+    if (logout) {
+      logout.addEventListener('click', async function () {
+        try {
+          await fetch(P.BASE + 'api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+        } catch (e) { /* sign out locally regardless */ }
+        location.replace(P.BASE + 'login.html');
+      });
     }
   }
 
@@ -157,8 +179,8 @@
       me = await P.get('me');
     } catch (err) {
       // P.get already redirects on 401. Anything else means the account is
-      // authenticated but not usable here — say so rather than showing an
-      // empty portal the client cannot interpret.
+      // authenticated but not usable here — say so rather than showing an empty
+      // portal the client cannot interpret.
       if (loading) {
         loading.className = '';
         loading.innerHTML = P.errorState(err.message);
@@ -166,20 +188,32 @@
       return;
     }
 
-    document.getElementById('portalClientName').textContent = me.clientName || '';
-    document.getElementById('portalUser').textContent = me.username || '';
-    document.getElementById('portalFooterNote').textContent =
-      me.clientName ? 'Prepared for ' + me.clientName : '';
-    if (me.clientName) document.title = me.clientName + ' — Reflex Client Portal';
+    window.__clientName = me.clientName || '';
 
-    // Staff previewing should know they are looking at a client's view.
+    var uname = document.getElementById('headerUsername');
+    if (uname) uname.textContent = me.username || '';
+    var role = document.getElementById('headerRole');
+    if (role) { role.textContent = me.clientName || 'Client'; role.className = 'header-role-badge'; }
+    var chip = document.getElementById('portalClientName');
+    if (chip && me.clientName) { chip.textContent = me.clientName; chip.hidden = false; }
+
     if (me.preview) {
       var banner = document.getElementById('portalPreviewBanner');
-      if (banner) banner.hidden = false;
+      if (banner) {
+        banner.hidden = false;
+        var back = banner.querySelector('a');
+        if (back) back.setAttribute('href', P.BASE);
+      }
     }
 
     if (loading) loading.remove();
-    wireNav();
-    await show((location.hash || '#overview').replace('#', ''));
+    wireChrome();
+
+    // sidenav.js resolves visibility from .side-nav-item[hidden]; the portal's
+    // items are never hidden, so this simply syncs its internal state.
+    if (window.SideNav && window.SideNav.refresh) window.SideNav.refresh();
+    document.dispatchEvent(new CustomEvent('nav:permissions-updated'));
+
+    await window.switchTab(_requested || 'overview');
   })();
 })();

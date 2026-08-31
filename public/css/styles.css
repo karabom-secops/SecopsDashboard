@@ -533,6 +533,10 @@ a { color: var(--blue); }
   gap: 6px;
   min-height: 34px;
   padding: 7px 16px;
+  /* An <a class="btn"> was inheriting the browser's link underline, so every
+     anchor-as-button rendered underlined — the sidebar's Upload link included.
+     A button that looks like a link is a button people hesitate over. */
+  text-decoration: none;
   border: none;
   border-radius: var(--radius-capsule);
   background: var(--fill-3);
