@@ -602,6 +602,27 @@ window.ReportsTab = (function () {
     return { full: full, rendered: rendered, msgs: msgs, problems: !!problems };
   }
 
+  /**
+   * The deck as an array of slide HTML strings, cover first.
+   *
+   * Shared by Generate and Publish so the archived document is byte-identical
+   * to the one staff previewed. It also stops the two paths disagreeing about
+   * the SHAPE of a slide list: renderDeck() takes rendered HTML, not the
+   * {label, bodies} records assembleDeck() returns, and passing the latter
+   * silently stringifies to "[object Object]" and produces a blank deck.
+   */
+  function buildSlides(model) {
+    var slides = [D.coverSlide(model.full)];
+    model.rendered.forEach(function (sec) {
+      sec.bodies.forEach(function (b) {
+        slides.push(D.slide({
+          title: sec.label, body: b, pageNo: slides.length + 1, ctx: model.full,
+        }));
+      });
+    });
+    return slides;
+  }
+
   async function generate() {
     var btn = document.getElementById('rpt-generate-btn');
     // Reserved before the data fetch: every source is awaited below, and a
@@ -618,16 +639,7 @@ window.ReportsTab = (function () {
 
       notice(model.msgs.join(' '), model.problems);
 
-      var slides = [D.coverSlide(model.full)];
-      model.rendered.forEach(function (sec) {
-        sec.bodies.forEach(function (b) {
-          slides.push(D.slide({
-            title: sec.label, body: b, pageNo: slides.length + 1, ctx: model.full,
-          }));
-        });
-      });
-
-      deckWindow.write(D.renderDeck(slides, model.full));
+      deckWindow.write(D.renderDeck(buildSlides(model), model.full));
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Generate Deck'; }
     }
@@ -745,11 +757,21 @@ window.ReportsTab = (function () {
       // The viewable artefact, so a client without PowerPoint can still read
       // it — and so there is a record of what was published, which a pptx
       // regenerated later from `sections` would not be.
-      try {
-        if (window.ReportDeck && typeof window.ReportDeck.renderDeck === 'function') {
-          body.deckHtml = window.ReportDeck.renderDeck(model.slides || model.rendered, model.full);
-        }
-      } catch (e) { /* the pptx is the artefact that matters; carry on */ }
+      //
+      // buildSlides() is the same call Generate makes. Passing model.rendered
+      // straight to renderDeck() is what shipped first, and it archived a deck
+      // whose only visible content was "[object Object]" — so the document is
+      // checked here rather than trusted.
+      var deckHtml = D.renderDeck(buildSlides(model), model.full);
+      if (deckHtml.indexOf('[object Object]') > -1) {
+        notice('Publish aborted: the deck did not render. Nothing was published.', true);
+        return;
+      }
+      if (deckHtml.indexOf('</head>') === -1) {
+        notice('Publish aborted: the deck is not a complete document.', true);
+        return;
+      }
+      body.deckHtml = deckHtml;
 
       var res = await fetch('api/reports/publish' + tenantParam('?'), {
         method: 'POST',
@@ -795,7 +817,7 @@ window.ReportsTab = (function () {
       if (!res.ok) {
         var j = await res.json().catch(function () { return {}; });
         host.innerHTML = '<p class="rpt-pub-empty">' +
-          esc(j.error || 'Could not load published reports.') + '</p>';
+          S.esc(j.error || 'Could not load published reports.') + '</p>';
         return;
       }
       var data = await res.json();
@@ -829,7 +851,7 @@ window.ReportsTab = (function () {
                   base + '/view' + qs + '">View</a> ' : '') +
               (r.status === 'published'
                 ? '<button type="button" class="btn btn-danger btn-sm rpt-withdraw" data-id="' +
-                  esc(r.id) + '">Withdraw</button>' : '') +
+                  S.esc(r.id) + '">Withdraw</button>' : '') +
             '</td></tr>';
         }).join('') +
         '</tbody></table>';

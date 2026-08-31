@@ -87,4 +87,73 @@ check('it posts to the publish route',
 check('and refreshes the archive after a successful publish',
   publishFn.indexOf('renderPublications()') > publishFn.indexOf('notice(\'Published'));
 
+section('the archived HTML is a real deck, not stringified records');
+
+/*
+ * WHAT WENT WRONG
+ *
+ * renderDeck(slidesHtml, ctx) takes an array of rendered slide HTML strings.
+ * assembleDeck() returns {label, bodies} RECORDS. The first publish passed the
+ * records straight through, so slidesHtml[0] stringified to "[object Object]",
+ * the paginator found no .slide elements in what followed, and the client was
+ * served a blank white page with "[object Object]" in the corner. Nothing threw
+ * — the two shapes are both arrays, and string concatenation accepts anything.
+ *
+ * This part is behavioural: report-deck.js is loaded and called for real, so
+ * the sentinel the publish guard looks for is the one renderDeck actually
+ * produces rather than a string someone assumed.
+ */
+const vm = require('vm');
+const sandbox = { console };
+sandbox.window = sandbox;
+vm.createContext(sandbox);
+for (const f of ['report-shell.js', 'report-deck.js']) {
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'public', 'js', f), 'utf8'), sandbox);
+}
+const D = sandbox.window.ReportDeck;
+const ctx = { clientName: 'Acme', periodLabel: 'August 2026', period: '2026-08',
+              author: 'A. N. Other', dateStr: '2026/08/31' };
+
+check('report-deck.js exposes renderDeck', typeof D.renderDeck === 'function');
+
+const fromRecords = D.renderDeck([{ label: 'Overview', bodies: ['<p>hi</p>'] }], ctx);
+check('passing assembleDeck records produces the blank-deck sentinel',
+  fromRecords.indexOf('[object Object]') > -1);
+
+const fromHtml = D.renderDeck(
+  ['<section class="slide">cover</section>', '<section class="slide">two</section>'], ctx);
+check('passing slide HTML produces a clean document',
+  fromHtml.indexOf('[object Object]') === -1);
+check('and a complete one', fromHtml.indexOf('</head>') > -1);
+
+section('both deck paths build their slides the same way');
+
+// The extracted helper is the guarantee. While Generate built the slide array
+// inline, Publish had its own idea of the shape and nobody could see the two
+// had drifted until a client opened the report.
+check('buildSlides() exists', /function buildSlides\(model\)/.test(js));
+check('it renders a cover slide first', /buildSlides[\s\S]{0,300}D\.coverSlide/.test(js));
+check('Generate renders through it',
+  /deckWindow\.write\(D\.renderDeck\(buildSlides\(model\)/.test(js));
+check('Publish renders through it',
+  /D\.renderDeck\(buildSlides\(model\), model\.full\)/.test(publishFn));
+check('Publish no longer passes the record array to renderDeck',
+  !/renderDeck\(model\.slides \|\| model\.rendered/.test(js));
+
+check('a deck that failed to render is not published',
+  /\[object Object\][\s\S]{0,200}return;/.test(publishFn));
+check('nor an incomplete document',
+  /indexOf\('<\/head>'\) === -1[\s\S]{0,200}return;/.test(publishFn));
+check('and the failure is reported rather than swallowed',
+  /Publish aborted/.test(publishFn) && !/carry on/.test(publishFn));
+
+section('every escape call resolves');
+
+// `esc` is not defined in this module — it is S.esc. Two bare calls shipped in
+// renderPublications(), so the archive panel died with "esc is not defined" for
+// every user, on the happy path as well as the error path.
+check('tab-reports.js does not define its own esc',
+  !/function esc\(|var esc\s*=/.test(js));
+check('and never calls a bare esc()', !/(^|[^.A-Za-z0-9_])esc\(/m.test(js));
+
 done();
