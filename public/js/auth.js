@@ -56,6 +56,15 @@
     window.pageCatalog = user.pages || [];
     window.roleCatalog = user.roles || [];
 
+    // A portal client has no staff pages at all — that is the point of the
+    // role — so landing here they would get "you do not have access to any
+    // pages" instead of their own portal. Send them where they belong.
+    // Checked before the manager rule so a client never falls through it.
+    if (user.role === 'client') {
+      location.replace(BASE + 'portal.html');
+      return;
+    }
+
     // Users whose only page is the manager dashboard get sent there — unless
     // that is already where we are, which would loop.
     var onManagerPage = /manager\.html$/.test(location.pathname);

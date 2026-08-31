@@ -1,9 +1,22 @@
 (function () {
   'use strict';
 
-  // If already authenticated, redirect straight to dashboard.
+  // Portal clients land somewhere different from staff. Kept in one place so
+  // the three redirect sites below cannot drift apart.
+  var CLIENT_HOME = 'portal.html';
+
+  // If already authenticated, go straight to wherever this user belongs.
+  // A client sent to the dashboard would see "you do not have access to any
+  // pages" — their access map is empty by design — rather than their portal.
   fetch('api/auth/me', { credentials: 'same-origin' })
-    .then(function (r) { if (r.ok) location.replace(''); })
+    .then(function (r) {
+      if (!r.ok) return null;
+      return r.json().catch(function () { return null; });
+    })
+    .then(function (me) {
+      if (!me) return;
+      location.replace(me.role === 'client' ? CLIENT_HOME : '');
+    })
     .catch(function () {});
 
   var form    = document.getElementById('login-form');
@@ -142,7 +155,7 @@
         var data = await res.json().catch(function () { return {}; });
 
         if (res.ok) {
-          location.replace('');
+          location.replace(data.redirect || '');
         } else {
           if (mfaErr) { mfaErr.textContent = data.error || 'Verification failed.'; mfaErr.hidden = false; }
           mfaBtn.disabled = false;
@@ -189,7 +202,7 @@
         var data = await res.json().catch(function () { return {}; });
 
         if (res.ok) {
-          location.replace('');
+          location.replace(data.redirect || '');
         } else {
           if (enrollErr) { enrollErr.textContent = data.error || 'Confirmation failed.'; enrollErr.hidden = false; }
           enrollBtn.disabled = false;

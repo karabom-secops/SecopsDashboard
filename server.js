@@ -83,8 +83,29 @@ const PUBLIC = path.join(__dirname, 'public');
 // Trust proxy — required when behind nginx/reverse proxy for X-Forwarded-For headers
 app.set('trust proxy', 1);
 
-// Serve static assets BEFORE session/auth so the login page loads without auth.SO is secure score stuff fine
-app.use('/secops', express.static(PUBLIC));
+/**
+ * Strip the /secops base path before anything routes.
+ *
+ * Every HTML page carries <base href="/secops/"> and calls the API with
+ * relative URLs, so the browser requests /secops/api/... In production nginx
+ * strips the prefix and the app never sees it. Hitting node directly — local
+ * development, a health check, a curl against the port — it was never stripped,
+ * so static files worked under /secops but EVERY API CALL 404'd, including the
+ * URL this server prints at startup.
+ *
+ * Done here, before every mount, so the existing `app.use('/api', …)` gates
+ * still apply. Re-mounting the routes under a second prefix would have been the
+ * obvious fix and a bad one: requireAuth, requirePortalConfinement and pageGate
+ * are all bound to '/api', so a parallel '/secops/api' mount would have been
+ * completely ungated.
+ */
+app.use((req, res, next) => {
+  if (req.url === '/secops') { req.url = '/'; }
+  else if (req.url.startsWith('/secops/')) { req.url = req.url.slice('/secops'.length); }
+  next();
+});
+
+// Serve static assets BEFORE session/auth so the login page loads without auth.
 app.use(express.static(PUBLIC));
 
 app.use(express.json({ limit: '10mb' }));

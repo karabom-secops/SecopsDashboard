@@ -100,6 +100,33 @@ check('it refuses reusing the current password',
 check('it hashes at the same cost as the rest of the app',
   /bcrypt\.hash\(next, 12\)/.test(src));
 
+section('a client is routed to the portal, not the dashboard');
+
+// A client's page-access map is empty by design, so every one of these paths
+// would otherwise land them on "you do not have access to any pages" instead of
+// their portal. All four were broken until tested end to end.
+const loginJs = fs.readFileSync(path.join(ROOT, 'public', 'js', 'login.js'), 'utf8');
+const authJs  = fs.readFileSync(path.join(ROOT, 'public', 'js', 'auth.js'), 'utf8');
+
+check('the server names a landing page per role', /function landingFor\(role\)/.test(src));
+check('and sends clients to the portal', /return '\/secops\/portal\.html'/.test(src));
+check('the login response carries a redirect after MFA',
+  (src.match(/redirect: landingFor\(pending\.role\)/g) || []).length === 2,
+  (src.match(/redirect: landingFor\(pending\.role\)/g) || []).length);
+
+check('an already-signed-in client is sent to the portal',
+  /me\.role === 'client' \? CLIENT_HOME/.test(loginJs));
+check('the MFA step honours the redirect rather than assuming the dashboard',
+  !/if \(res\.ok\) \{\s*location\.replace\(''\);/.test(loginJs));
+check('every post-login redirect uses the server value',
+  (loginJs.match(/location\.replace\(data\.redirect \|\| ''\)/g) || []).length === 3,
+  (loginJs.match(/location\.replace\(data\.redirect \|\| ''\)/g) || []).length);
+check('and the dashboard bounces a client that reaches it anyway',
+  /user\.role === 'client'[\s\S]{0,80}portal\.html/.test(authJs));
+check('that bounce runs BEFORE the manager rule, so a client cannot fall through',
+  authJs.indexOf("user.role === 'client'") < authJs.indexOf('onManagerPage'),
+  authJs.indexOf("user.role === 'client'") + ' < ' + authJs.indexOf('onManagerPage'));
+
 section('the forced-change dead end is avoided');
 
 const gateSrc = fs.readFileSync(path.join(ROOT, 'lib', 'portal-gate.js'), 'utf8');
@@ -109,5 +136,26 @@ check('and is blocked everywhere else with 428',
   /status\(428\)/.test(gateSrc));
 check('requireActiveUser degrades open on an un-migrated database',
   /err\.code === '42703' \|\| err\.code === '42P01'/.test(gateSrc));
+
+
+
+section('the /secops base path reaches the API, not just static files');
+
+// Every page carries <base href="/secops/"> and calls the API relatively, so
+// the browser requests /secops/api/… In production nginx strips the prefix;
+// hitting node directly it was never stripped, so static worked under /secops
+// while every API call 404'd — including the URL this server prints at startup.
+check('the prefix is stripped before routing',
+  /req\.url\.startsWith\('\/secops\/'\)/.test(src));
+check('and a bare /secops maps to the root', /req\.url === '\/secops'/.test(src));
+// The tempting alternative — a second app.use('/secops/api', …) mount — would
+// have been completely ungated, because requireAuth, requirePortalConfinement
+// and pageGate are all bound to '/api'.
+check('the API is NOT re-mounted under a second, ungated prefix',
+  !/app\.use\('\/secops\/api'/.test(src));
+check('stripping happens before the static mount',
+  src.indexOf("req.url.startsWith('/secops/')") < src.indexOf('app.use(express.static(PUBLIC))'));
+check('and before the auth gate',
+  src.indexOf("req.url.startsWith('/secops/')") < src.indexOf("app.use('/api', requireAuth)"));
 
 done();
