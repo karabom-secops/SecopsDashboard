@@ -18,6 +18,7 @@
     overview:  { label: 'Overview',        load: renderOverview },
     incidents: { label: 'Incidents',       load: function () { return window.PortalIncidents.load(); } },
     reports:   { label: 'Reports',         load: function () { return window.PortalReports.load(); } },
+    remediation: { label: 'Remediation',  load: function () { return window.PortalRemediation.load(); } },
     vulns:     { label: 'Vulnerabilities', load: function () { return window.PortalVulns.load(); } },
     awareness: { label: 'Security Awareness', load: function () { return window.PortalAwareness.load(); } },
   };

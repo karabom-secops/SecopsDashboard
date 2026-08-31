@@ -160,6 +160,33 @@
           }).join('') + '</ol>'
       : '';
 
+    /*
+     * When the incident moved through each phase.
+     *
+     * This is the part of an incident record a client actually wants: not that
+     * it is "in eradication" but that it was contained within four hours and
+     * eradicated the next morning. Shown before the task-completion bars,
+     * because the timings are the story and the checklist is the detail.
+     *
+     * A phase can appear more than once — eradication routinely bounces back to
+     * containment — and the list reflects that rather than pretending the
+     * response was a tidy five-step march.
+     */
+    var phases = (d.phases || []).length
+      ? '<h4 class="portal-detail-h">Response timeline</h4>' +
+          '<ol class="portal-phases">' +
+          d.phases.map(function (p) {
+            return '<li' + (p.current ? ' class="is-current"' : '') + '>' +
+              '<span class="portal-phase-name">' + P.esc(p.phase) +
+                (p.current ? ' <span class="badge badge-blue">Current</span>' : '') +
+              '</span>' +
+              '<span class="portal-phase-at">' + P.esc(P.fmtDateTime(p.enteredAt)) + '</span>' +
+              '<span class="portal-phase-dur">' +
+                (p.durationHours === null ? '—' : P.fmtDuration(p.durationHours)) +
+              '</span></li>';
+          }).join('') + '</ol>'
+      : '';
+
     var progress = (d.progress || []).length
       ? '<h4 class="portal-detail-h">Response progress</h4><ul class="portal-progress">' +
           d.progress.map(function (p) {
@@ -180,8 +207,8 @@
         '<div><dt>Resolved</dt><dd>' + P.esc(P.fmtDate(d.closedAt)) + '</dd></div>' +
         (d.category ? '<div><dt>Category</dt><dd>' + P.esc(d.category) + '</dd></div>' : '') +
         (d.phase ? '<div><dt>Current phase</dt><dd>' + P.esc(d.phase) + '</dd></div>' : '') +
-      '</dl>' + progress + timeline +
-      (!timeline && !progress
+      '</dl>' + phases + progress + timeline +
+      (!phases && !timeline && !progress
         ? '<p class="portal-note">No further detail has been recorded for this incident.</p>'
         : '');
   }

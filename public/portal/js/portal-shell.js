@@ -143,6 +143,31 @@
     return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-ZA', DATE_OPTS);
   }
 
+  /** Date AND time: a phase transition four hours after another is only
+   *  legible if the hour is shown. */
+  var DATETIME_OPTS = { day: 'numeric', month: 'short', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit' };
+  function fmtDateTime(v) {
+    if (!v) return '—';
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? '—' : d.toLocaleString('en-ZA', DATETIME_OPTS);
+  }
+
+  /** Hours as something a person reads: "3h 20m", "2 days". */
+  function fmtDuration(hours) {
+    var h = Number(hours);
+    if (!Number.isFinite(h) || h < 0) return '—';
+    if (h < 1) return Math.max(1, Math.round(h * 60)) + 'm';
+    if (h < 24) {
+      var whole = Math.floor(h);
+      var mins = Math.round((h - whole) * 60);
+      return whole + 'h' + (mins ? ' ' + mins + 'm' : '');
+    }
+    var days = h / 24;
+    return (days < 10 ? Math.round(days * 10) / 10 : Math.round(days)) +
+      (Math.round(days) === 1 && days < 10 ? ' day' : ' days');
+  }
+
   function fmtBytes(n) {
     var b = Number(n) || 0;
     if (!b) return '—';
@@ -163,6 +188,8 @@
     sevPill: sevPill,
     statusPill: statusPill,
     fmtDate: fmtDate,
+    fmtDateTime: fmtDateTime,
+    fmtDuration: fmtDuration,
     fmtBytes: fmtBytes,
   };
 })();

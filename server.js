@@ -3931,6 +3931,11 @@ app.post('/api/ir/incidents', async (req, res) => {
     );
     const incident = result.rows[0];
 
+    // The opening entry in the phase trail. Without it an incident created
+    // today and never moved shows no dated history at all, which reads as
+    // "nothing has happened" rather than "it is still being identified".
+    await recordIrPhase(incident.id, tenantId, incident.phase, req.session.userId);
+
     // Seed the activity/task board from the incident type's playbook
     const playbook = IR_PLAYBOOKS[incidentType] || IR_PLAYBOOKS.other;
     let sortOrder = 0;
@@ -3958,18 +3963,49 @@ app.put('/api/ir/incidents/:id', async (req, res) => {
     const { title, description, severity, status, assigned_to, phase, incident_type } = req.body;
     const incidentType = IR_VALID_TYPES.includes(incident_type) ? incident_type : 'other';
     const result = await pool.query(
-      `UPDATE ir_incidents
+      `WITH prev AS (
+         SELECT phase FROM ir_incidents WHERE id=$8 AND tenant_id=$9 FOR UPDATE
+       )
+       UPDATE ir_incidents
        SET title=$1, description=$2, severity=$3, status=$4::varchar, assigned_to=$5, phase=$6, incident_type=$7, updated_at=NOW(),
            closed_at = CASE WHEN $4::varchar IN ('resolved','closed') AND closed_at IS NULL THEN NOW()
                             WHEN $4::varchar NOT IN ('resolved','closed') THEN NULL
                             ELSE closed_at END
-       WHERE id=$8 AND tenant_id=$9 RETURNING *`,
+       WHERE id=$8 AND tenant_id=$9
+       RETURNING *, (SELECT phase FROM prev) AS previous_phase`,
       [title, description || '', severity, status, assigned_to || '', phase || 'identification', incidentType, req.params.id, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
+
+    // Editing the incident can move its phase too. Recorded here as well, or
+    // a transition made through the edit form would leave no trace while the
+    // same move via the phase control would.
+    if (result.rows[0].previous_phase !== result.rows[0].phase) {
+      await recordIrPhase(result.rows[0].id, tenantId, result.rows[0].phase, req.session.userId);
+    }
     res.json({ incident: result.rows[0] });
   } catch (err) { return serverError(res, err); }
 });
+
+/**
+ * Record that an incident entered a phase.
+ *
+ * Append-only and written ONLY on an actual move: re-saving a form without
+ * touching the phase must not add a row, or the trail fills with transitions
+ * that never happened. Best-effort — a missing history table must never stop
+ * an operator from advancing an incident.
+ */
+async function recordIrPhase(incidentId, tenantId, phase, userId) {
+  try {
+    await pool.query(
+      `INSERT INTO ir_phase_events (incident_id, tenant_id, phase, changed_by)
+       VALUES ($1, $2, $3, $4)`,
+      [incidentId, tenantId, phase, userId || null]
+    );
+  } catch (err) {
+    if (err.code !== '42P01') throw err;   // history table not migrated yet
+  }
+}
 
 /** PATCH /api/ir/incidents/:id/phase — quick-set the IR lifecycle phase */
 app.patch('/api/ir/incidents/:id/phase', async (req, res) => {
@@ -3980,11 +4016,25 @@ app.patch('/api/ir/incidents/:id/phase', async (req, res) => {
     const { phase } = req.body;
     if (!IR_VALID_PHASES.includes(phase)) return res.status(400).json({ error: 'invalid phase.' });
 
+    // The old phase comes from a CTE, not from a subquery inside RETURNING: a
+    // RETURNING subquery would read the row this statement has just written and
+    // always report the NEW value, so every save would look like a no-op and
+    // nothing would ever be recorded. A CTE sees the snapshot taken at
+    // statement start, and FOR UPDATE locks the row against a concurrent move.
     const result = await pool.query(
-      `UPDATE ir_incidents SET phase=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3 RETURNING *`,
+      `WITH prev AS (
+         SELECT phase FROM ir_incidents WHERE id=$2 AND tenant_id=$3 FOR UPDATE
+       )
+       UPDATE ir_incidents SET phase=$1, updated_at=NOW()
+        WHERE id=$2 AND tenant_id=$3
+        RETURNING *, (SELECT phase FROM prev) AS previous_phase`,
       [phase, req.params.id, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
+
+    if (result.rows[0].previous_phase !== phase) {
+      await recordIrPhase(result.rows[0].id, tenantId, phase, req.session.userId);
+    }
     res.json({ incident: result.rows[0] });
   } catch (err) { return serverError(res, err); }
 });

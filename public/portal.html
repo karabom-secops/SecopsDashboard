@@ -109,6 +109,11 @@
                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
             <span class="side-nav-text">Reports</span>
           </button>
+          <button class="side-nav-item" type="button" data-tab="remediation">
+            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <span class="side-nav-text">Remediation</span>
+          </button>
           <button class="side-nav-item" type="button" data-tab="vulns">
             <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -137,6 +142,7 @@
     <section id="tab-overview"  class="tab-panel" role="tabpanel" hidden></section>
     <section id="tab-incidents" class="tab-panel" role="tabpanel" hidden></section>
     <section id="tab-reports"   class="tab-panel" role="tabpanel" hidden></section>
+    <section id="tab-remediation" class="tab-panel" role="tabpanel" hidden></section>
     <section id="tab-vulns"     class="tab-panel" role="tabpanel" hidden></section>
     <section id="tab-awareness" class="tab-panel" role="tabpanel" hidden></section>
   </div>
@@ -152,6 +158,7 @@
   <script src="portal/js/portal-shell.js"></script>
   <script src="portal/js/portal-incidents.js"></script>
   <script src="portal/js/portal-reports.js"></script>
+  <script src="portal/js/portal-remediation.js"></script>
   <script src="portal/js/portal-score.js"></script>
   <script src="portal/js/portal-vulns.js"></script>
   <script src="portal/js/portal-awareness.js"></script>

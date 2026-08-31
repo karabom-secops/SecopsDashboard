@@ -124,6 +124,15 @@ function makePool(log) {
         return { rows: scoped(DATA.ir, s, p, 1) };
       }
       if (/FROM ir_activities/.test(s)) return { rows: [] };
+      if (/FROM ir_phase_events/.test(s)) {
+        return { rows: s.indexOf(`tenant_id = $2`) >= 0 ? (DATA.phases || []) : [] };
+      }
+      if (/FROM risks/.test(s)) {
+        return { rows: !hasTenantFilter(s) || t === 7 ? (DATA.risks || []) : [] };
+      }
+      if (/FROM pentest_findings/.test(s)) {
+        return { rows: !hasTenantFilter(s) || t === 7 ? (DATA.pentest || []) : [] };
+      }
       if (/FROM mdr_tickets/.test(s)) {
         let rows = scoped(DATA.mdr, s, p, 1);
         if (/ticket_number = \$2/.test(s)) {
@@ -149,7 +158,10 @@ function makePool(log) {
                summary: { critical: 1, high: 3, medium: 8, low: 20 } }]
           : [] };
       }
-      if (/FROM vuln_findings/.test(s)) return { rows: [{ n: 2 }] };
+      if (/FROM vuln_findings/.test(s)) {
+        if (s.indexOf(`COUNT(*)`) >= 0) return { rows: [{ n: 2 }] };
+        return { rows: DATA.findings || [] };
+      }
       if (/FROM awareness_uploads/.test(s)) {
         if (hasTenantFilter(s) && t !== 7) return { rows: [] };
         const a = DATA.awareness ||
@@ -475,6 +487,105 @@ function request(server, url, tenant, role) {
     check('outstanding is the stored count', r.json.outstanding === 15, r.json.outstanding);
     check('the unit says so', r.json.unit === 'people', r.json.unit);
     DATA.awareness = null;
+  }
+
+  // ── Phase timings ──────────────────────────────────────────────────────
+  section('an incident carries when it entered each phase');
+  {
+    /*
+     * ir_incidents.phase is overwritten in place, so before ir_phase_events
+     * existed the record said where an incident WAS and nothing about how it
+     * got there. "Contained in four hours, eradicated the next morning" is the
+     * part of an incident a client actually wants.
+     */
+    DATA.phases = [
+      { phase: 'identification', entered_at: '2026-08-02T08:00:00Z' },
+      { phase: 'containment',    entered_at: '2026-08-02T12:00:00Z' },
+      { phase: 'eradication',    entered_at: '2026-08-03T09:00:00Z' },
+    ];
+    const r = await go('/api/portal/incidents/ir-1', 7);
+    check('the phases are returned', r.json.phases.length === 3, r.json.phases.length);
+    check('in the order they happened',
+      r.json.phases.map(p => p.phase).join(' > ') ===
+      'Identification > Containment > Eradication',
+      r.json.phases.map(p => p.phase).join(' > '));
+    check('each carries when it was entered', !!r.json.phases[0].enteredAt);
+    // A phase is left when the NEXT one is entered; that is the only honest
+    // way to date it, since nothing records an exit.
+    check('a completed phase knows how long it lasted',
+      r.json.phases[0].durationHours === 4, r.json.phases[0].durationHours);
+    check('and the next one too', r.json.phases[1].durationHours === 21,
+      r.json.phases[1].durationHours);
+    check('the last phase is marked current', r.json.phases[2].current === true);
+    // The incident is open, so the current phase has no end.
+    check('and has no duration, because it has not ended',
+      r.json.phases[2].durationHours === null, r.json.phases[2].durationHours);
+    check('the query is tenant-scoped',
+      log.filter(x => /FROM ir_phase_events/.test(x.sql)).pop().params[1] === 7);
+
+    DATA.phases = [];
+    const none = await go('/api/portal/incidents/ir-1', 7);
+    check('an incident with no recorded phases still renders',
+      none.status === 200 && Array.isArray(none.json.phases), none.status);
+  }
+
+  // ── Remediation tracker ────────────────────────────────────────────────
+  section('remediation merges four sources into one shape');
+  {
+    DATA.findings = [
+      { name: 'Outdated OpenSSL', risk: 'High', status: 'open',
+        due_date: '2020-01-01', first_seen_at: '2026-08-01',
+        host: '10.0.0.5', cve: 'CVE-2024-1234', notes: 'internal only' },
+    ];
+    DATA.risks = [{ title: 'Single supplier', risk_score: 20, stage: 'mitigating',
+                    due_date: '2027-01-01', start_date: '2026-01-01' }];
+    DATA.pentest = [{ title: 'Weak password policy', severity: 'medium',
+                      status: 'open', due_date: null, created_at: '2026-06-01' }];
+
+    const r = await go('/api/portal/remediation', 7);
+    check('it responds', r.status === 200, r.status);
+    const sources = r.json.items.map(i => i.source);
+    check('vulnerabilities are included', sources.includes('Vulnerability'));
+    check('risks too', sources.includes('Risk'));
+    check('penetration test findings too', sources.includes('Penetration test'));
+    check('and open incidents', sources.includes('Incident'));
+
+    // THE constraint. /api/portal/vulns withholds the finding list because it
+    // is a map of the client's unpatched perimeter; shipping the same detail
+    // here would undo that decision through a different door.
+    const raw = JSON.stringify(r.json);
+    check('NO host is disclosed', !/10.0.0.5/.test(raw));
+    check('NO CVE is disclosed', !/CVE-2024/.test(raw));
+    check('NO internal notes', !/internal only/.test(raw));
+    check('but the issue is named, so it is actionable',
+      /Outdated OpenSSL/.test(raw));
+
+    // The risk register scores 1-25; one list must not carry two scales.
+    const risk = r.json.items.find(i => i.source === 'Risk');
+    check('a 1-25 risk score is mapped to the shared severity words',
+      risk.severity === 'critical', risk.severity + ' (score 20)');
+
+    check('an overdue item is flagged',
+      r.json.items.find(i => i.source === 'Vulnerability').overdue === true);
+    check('and counted', r.json.overdue >= 1, r.json.overdue);
+    check('overdue sorts first', r.json.items[0].overdue === true,
+      r.json.items[0].source);
+    check('severities are counted', r.json.bySeverity.high >= 1, JSON.stringify(r.json.bySeverity));
+    check('the scope limit is stated', /not the affected systems/.test(r.json.note || ''),
+      r.json.note);
+  }
+
+  section('remediation is tenant-scoped like everything else');
+  {
+    const other = await go('/api/portal/remediation', 8);
+    const raw = JSON.stringify(other.json);
+    check('another tenant sees none of it',
+      !/Outdated OpenSSL|Single supplier|Weak password/.test(raw), raw.slice(0, 80));
+    log.length = 0;
+    await go('/api/portal/remediation?tenantId=7', 8);
+    check('and a tenantId parameter is ignored here too',
+      log.filter(x => x.params.includes(7)).length === 0);
+    DATA.findings = []; DATA.risks = []; DATA.pentest = [];
   }
 
   // ── SQL that only a database would reject ──────────────────────────────
