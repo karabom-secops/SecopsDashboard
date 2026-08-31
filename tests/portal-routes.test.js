@@ -151,10 +151,22 @@ function makePool(log) {
       }
       if (/FROM vuln_findings/.test(s)) return { rows: [{ n: 2 }] };
       if (/FROM awareness_uploads/.test(s)) {
-        return { rows: !hasTenantFilter(s) || t === 7
-          ? [{ id: 5, uploaded_at: '2026-08-01', total_users: 100,
-               total_incomplete: 15, upload_type: 'summary' }]
-          : [] };
+        if (hasTenantFilter(s) && t !== 7) return { rows: [] };
+        const a = DATA.awareness ||
+          { total_users: 100, total_incomplete: 15, upload_type: 'summary' };
+        return { rows: [{ id: 5, uploaded_at: '2026-08-01',
+          total_users: a.total_users, total_incomplete: a.total_incomplete,
+          upload_type: a.upload_type }] };
+      }
+      // The aggregate over awareness_sessions: no GROUP BY, so it is the
+      // totals query rather than the per-person one.
+      if (/FROM awareness_sessions/.test(s) && !/GROUP BY/.test(s)) {
+        const st = DATA.sessionTotals || { completed: 0, total: 0 };
+        return { rows: [{ completed: st.completed, total: st.total }] };
+      }
+      if (/FROM awareness_sessions/.test(s)) {
+        return { rows: [{ user_first_name: 'Ada', user_last_name: 'Lovelace',
+                          user_email: 'ada@acme.test', completed: 2, assigned: 5 }] };
       }
       if (/FROM awareness_users/.test(s)) {
         return { rows: [{ user_first_name: 'Ada', user_last_name: 'Lovelace',
@@ -419,6 +431,50 @@ function request(server, url, tenant, role) {
     check('a real client is not', client.json.preview === false);
     check('the client name is returned', client.json.clientName === 'Acme Ltd',
       client.json.clientName);
+  }
+
+  // ── Units ──────────────────────────────────────────────────────────────
+  section('a history upload counts sessions, not people');
+  {
+    /*
+     * THE BUG, as a real client saw it: every member of staff reported as
+     * having completed nothing, while the Awareness tab showed 78%.
+     *
+     * writeAwarenessHistory stores total_users = unique PEOPLE and
+     * total_incomplete = not-started SESSIONS. They do not share a unit, so
+     * `total_users - total_incomplete` is meaningless: 242 - 994 went negative
+     * and clamped to zero. /api/secure-score already had a comment saying
+     * exactly this; the portal handler did not read it.
+     */
+    DATA.awareness = { upload_type: 'history', total_users: 242, total_incomplete: 994 };
+    DATA.sessionTotals = { completed: 3549, total: 4579 };
+
+    const r = await go('/api/portal/awareness', 7);
+    check('the response succeeds', r.status === 200, r.status);
+    check('completion is NOT zero', r.json.completionPct !== 0, r.json.completionPct);
+    check('it matches the dashboard figure', r.json.completionPct === 78, r.json.completionPct);
+    check('completed counts sessions', r.json.completed === 3549, r.json.completed);
+    check('outstanding is the remainder, not the stored column',
+      r.json.outstanding === 4579 - 3549, r.json.outstanding);
+    // The stored 994 must not reach the client as though it meant people.
+    check('the misleading stored value is not passed through',
+      r.json.outstanding !== 994, r.json.outstanding);
+    check('staff are still counted as people', r.json.totalStaff === 242, r.json.totalStaff);
+    // A percentage that silently changes denominator between months is a
+    // number nobody can act on.
+    check('the unit is declared', r.json.unit === 'sessions', r.json.unit);
+    check('and the denominator is exposed', r.json.assessed === 4579, r.json.assessed);
+  }
+
+  section('a summary upload still counts people');
+  {
+    DATA.awareness = { upload_type: 'summary', total_users: 100, total_incomplete: 15 };
+    const r = await go('/api/portal/awareness', 7);
+    check('completion is user-based', r.json.completionPct === 85, r.json.completionPct);
+    check('completed is people', r.json.completed === 85, r.json.completed);
+    check('outstanding is the stored count', r.json.outstanding === 15, r.json.outstanding);
+    check('the unit says so', r.json.unit === 'people', r.json.unit);
+    DATA.awareness = null;
   }
 
   // ── SQL that only a database would reject ──────────────────────────────

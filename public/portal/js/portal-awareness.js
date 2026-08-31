@@ -30,20 +30,35 @@
     }
 
     var pct = data.completionPct || 0;
+    // "78%" of WHAT differs by upload format — sessions on a session-history
+    // export, people on a summary. Saying which stops the same number meaning
+    // two things in consecutive months.
+    var unit = data.unit === 'sessions' ? 'sessions' : 'people';
+    var assessed = data.assessed || 0;
+
     var cards = [
-      { label: 'Completion', value: pct + '%',
-        accent: pct >= 90 ? 'green' : pct >= 70 ? 'amber' : 'red' },
+      { label: 'Training completion', value: pct + '%',
+        accent: pct >= 90 ? 'green' : pct >= 70 ? 'amber' : 'red',
+        sub: assessed ? (data.completed || 0).toLocaleString() + ' of ' +
+             assessed.toLocaleString() + ' ' + unit : '' },
       { label: 'Staff covered', value: data.totalStaff || 0 },
-      { label: 'Completed',     value: data.completed || 0 },
-      { label: 'Outstanding',   value: data.outstanding || 0,
-        accent: (data.outstanding || 0) > 0 ? 'amber' : 'green' },
+      { label: 'Completed',   value: (data.completed || 0).toLocaleString(),
+        sub: unit },
+      { label: 'Outstanding', value: (data.outstanding || 0).toLocaleString(),
+        accent: (data.outstanding || 0) > 0 ? 'amber' : 'green',
+        sub: unit },
     ];
 
     var people = data.people || [];
     var table = '';
     if (people.length) {
       var hasPct = people[0].pct !== undefined;
+      // The list is ordered least-covered first. Without saying so, the top of
+      // the table is all zeroes and reads as "nobody has done anything" — which
+      // is exactly how it was first reported.
       table = '<h3 class="portal-card-title">By person</h3>' +
+        '<p class="portal-note">Least complete first, so whoever needs ' +
+          'chasing is at the top.</p>' +
         P.table([
           { label: 'Name', raw: function (r) {
               return P.esc(r.name || '—') +
