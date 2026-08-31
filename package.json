@@ -4,7 +4,8 @@
   "description": "SecOps weekly report dashboard",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node tests/run.js"
   },
   "dependencies": {
     "@node-saml/node-saml": "^5.0.1",

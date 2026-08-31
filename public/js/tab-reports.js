@@ -703,6 +703,168 @@ window.ReportsTab = (function () {
     }
   }
 
+  /* ── Publishing to the client portal ────────────────────────────────────
+     Publish and download both go through the SAME assembleDeck() call. That is
+     the guarantee the archived artefact is exactly the deck that was previewed:
+     re-fetching at publish time would let the stored report differ from the one
+     someone approved, and nobody would ever know. */
+
+  async function publishReport() {
+    var btn = document.getElementById('rpt-publish-btn');
+    var label = btn ? btn.textContent : '';
+
+    var note = window.prompt(
+      'Publish this report to the client portal?\n\n' +
+      'They will be able to download it immediately. Add a short note to show ' +
+      'alongside it (optional):', '');
+    if (note === null) return;   // cancelled
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Publishing…'; }
+    try {
+      var model = await assembleDeck();
+      if (!model) return;
+      if (!model.rendered.length) {
+        notice('No section produced any content to publish.', true);
+        return;
+      }
+
+      var body = {
+        period: model.full.period,
+        title: model.full.periodLabel || model.full.period,
+        coverNote: note,
+        ctx: {
+          clientName:  model.full.clientName,
+          period:      model.full.period,
+          periodLabel: model.full.periodLabel,
+          author:      model.full.author,
+          dateStr:     model.full.dateStr,
+        },
+        sections: model.rendered,
+      };
+
+      // The viewable artefact, so a client without PowerPoint can still read
+      // it — and so there is a record of what was published, which a pptx
+      // regenerated later from `sections` would not be.
+      try {
+        if (window.ReportDeck && typeof window.ReportDeck.renderDeck === 'function') {
+          body.deckHtml = window.ReportDeck.renderDeck(model.slides || model.rendered, model.full);
+        }
+      } catch (e) { /* the pptx is the artefact that matters; carry on */ }
+
+      var res = await fetch('api/reports/publish' + tenantParam('?'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(Object.assign(body, tenantBodyFields())),
+      });
+
+      var data = null;
+      try { data = await res.json(); } catch (e) { data = null; }
+      if (!res.ok) {
+        notice('Publish failed: ' + ((data && data.error) || 'HTTP ' + res.status), true);
+        return;
+      }
+
+      var pub = data.publication || {};
+      notice('Published to the client portal as ' +
+        (pub.period || '') + ' v' + (pub.version || 1) + '.', false);
+      renderPublications();
+    } catch (err) {
+      notice('Publish failed: ' + err.message, true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label || 'Publish to client'; }
+    }
+  }
+
+  /** Superadmin must name the tenant in the body; everyone else is pinned. */
+  function tenantBodyFields() {
+    if (!isSuperAdmin()) return {};
+    var el = document.getElementById('rpt-client');
+    var id = el && el.value ? el.value : window.globalTenantId;
+    return id ? { tenantId: id } : {};
+  }
+
+  /** The archive for the selected client: what the portal is showing them. */
+  async function renderPublications() {
+    var host = document.getElementById('rpt-publications');
+    if (!host) return;
+
+    try {
+      var res = await fetch('api/reports/publications' + tenantParam('?'),
+        { credentials: 'same-origin' });
+      if (!res.ok) {
+        var j = await res.json().catch(function () { return {}; });
+        host.innerHTML = '<p class="rpt-pub-empty">' +
+          esc(j.error || 'Could not load published reports.') + '</p>';
+        return;
+      }
+      var data = await res.json();
+      var rows = data.publications || [];
+
+      if (!rows.length) {
+        host.innerHTML = '<p class="rpt-pub-empty">Nothing published to this client yet.</p>';
+        return;
+      }
+
+      host.innerHTML =
+        '<table class="data-table rpt-pub-table"><thead><tr>' +
+          '<th scope="col">Period</th><th scope="col">Version</th>' +
+          '<th scope="col">Published</th><th scope="col">Status</th>' +
+          '<th scope="col">Downloads</th><th scope="col"></th>' +
+        '</tr></thead><tbody>' +
+        rows.map(function (r) {
+          var qs = tenantParam('?');
+          var base = 'api/reports/publications/' + encodeURIComponent(r.id);
+          return '<tr' + (r.status === 'withdrawn' ? ' class="rpt-pub-withdrawn"' : '') + '>' +
+            '<td>' + S.esc(r.period_label || r.period) +
+              (r.isLatest ? '' : ' <span class="rpt-pub-tag">superseded</span>') + '</td>' +
+            '<td>v' + S.esc(r.version) + '</td>' +
+            '<td>' + S.esc(new Date(r.published_at).toLocaleDateString('en-ZA')) + '</td>' +
+            '<td>' + S.esc(r.status === 'withdrawn' ? 'Withdrawn' : 'Published') + '</td>' +
+            '<td>' + S.esc(r.download_count || 0) + '</td>' +
+            '<td class="rpt-pub-actions">' +
+              '<a class="btn btn-secondary btn-sm" href="' + base + '/pptx' + qs + '">Download</a> ' +
+              (r.has_html
+                ? '<a class="btn btn-secondary btn-sm" target="_blank" rel="noopener" href="' +
+                  base + '/view' + qs + '">View</a> ' : '') +
+              (r.status === 'published'
+                ? '<button type="button" class="btn btn-danger btn-sm rpt-withdraw" data-id="' +
+                  esc(r.id) + '">Withdraw</button>' : '') +
+            '</td></tr>';
+        }).join('') +
+        '</tbody></table>';
+
+      host.querySelectorAll('.rpt-withdraw').forEach(function (b) {
+        b.addEventListener('click', function () { withdraw(b.dataset.id); });
+      });
+    } catch (err) {
+      host.innerHTML = '<p class="rpt-pub-empty">' + S.esc(err.message) + '</p>';
+    }
+  }
+
+  async function withdraw(id) {
+    var reason = window.prompt(
+      'Withdraw this report?\n\nThe client will no longer see it. ' +
+      'Why is it being withdrawn?', '');
+    if (reason === null) return;
+    if (!reason.trim()) { notice('A reason is required to withdraw a report.', true); return; }
+
+    try {
+      var res = await fetch('api/reports/publications/' + encodeURIComponent(id) + '/withdraw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(Object.assign({ reason: reason }, tenantBodyFields())),
+      });
+      var j = await res.json().catch(function () { return {}; });
+      if (!res.ok) { notice('Withdraw failed: ' + (j.error || res.status), true); return; }
+      notice('Report withdrawn. The client can no longer see it.', false);
+      renderPublications();
+    } catch (err) {
+      notice('Withdraw failed: ' + err.message, true);
+    }
+  }
+
   /** Pull the filename out of a Content-Disposition header, if it has one. */
   function filenameFrom(header) {
     var m = /filename="?([^";]+)"?/.exec(header || '');
@@ -805,6 +967,15 @@ window.ReportsTab = (function () {
 
       var pptx = document.getElementById('rpt-pptx-btn');
       if (pptx) pptx.onclick = downloadPptx;
+
+      // Publishing writes to the archive the client portal reads, so it needs
+      // write on the reports page — the same gate the server enforces.
+      var pub = document.getElementById('rpt-publish-btn');
+      if (pub) {
+        if (canPersist()) pub.onclick = publishReport;
+        else pub.hidden = true;
+      }
+      if (canPersist()) renderPublications();
 
       var rst = document.getElementById('rpt-reset-btn');
       if (rst) rst.onclick = reset;

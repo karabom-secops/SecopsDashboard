@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <base href="/secops/" />
+  <title>Reflex Client Portal</title>
+
+  <!--
+    Served by express.static, which is mounted BEFORE the session middleware, so
+    this file is world-readable. That is fine and deliberate: there is no tenant
+    data here. Every figure arrives from /api/portal/*, which is authenticated,
+    confined to client sessions, and scoped by the session's tenant.
+  -->
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="css/portal.css" />
+
+  <script>
+    // Theme, pre-paint. Duplicated from js/theme.js on purpose: an external
+    // file loads too late to avoid a flash of the wrong colour scheme.
+    (function () {
+      try {
+        var t = localStorage.getItem('secops.theme.v1');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode */ }
+    })();
+  </script>
+</head>
+<body class="portal-body">
+
+  <header class="portal-header">
+    <div class="portal-header-inner">
+      <div class="portal-brand">
+        <img src="img/reflex-logo.png" alt="Reflex" class="portal-logo" />
+        <div class="portal-brand-text">
+          <span class="portal-brand-name">Client Portal</span>
+          <span class="portal-brand-client" id="portalClientName"></span>
+        </div>
+      </div>
+      <div class="portal-header-actions">
+        <button id="portalThemeToggle" class="portal-icon-btn" type="button"
+                title="Switch appearance" aria-label="Switch appearance">◐</button>
+        <span class="portal-user" id="portalUser"></span>
+        <button id="portalLogout" class="btn btn-secondary btn-sm" type="button">Sign out</button>
+      </div>
+    </div>
+    <div class="portal-preview-banner" id="portalPreviewBanner" hidden>
+      Staff preview — this is what the client sees. Nothing here can be changed.
+    </div>
+  </header>
+
+  <nav class="portal-nav" aria-label="Sections">
+    <div class="portal-nav-inner" id="portalNav">
+      <button class="portal-tab" data-view="overview"   type="button">Overview</button>
+      <button class="portal-tab" data-view="incidents"  type="button">Incidents</button>
+      <button class="portal-tab" data-view="reports"    type="button">Reports</button>
+      <button class="portal-tab" data-view="vulns"      type="button">Vulnerabilities</button>
+      <button class="portal-tab" data-view="awareness"  type="button">Training</button>
+    </div>
+  </nav>
+
+  <main class="portal-main" id="portalMain">
+    <div class="portal-loading" id="portalLoading">Loading…</div>
+
+    <section class="portal-view" id="view-overview"  hidden></section>
+    <section class="portal-view" id="view-incidents" hidden></section>
+    <section class="portal-view" id="view-reports"   hidden></section>
+    <section class="portal-view" id="view-vulns"     hidden></section>
+    <section class="portal-view" id="view-awareness" hidden></section>
+  </main>
+
+  <footer class="portal-footer">
+    <span>Reflex Solutions (Pty) Ltd</span>
+    <span id="portalFooterNote"></span>
+  </footer>
+
+  <!-- Deliberately NOT app.js, sidenav.js or any of the 25 staff tab modules.
+       The portal shares the design tokens in styles.css and nothing else. -->
+  <script src="js/theme.js"></script>
+  <script src="portal/js/portal-shell.js"></script>
+  <script src="portal/js/portal-incidents.js"></script>
+  <script src="portal/js/portal-reports.js"></script>
+  <script src="portal/js/portal-score.js"></script>
+  <script src="portal/js/portal-vulns.js"></script>
+  <script src="portal/js/portal-awareness.js"></script>
+  <script src="portal/js/portal-boot.js"></script>
+</body>
+</html>

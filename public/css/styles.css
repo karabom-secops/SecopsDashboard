@@ -4751,3 +4751,31 @@ h1, h2, h3, h4,
   font-weight: 590;
   vertical-align: middle;
 }
+
+/* ── Reports: the published-archive panel ─────────────────────────────────
+   What the client can currently see in their portal, shown on the Reports tab
+   so staff never have to guess what was sent. */
+.rpt-published {
+  margin: 0 0 1.5rem;
+  border: 1px solid var(--card-edge, var(--separator));
+  border-radius: var(--radius, 10px);
+  background: var(--card-bg, var(--surface));
+}
+.rpt-published > summary {
+  cursor: pointer; padding: 0.75rem 1rem;
+  font-size: 0.9rem; font-weight: 600;
+}
+.rpt-published > summary:focus-visible {
+  outline: 2px solid var(--logo-cyan, var(--tint)); outline-offset: -2px;
+}
+.rpt-published > div { padding: 0 1rem 1rem; }
+.rpt-pub-empty { color: var(--muted); font-size: 0.85rem; margin: 0.5rem 0; }
+.rpt-pub-table { width: 100%; font-size: 0.85rem; }
+.rpt-pub-actions { text-align: right; white-space: nowrap; }
+/* A withdrawn report is still in the record but is no longer being shown to
+   the client, and must not read as current. */
+.rpt-pub-withdrawn { opacity: 0.55; }
+.rpt-pub-tag {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--orange, var(--amber)); margin-left: 0.4rem;
+}

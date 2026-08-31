@@ -15,7 +15,11 @@ const QRCode    = require('qrcode');
 
 const pool = require('./lib/db');
 const { requireAuth, requireSuperAdmin, pageGate, loadPageAccess } = require('./lib/auth-middleware');
+const portalGate = require('./lib/portal-gate');
+const reportArchive = require('./lib/report-archive');
+const portalRoutes = require('./lib/portal-routes');
 const { ROLES, ROLE_LABELS, PAGES, PAGE_KEYS, LEVELS, LEVEL_RANK, resolveAccess } = require('./lib/pages');
+const pagesLib = require('./lib/pages');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics } = require('./lib/metrics');
 const { parseVulnFile, computeVulnSummary, computeDueDate } = require('./lib/vuln-parser');
@@ -131,7 +135,73 @@ const loginLimiter = rateLimit({
   message: { error: 'Too many login attempts. Please try again later.' },
 });
 
+/**
+ * The second factor needs its own limit.
+ *
+ * loginLimiter guards the password step only, so the TOTP routes were
+ * unthrottled: having got past a password, an attacker could grind six digits
+ * without limit, which makes the second factor a formality. A 30-second TOTP
+ * window and 10 tries per 15 minutes leaves an honest user room for clock skew
+ * and a mistyped code, and leaves an attacker nowhere.
+ *
+ * Keyed on IP like loginLimiter — per-account limiting would be better and is
+ * noted as a gap, since neither this nor login can currently lock a single
+ * account that is being attacked from many addresses.
+ */
+const mfaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip,
+  validate: { xForwardedForHeader: false },
+  message: { error: 'Too many verification attempts. Please try again later.' },
+});
+
 // ── Auth routes (public — no requireAuth) ─────────────────────────────────
+
+/**
+ * Start a brand-new session id, discarding the pre-authentication one.
+ *
+ * Without this the id issued to an anonymous visitor survives login, so anyone
+ * who could plant a cookie before sign-in (shared machine, an XSS elsewhere on
+ * the origin) holds a valid authenticated session afterwards. Called once,
+ * immediately after the password check and before anything is written to the
+ * session — including the MFA-pending payload, which is itself worth protecting.
+ */
+function regenerateSession(req) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate(err => (err ? reject(err) : resolve()));
+  });
+}
+
+/**
+ * Fetch the login row, tolerating a database that has not run
+ * db/migrate-user-lifecycle.sql yet. An un-migrated deployment keeps the old
+ * behaviour: every account is active and nobody is forced to rotate.
+ */
+async function loadLoginUser(username) {
+  try {
+    const r = await pool.query(
+      `SELECT id, username, password_hash, role, tenant_id,
+              totp_enabled, totp_required, is_active, must_change_password
+       FROM users WHERE username = $1`,
+      [username]
+    );
+    return r.rows[0] || null;
+  } catch (err) {
+    if (err.code !== '42703') throw err;   // undefined_column
+    const r = await pool.query(
+      `SELECT id, username, password_hash, role, tenant_id,
+              totp_enabled, totp_required
+       FROM users WHERE username = $1`,
+      [username]
+    );
+    const row = r.rows[0];
+    if (row) { row.is_active = true; row.must_change_password = false; }
+    return row || null;
+  }
+}
 
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   try {
@@ -142,21 +212,21 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required.' });
     }
 
-    const result = await pool.query(
-      `SELECT id, username, password_hash, role, tenant_id,
-              totp_enabled, totp_required
-       FROM users WHERE username = $1`,
-      [username]
-    );
-
-    if (result.rows.length === 0) {
+    const user = await loadLoginUser(username);
+    if (!user || !user.password_hash) {
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
 
-    const user = result.rows[0];
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) {
       return res.status(401).json({ error: 'Invalid credentials.' });
+    }
+
+    // Told only AFTER a correct password: someone who has proved they own the
+    // account is entitled to know why they cannot get in, and saying it before
+    // the password check would turn login into an account-status oracle.
+    if (user.is_active === false) {
+      return res.status(403).json({ error: 'This account has been suspended. Contact your administrator.' });
     }
 
     await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
@@ -171,57 +241,88 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
       tenantIds = tRes.rows.map(r => r.tenant_id);
     }
 
-    // ── Superadmin MFA branching ─────────────────────────────────────────
-    if (user.role === 'superadmin') {
-      const pending = {
-        userId: user.id, username: user.username, role: user.role,
-        tenantId: user.tenant_id, tenantIds,
-      };
+    // Everything below writes to the session, so the new id is minted first.
+    await regenerateSession(req);
 
+    const pending = {
+      userId: user.id, username: user.username, role: user.role,
+      tenantId: user.tenant_id, tenantIds,
+      mustChangePassword: !!user.must_change_password,
+    };
+
+    // ── Who must present a second factor ─────────────────────────────────
+    // Superadmins, because they can reach every tenant. Portal clients,
+    // because they are outside the building — an external login guarding
+    // another company's security data is exactly where MFA earns its cost.
+    // Both use the same enrolment and verification routes below; those are
+    // already role-generic, so this is the only place that needed changing.
+    const mfaRoles = user.role === 'superadmin' || pagesLib.isExternalRole(user.role);
+
+    if (mfaRoles) {
       if (user.totp_enabled) {
-        // Branch A: TOTP enrolled — require second factor before granting session
         req.session.mfaPending = pending;
         return res.json({ mfaRequired: true });
       }
 
-      if (user.totp_required) {
-        // Branch B: TOTP required but not yet set up — force enrollment
+      // A client has no grace period: MFA is required from the first login, so
+      // an unenrolled client is forced into enrolment rather than let through.
+      if (user.totp_required || pagesLib.isExternalRole(user.role)) {
         req.session.enrollPending = pending;
         return res.json({ enrollRequired: true });
       }
 
-      // Branch C: grace-period superadmin — full session, prompt banner
-      req.session.userId       = user.id;
-      req.session.username     = user.username;
-      req.session.role         = user.role;
-      req.session.tenantId     = user.tenant_id;
-      req.session.tenantIds    = tenantIds;
-      req.session.totpEnabled  = false;
+      // Grace-period superadmin — full session, prompt banner.
+      grantSession(req, pending, false);
       return res.json({
         id: user.id, username: user.username, role: user.role,
         tenantId: user.tenant_id, tenantIds, showMfaPrompt: true,
+        mustChangePassword: pending.mustChangePassword,
       });
     }
 
-    // ── Non-superadmin: always full session, no MFA ───────────────────────
-    req.session.userId    = user.id;
-    req.session.username  = user.username;
-    req.session.role      = user.role;
-    req.session.tenantId  = user.tenant_id;
-    req.session.tenantIds = tenantIds;
-    req.session.totpEnabled = false;
+    // ── Everyone else: full session, no MFA ───────────────────────────────
+    grantSession(req, pending, false);
 
-    if (user.role === 'manager') {
-      return res.json({ id: user.id, username: user.username, role: user.role, tenantId: user.tenant_id, tenantIds, redirect: '/manager.html' });
-    }
-    return res.json({ id: user.id, username: user.username, role: user.role, tenantId: user.tenant_id, tenantIds });
+    const body = {
+      id: user.id, username: user.username, role: user.role,
+      tenantId: user.tenant_id, tenantIds,
+      mustChangePassword: pending.mustChangePassword,
+    };
+    if (user.role === 'manager') body.redirect = '/manager.html';
+    return res.json(body);
   } catch (err) {
     return serverError(res, err);
   }
 });
 
+/**
+ * Write an authenticated identity onto the session.
+ *
+ * Extracted because it was previously open-coded in four places (login branch
+ * C, the non-superadmin branch, mfa-verify and enroll-confirm) and they had
+ * already drifted — only some of them carried every field.
+ */
+function grantSession(req, pending, totpEnabled) {
+  req.session.mfaPending        = undefined;
+  req.session.enrollPending     = undefined;
+  req.session.pendingTotpSecret = undefined;
+  req.session.userId       = pending.userId;
+  req.session.username     = pending.username;
+  req.session.role         = pending.role;
+  req.session.tenantId     = pending.tenantId;
+  req.session.tenantIds    = pending.tenantIds;
+  req.session.totpEnabled  = !!totpEnabled;
+}
+
+/** Where a role lands after a successful sign-in. */
+function landingFor(role) {
+  if (pagesLib.isExternalRole(role)) return '/secops/portal.html';
+  if (role === 'manager') return '/secops/manager.html';
+  return '/secops/';
+}
+
 // ── MFA: verify TOTP code after password step ─────────────────────────────
-app.post('/api/auth/mfa-verify', async (req, res) => {
+app.post('/api/auth/mfa-verify', mfaLimiter, async (req, res) => {
   try {
     const pending = req.session.mfaPending;
     if (!pending) return res.status(401).json({ error: 'No MFA session pending.' });
@@ -242,18 +343,13 @@ app.post('/api/auth/mfa-verify', async (req, res) => {
     const valid = speakeasy.totp.verify({ secret: rows[0].totp_secret, encoding: 'base32', token, window: 1 });
     if (!valid) return res.status(401).json({ error: 'Invalid or expired code. Try again.' });
 
-    // Promote to full session
-    req.session.mfaPending   = undefined;
-    req.session.userId       = pending.userId;
-    req.session.username     = pending.username;
-    req.session.role         = pending.role;
-    req.session.tenantId     = pending.tenantId;
-    req.session.tenantIds    = pending.tenantIds;
-    req.session.totpEnabled  = true;
+    grantSession(req, pending, true);
 
     return res.json({
       id: pending.userId, username: pending.username,
       role: pending.role, tenantId: pending.tenantId, tenantIds: pending.tenantIds,
+      mustChangePassword: !!pending.mustChangePassword,
+      redirect: landingFor(pending.role),
     });
   } catch (err) {
     return serverError(res, err);
@@ -279,7 +375,7 @@ app.get('/api/auth/enroll-totp/setup', async (req, res) => {
 });
 
 // ── MFA: forced enrollment confirm ────────────────────────────────────────
-app.post('/api/auth/enroll-totp/confirm', async (req, res) => {
+app.post('/api/auth/enroll-totp/confirm', mfaLimiter, async (req, res) => {
   try {
     const pending = req.session.enrollPending;
     if (!pending) return res.status(401).json({ error: 'No enrollment session pending.' });
@@ -300,20 +396,76 @@ app.post('/api/auth/enroll-totp/confirm', async (req, res) => {
       [secret, pending.userId]
     );
 
-    // Promote to full session
-    req.session.enrollPending    = undefined;
-    req.session.pendingTotpSecret = undefined;
-    req.session.userId           = pending.userId;
-    req.session.username         = pending.username;
-    req.session.role             = pending.role;
-    req.session.tenantId         = pending.tenantId;
-    req.session.tenantIds        = pending.tenantIds;
-    req.session.totpEnabled      = true;
+    grantSession(req, pending, true);
 
     return res.json({
       id: pending.userId, username: pending.username,
       role: pending.role, tenantId: pending.tenantId, tenantIds: pending.tenantIds,
+      mustChangePassword: !!pending.mustChangePassword,
+      redirect: landingFor(pending.role),
     });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+/**
+ * POST /api/auth/change-password — the user changes their own password.
+ *
+ * There was no such route. The only way a password could change was an admin
+ * doing PUT /api/users/:id, so a credential an admin typed and read out over
+ * the phone stayed that way forever, and nobody could rotate their own. For
+ * internal staff that was poor; for an external client account it is
+ * indefensible.
+ *
+ * Sits above requireAuth's mount but checks the session itself, because
+ * requireActiveUser deliberately lets this path through for a user who is
+ * blocked by must_change_password — otherwise they would be locked in a loop
+ * where the only way out is the thing they are not allowed to do.
+ */
+app.post('/api/auth/change-password', mfaLimiter, async (req, res) => {
+  try {
+    if (!req.session || !req.session.userId) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+
+    const current = String(req.body.currentPassword || '');
+    const next    = String(req.body.newPassword || '');
+
+    if (next.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+    }
+    if (next === current) {
+      return res.status(400).json({ error: 'The new password must be different from the current one.' });
+    }
+
+    const r = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.session.userId]);
+    if (!r.rows.length || !r.rows[0].password_hash) {
+      // SAML accounts have no local password to change.
+      return res.status(400).json({ error: 'This account does not use a password.' });
+    }
+
+    // Re-proving the current password matters even though the session is
+    // already authenticated: it stops an unattended logged-in browser from
+    // being turned into a permanent takeover.
+    const ok = await bcrypt.compare(current, r.rows[0].password_hash);
+    if (!ok) return res.status(401).json({ error: 'Current password is incorrect.' });
+
+    const hash = await bcrypt.hash(next, 12);
+    try {
+      await pool.query(
+        `UPDATE users SET password_hash = $1, must_change_password = FALSE,
+                          password_changed_at = NOW()
+         WHERE id = $2`,
+        [hash, req.session.userId]
+      );
+    } catch (err) {
+      if (err.code !== '42703') throw err;   // lifecycle migration not run yet
+      await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2',
+        [hash, req.session.userId]);
+    }
+
+    return res.json({ ok: true });
   } catch (err) {
     return serverError(res, err);
   }
@@ -474,6 +626,35 @@ app.get('/api/auth/saml/metadata', (req, res) => {
 
 app.use('/api', requireAuth);
 
+// ── …and must belong to an account that is still active ──────────────────
+// Role and tenant are snapshotted onto the session at login, so without this a
+// suspended user keeps working until their 8-hour session expires. Costs one
+// indexed lookup, the same trade loadPageAccess already makes.
+
+app.use('/api', portalGate.requireActiveUser);
+
+// ── The membrane: a client session may reach /api/portal and nothing else ─
+//
+// MOUNTED BEFORE pageGate ON PURPOSE. pageGate fails OPEN — an /api prefix
+// absent from API_PREFIX_TO_PAGE falls through to authenticated-only, and it
+// explicitly whitelists GET /api/tenants, which lists every customer we have.
+// That is a fine convenience for staff and quite wrong for a customer, so
+// external sessions never reach it. See lib/portal-gate.js.
+
+app.use('/api', portalGate.requirePortalConfinement);
+
+// ── The client portal's own API ───────────────────────────────────────────
+// Registered BEFORE pageGate: /api/portal has no entry in the page catalog and
+// must not acquire one. Its own gate decides who may read it, and every handler
+// takes its tenant from the session. See lib/portal-routes.js.
+
+portalRoutes.register(app, {
+  pool,
+  requireAuth,
+  portalSession: portalGate.requirePortalSession(),
+  onError: (res, err) => serverError(res, err),
+});
+
 // ── …and must pass the per-page access check (see lib/pages.js) ───────────
 // Maps each /api prefix to a page and requires read access for GETs, write
 // access for mutations. This replaces the old per-route requireAdmin /
@@ -505,7 +686,7 @@ app.get('/api/auth/totp-setup', async (req, res) => {
 });
 
 // Confirm a TOTP code against pendingTotpSecret and activate MFA
-app.post('/api/auth/totp-confirm', async (req, res) => {
+app.post('/api/auth/totp-confirm', mfaLimiter, async (req, res) => {
   if (req.session.role !== 'superadmin') {
     return res.status(403).json({ error: 'Superadmin only.' });
   }
@@ -536,7 +717,7 @@ app.post('/api/auth/totp-confirm', async (req, res) => {
 });
 
 // Disable TOTP — requires password confirmation; totp_required stays true
-app.post('/api/auth/totp-disable', async (req, res) => {
+app.post('/api/auth/totp-disable', mfaLimiter, async (req, res) => {
   if (req.session.role !== 'superadmin') {
     return res.status(403).json({ error: 'Superadmin only.' });
   }
@@ -1834,14 +2015,44 @@ app.get('/api/mdr/trends', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/mdr', async (req, res) => {
+/**
+ * DELETE /api/mdr — remove a tenant's MDR data.
+ *
+ * Two things changed here.
+ *
+ * 1. It used to delete mdr_uploads alone and let ON DELETE CASCADE take the
+ *    tickets with it. That cascade is now SET NULL (see
+ *    db/migrate-mdr-history.sql), so the same statement would ORPHAN every
+ *    ticket instead of removing it — "delete my MDR data" would quietly stop
+ *    meaning what it says. The deletion is explicit and ordered now, inside a
+ *    transaction so a failure halfway cannot leave events without tickets.
+ *
+ * 2. It was missing requireAuth, unlike GET /api/mdr and /api/mdr/trends
+ *    beside it. It was reachable by anyone with a session because pageGate maps
+ *    the `mdr` prefix to the mdr-pricing page — the wrong page entirely for a
+ *    destructive route on somebody's incident record.
+ */
+app.delete('/api/mdr', requireAuth, async (req, res) => {
+  const client = await pool.connect();
   try {
     const { tenantId, error } = resolveMdrTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
-    await pool.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
+
+    await client.query('BEGIN');
+    // Children first: mdr_ticket_events cascades from mdr_tickets, but naming
+    // it explicitly means this route does not depend on that staying true.
+    await client.query(
+      'DELETE FROM mdr_ticket_events WHERE tenant_id = $1', [tenantId]);
+    await client.query('DELETE FROM mdr_tickets WHERE tenant_id = $1', [tenantId]);
+    await client.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
+    await client.query('COMMIT');
+
     return res.json({ ok: true });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     return serverError(res, err);
+  } finally {
+    client.release();
   }
 });
 
@@ -1878,45 +2089,17 @@ function resolveIntegrationTenant(req, source) {
   return { tenantId: req.session.tenantId };
 }
 
-async function writeMdrTickets(client, tenantId, tickets, uploadedBy) {
-  const stats = calcMdrStats(tickets);
-  await client.query('DELETE FROM mdr_uploads WHERE tenant_id = $1', [tenantId]);
-  const uploadRes = await client.query(
-    `INSERT INTO mdr_uploads (tenant_id, uploaded_at, uploaded_by, total_tickets, resolved_count, pending_count, avg_resolution_hours)
-     VALUES ($1, NOW(), $2, $3, $4, $5, $6) RETURNING id`,
-    [tenantId, uploadedBy, stats.total, stats.resolved_count, stats.pending_count, stats.avg_resolution_hours]
-  );
-  const uploadId = uploadRes.rows[0].id;
-
-  for (const t of tickets) {
-    await client.query(
-      `INSERT INTO mdr_tickets (upload_id, ticket_number, subject, status, ticket_type, severity, created_at, resolved_at, updated_at, assigned_to)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [uploadId, t.ticketNumber, t.subject, t.status, t.ticketType, t.severity,
-       t.createdAt || null, t.resolvedAt || null, t.updatedAt || null, t.assignedTo || null]
-    );
-  }
-
-  return stats;
-}
-
-function calcMdrStats(tickets) {
-  const resolved = tickets.filter(t => t.status === 'solved' || t.status === 'closed');
-  const pending  = tickets.filter(t => t.status === 'pending' || t.status === 'open');
-  let totalHours = 0, countedRes = 0;
-  resolved.forEach(t => {
-    if (t.createdAt && t.resolvedAt) {
-      const hrs = (new Date(t.resolvedAt) - new Date(t.createdAt)) / 3600000;
-      if (hrs >= 0) { totalHours += hrs; countedRes++; }
-    }
-  });
-  return {
-    total:               tickets.length,
-    resolved_count:      resolved.length,
-    pending_count:       pending.length,
-    avg_resolution_hours: countedRes > 0 ? parseFloat((totalHours / countedRes).toFixed(2)) : null,
-  };
-}
+/*
+ * MDR ingest lives in lib/mdr-ingest.js.
+ *
+ * It was moved out because it is the riskiest code in this file — a live
+ * ingest path that runs several times a day and that every tenant Secure
+ * Score depends on — and inside server.js it could not be tested without a
+ * database. The extracted version takes an explicit client, so a test can
+ * pass a recorder and assert the exact statement sequence.
+ */
+const mdrIngest = require('./lib/mdr-ingest');
+const { calcMdrStats, writeMdrTickets } = mdrIngest;
 
 /** GET /api/integrations — list configured integrations (no keys) */
 app.get('/api/integrations', requireAuth, async (req, res) => {
@@ -2510,6 +2693,24 @@ async function runScheduledSyncs() {
 // day for their first sync), then every 24 hours thereafter.
 setTimeout(() => { runScheduledSyncs().catch(err => console.error('[integrations] scheduled sync crashed —', err.message)); }, 60 * 1000);
 setInterval(() => { runScheduledSyncs().catch(err => console.error('[integrations] scheduled sync crashed —', err.message)); }, SYNC_INTERVAL_MS);
+
+// ── Report archive housekeeping ────────────────────────────────────────────
+// The sweep runs once at boot: a publish that crashed between writing the file
+// and committing the row leaves an orphan, and only the database can tell an
+// orphan from a live artefact. The prune unlinks superseded and withdrawn
+// versions past the retention window, keeping the row so the record of what
+// was sent to whom outlives the bytes.
+const ARCHIVE_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+setTimeout(() => {
+  reportArchive.sweepOrphanReportFiles(pool)
+    .then(n => { if (n) console.log('[archive] swept ' + n + ' orphaned report file(s)'); })
+    .catch(err => console.error('[archive] sweep failed —', err.message));
+}, 90 * 1000);
+setInterval(() => {
+  reportArchive.pruneReportArchive(pool)
+    .then(n => { if (n) console.log('[archive] pruned ' + n + ' expired report file(s)'); })
+    .catch(err => console.error('[archive] prune failed —', err.message));
+}, ARCHIVE_PRUNE_INTERVAL_MS);
 
 // ── Managed EDR sync (every 6 hours) ───────────────────────────────────────
 // SentinelOne threat/activity data is operational rather than reporting-cadence,
@@ -4583,6 +4784,115 @@ app.post('/api/reports/pptx', requireAuth, pptxRoute.createPptxHandler({
   onError:     (res, err) => serverError(res, err),
 }));
 
+// ── Published report archive ───────────────────────────────────────────────
+//
+// These sit under /api/reports, which lib/pages.js already maps to the reports
+// page, so pageGate requires read for the listings and write for the publish
+// and withdraw. No change to the page catalog was needed.
+//
+// The archive is what the client portal serves: staff assemble a deck, review
+// it, and publish the artefact they approved. See lib/report-archive.js.
+
+/** POST /api/reports/publish — archive the deck staff are looking at. */
+app.post('/api/reports/publish', requireAuth, reportArchive.createPublishHandler({
+  pool,
+  resolveTenant: req => resolveReportTenant(req, 'body'),
+  logoDataUri:   pptxRoute.makeLogoReader(__dirname),
+  onError:       (res, err) => serverError(res, err),
+}));
+
+/** GET /api/reports/publications — every version, withdrawn ones included. */
+app.get('/api/reports/publications', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveReportTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const publications = await reportArchive.listPublications(pool, {
+      tenantId, period: req.query.period || null,
+    });
+    return res.json({ tenantId, publications });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return res.status(503).json({
+        error: 'Report archive not available. Run db/migrate-report-archive.sql.',
+      });
+    }
+    return serverError(res, err);
+  }
+});
+
+/** GET /api/reports/publications/:id/pptx — staff download. */
+app.get('/api/reports/publications/:id/pptx', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveReportTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const row = await reportArchive.getPublication(pool, parseInt(req.params.id, 10), tenantId);
+    if (!row) return res.status(404).json({ error: 'Report not found.' });
+
+    res.on('finish', () => reportArchive.noteDownload(pool, row.id));
+    return reportArchive.sendPublicationPptx(res, row);
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/reports/publications/:id/view — exactly what the client sees. */
+app.get('/api/reports/publications/:id/view', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveReportTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const row = await reportArchive.getPublication(pool, parseInt(req.params.id, 10),
+      tenantId, { withHtml: true });
+    if (!row) return res.status(404).json({ error: 'Report not found.' });
+    return reportArchive.sendPublicationHtml(res, row);
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * POST /api/reports/publications/:id/withdraw
+ *
+ * A state transition, not an edit: the row and the file stay, so the record of
+ * what was published and later retracted survives. The client stops seeing it.
+ */
+app.post('/api/reports/publications/:id/withdraw', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveReportTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const reason = String((req.body && req.body.reason) || '').slice(0, 1000);
+    if (!reason.trim()) {
+      return res.status(400).json({ error: 'A reason is required to withdraw a report.' });
+    }
+
+    const r = await pool.query(
+      `UPDATE report_publications
+          SET status = 'withdrawn', withdrawn_at = NOW(),
+              withdrawn_by = $1, withdraw_reason = $2
+        WHERE id = $3 AND tenant_id = $4 AND status = 'published'
+        RETURNING id, period, version, status`,
+      [req.session.userId || null, reason, parseInt(req.params.id, 10), tenantId]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Report not found.' });
+    return res.json({ ok: true, publication: r.rows[0] });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/reports/publications/:id — hard delete. Superadmin only. */
+app.delete('/api/reports/publications/:id', requireAuth, requireSuperAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      'DELETE FROM report_publications WHERE id = $1 RETURNING pptx_path',
+      [parseInt(req.params.id, 10)]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Report not found.' });
+
+    // Row first, file second: an orphan file is swept, an orphan row is not.
+    const abs = reportArchive.resolveArchivePath(r.rows[0].pptx_path);
+    if (abs) { try { fs.unlinkSync(abs); } catch (_) { /* swept at boot */ } }
+    return res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
+
 // ── Secure Score routes ────────────────────────────────────────────────────
 
 /**
@@ -4954,6 +5264,11 @@ async function loadEstate(tenantId, scanId, trainedUsers) {
 async function loadIncidentRate(uploadId) {
   if (!uploadId) return null;
   try {
+    // DELIBERATELY still keyed on upload_id, not tenant_id, now that tickets
+    // survive across syncs. This derives a RATE from the span of the latest
+    // snapshot; widening it to all retained history would silently change the
+    // denominator and move every tenant's incident-response weight without
+    // anything about their security having changed.
     const r = await pool.query(
       `SELECT COUNT(*) FILTER (WHERE created_at IS NOT NULL)::int AS dated,
               MIN(created_at) AS first_at,

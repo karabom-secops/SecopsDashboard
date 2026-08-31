@@ -1963,9 +1963,19 @@
         <button type="button" class="btn btn-secondary" id="rpt-reset-btn">Reset</button>
         <button type="button" class="btn btn-secondary" id="rpt-pptx-btn"
                 title="Download the same deck as an editable PowerPoint file (16:9)">Download PowerPoint</button>
+        <!-- Publishing archives the deck and makes it downloadable in the
+             client portal. Hidden for users without write on this page. -->
+        <button type="button" class="btn btn-secondary" id="rpt-publish-btn" hidden
+                title="Archive this deck and make it available to the client in their portal">Publish to client</button>
         <button type="button" class="btn btn-primary"   id="rpt-generate-btn">Generate Deck</button>
       </div>
     </div>
+
+    <!-- What the client can currently see. Populated by renderPublications(). -->
+    <details class="rpt-published" id="rpt-published-wrap">
+      <summary>Published to the client portal</summary>
+      <div id="rpt-publications"><p class="rpt-pub-empty">Loading…</p></div>
+    </details>
 
     <div class="rpt-toolbar">
       <label class="rpt-field">

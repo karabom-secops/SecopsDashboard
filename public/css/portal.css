@@ -1,0 +1,367 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   portal.css — the client portal.
+
+   Consumes the design tokens defined in styles.css (--bg, --surface, --text,
+   --tint, --red, --radius, --shadow-sm …) and defines none of its own colours,
+   so light/dark and any future brand change follow the dashboard for free.
+   Same relationship secure-score.css already has to styles.css.
+
+   Layout is deliberately simple: a header, a row of tabs, one column. The staff
+   dashboard's sidebar state machine is 19KB of behaviour a client viewing five
+   read-only pages has no use for.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.portal-body {
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.portal-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--separator);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.portal-header-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0.9rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.portal-brand { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.portal-logo { height: 34px; width: auto; flex: none; }
+.portal-brand-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.portal-brand-name { font-weight: 600; font-size: 0.95rem; }
+.portal-brand-client {
+  font-size: 0.8rem; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.portal-header-actions { display: flex; align-items: center; gap: 0.75rem; }
+.portal-user { font-size: 0.85rem; color: var(--muted); }
+.portal-icon-btn {
+  background: none; border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius, 8px); width: 34px; height: 34px;
+  cursor: pointer; font-size: 1rem; line-height: 1;
+}
+.portal-icon-btn:hover { background: var(--fill-4); }
+
+/* A staff member previewing must never mistake it for their own dashboard. */
+.portal-preview-banner {
+  background: var(--amber, #b45309);
+  color: #fff;
+  text-align: center;
+  padding: 0.4rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+
+.portal-nav {
+  background: var(--surface);
+  border-bottom: 1px solid var(--separator);
+  position: sticky; top: 61px; z-index: 19;
+}
+.portal-nav-inner {
+  max-width: 1180px; margin: 0 auto; padding: 0 1.5rem;
+  display: flex; gap: 0.25rem; overflow-x: auto;
+}
+.portal-tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); font: inherit; font-size: 0.9rem; font-weight: 500;
+  padding: 0.75rem 0.9rem; cursor: pointer; white-space: nowrap;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.portal-tab:hover { color: var(--text); }
+.portal-tab.is-active { color: var(--tint); border-bottom-color: var(--tint); }
+/* Every interactive element gets the same ring; the staff app defines this on
+   nav chrome only, which leaves buttons and links with no visible focus. */
+.portal-tab:focus-visible,
+.portal-linkbtn:focus-visible,
+.portal-seg:focus-visible,
+.portal-icon-btn:focus-visible,
+.portal-dialog-close:focus-visible,
+.portal-body .btn:focus-visible,
+.portal-body a:focus-visible {
+  outline: 2px solid var(--logo-cyan, var(--tint));
+  outline-offset: 2px;
+}
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+
+.portal-main { flex: 1; max-width: 1180px; width: 100%; margin: 0 auto; padding: 1.75rem 1.5rem 3rem; }
+.portal-view-head { margin-bottom: 1.5rem; }
+.portal-view-head h1 { font-size: 1.5rem; margin: 0 0 0.35rem; }
+.portal-view-intro { margin: 0; color: var(--muted); font-size: 0.9rem; max-width: 60ch; }
+.portal-loading { color: var(--muted); padding: 2rem 0; font-size: 0.9rem; }
+
+.portal-footer {
+  max-width: 1180px; width: 100%; margin: 0 auto;
+  padding: 1.25rem 1.5rem; border-top: 1px solid var(--separator);
+  display: flex; justify-content: space-between; gap: 1rem;
+  color: var(--text-tertiary, var(--muted)); font-size: 0.78rem;
+}
+
+.portal-card {
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--card-edge, var(--separator));
+  border-radius: var(--radius, 10px);
+  padding: 1.25rem 1.4rem;
+  margin-bottom: 1.5rem;
+}
+.portal-card-title { font-size: 1rem; font-weight: 600; margin: 0 0 1rem; }
+.portal-card-foot { color: var(--muted); font-size: 0.8rem; margin: 0.75rem 0 1.5rem; }
+
+.portal-note {
+  background: var(--fill-4);
+  border-left: 3px solid var(--tint);
+  border-radius: 0 var(--radius, 8px) var(--radius, 8px) 0;
+  padding: 0.85rem 1rem; margin: 1.25rem 0;
+  color: var(--muted); font-size: 0.85rem; line-height: 1.55; max-width: 78ch;
+}
+
+/* ── Stats ───────────────────────────────────────────────────────────────── */
+
+.portal-stats {
+  display: grid; gap: 1rem; margin-bottom: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+.portal-stat {
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--card-edge, var(--separator));
+  border-left: 3px solid var(--separator-solid, var(--border));
+  border-radius: var(--radius, 10px);
+  padding: 1rem 1.1rem;
+}
+.portal-stat-value { font-size: 1.75rem; font-weight: 600; line-height: 1.1; }
+.portal-stat-label { color: var(--muted); font-size: 0.8rem; margin-top: 0.3rem; }
+.portal-stat-sub { color: var(--text-tertiary, var(--muted)); font-size: 0.72rem; margin-top: 0.35rem; }
+/* Colour only where it means something: a red tile beside four neutral ones
+   is a signal, five accented tiles are wallpaper. */
+.portal-stat.tone-bad     { border-left-color: var(--red); }
+.portal-stat.tone-warn    { border-left-color: var(--orange, var(--amber)); }
+.portal-stat.tone-good    { border-left-color: var(--green); }
+.portal-stat.tone-neutral { border-left-color: var(--separator-solid, var(--border)); }
+
+/* ── Tables ──────────────────────────────────────────────────────────────── */
+
+.portal-table-wrap {
+  border: 1px solid var(--card-edge, var(--separator));
+  border-radius: var(--radius, 10px);
+  overflow-x: auto;               /* wide tables scroll, the page never does */
+  background: var(--card-bg, var(--surface));
+}
+.portal-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.portal-table th, .portal-table td {
+  text-align: left; padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--separator);
+  vertical-align: top;
+}
+.portal-table th {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); font-weight: 600; white-space: nowrap;
+  background: var(--fill-4);
+}
+.portal-table tbody tr:last-child td { border-bottom: none; }
+.portal-table .col-narrow { white-space: nowrap; width: 1%; }
+.portal-table .col-num { text-align: right; white-space: nowrap; width: 1%; }
+.portal-table .col-actions { text-align: right; white-space: nowrap; width: 1%; }
+
+.portal-sub {
+  margin-top: 0.25rem; display: flex; flex-wrap: wrap; gap: 0.5rem;
+  color: var(--muted); font-size: 0.76rem;
+}
+.portal-ref { font-family: var(--font-mono, ui-monospace, monospace); }
+.portal-source { color: var(--text-tertiary, var(--muted)); }
+.portal-superseded { color: var(--orange, var(--amber)); }
+
+.portal-linkbtn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font: inherit; font-weight: 500; color: var(--tint); text-align: left;
+}
+.portal-linkbtn:hover { text-decoration: underline; }
+
+/* ── Pills ───────────────────────────────────────────────────────────────── */
+
+.portal-pill {
+  display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 600; white-space: nowrap;
+  border: 1px solid transparent;
+}
+/* Text darkened against its own tint so each clears 4.5:1 — the dashboard's
+   badge palette sits nearer 2.2:1, which is unreadable at this size. */
+.portal-pill.sev-critical { background: rgba(220,38,38,.14);  color: #b91c1c; border-color: rgba(220,38,38,.3); }
+.portal-pill.sev-high     { background: rgba(234,88,12,.14);  color: #c2410c; border-color: rgba(234,88,12,.3); }
+.portal-pill.sev-medium   { background: rgba(202,138,4,.16);  color: #a16207; border-color: rgba(202,138,4,.3); }
+.portal-pill.sev-low      { background: rgba(100,116,139,.16); color: #475569; border-color: rgba(100,116,139,.3); }
+.portal-pill.sev-none     { background: var(--fill-3, rgba(120,120,128,.12)); color: var(--muted); }
+.portal-pill.st-open      { background: rgba(2,132,199,.14);  color: #0369a1; border-color: rgba(2,132,199,.3); }
+.portal-pill.st-closed    { background: rgba(22,163,74,.14);  color: #15803d; border-color: rgba(22,163,74,.3); }
+
+:root[data-theme="dark"] .portal-pill.sev-critical { color: #fca5a5; }
+:root[data-theme="dark"] .portal-pill.sev-high     { color: #fdba74; }
+:root[data-theme="dark"] .portal-pill.sev-medium   { color: #fcd34d; }
+:root[data-theme="dark"] .portal-pill.sev-low      { color: #cbd5e1; }
+:root[data-theme="dark"] .portal-pill.st-open      { color: #7dd3fc; }
+:root[data-theme="dark"] .portal-pill.st-closed    { color: #86efac; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .portal-pill.sev-critical { color: #fca5a5; }
+  :root:not([data-theme="light"]) .portal-pill.sev-high     { color: #fdba74; }
+  :root:not([data-theme="light"]) .portal-pill.sev-medium   { color: #fcd34d; }
+  :root:not([data-theme="light"]) .portal-pill.sev-low      { color: #cbd5e1; }
+  :root:not([data-theme="light"]) .portal-pill.st-open      { color: #7dd3fc; }
+  :root:not([data-theme="light"]) .portal-pill.st-closed    { color: #86efac; }
+}
+
+/* ── Controls ────────────────────────────────────────────────────────────── */
+
+.portal-controls {
+  display: flex; flex-wrap: wrap; gap: 0.75rem;
+  align-items: center; margin-bottom: 1.1rem;
+}
+.portal-segmented {
+  display: inline-flex; border: 1px solid var(--border);
+  border-radius: var(--radius, 8px); overflow: hidden;
+}
+.portal-seg {
+  background: none; border: none; border-right: 1px solid var(--border);
+  color: var(--muted); font: inherit; font-size: 0.82rem;
+  padding: 0.45rem 0.8rem; cursor: pointer;
+}
+.portal-seg:last-child { border-right: none; }
+.portal-seg.is-active { background: var(--tint); color: var(--on-tint, #fff); }
+.portal-select, .portal-input {
+  background: var(--card-bg, var(--surface)); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius, 8px);
+  font: inherit; font-size: 0.85rem; padding: 0.45rem 0.65rem;
+}
+.portal-input { min-width: 200px; }
+.portal-select:focus-visible, .portal-input:focus-visible {
+  outline: 2px solid var(--logo-cyan, var(--tint)); outline-offset: 1px;
+}
+
+/* ── Empty and error states ──────────────────────────────────────────────── */
+
+.portal-empty {
+  text-align: center; padding: 3rem 1.5rem; color: var(--muted);
+  background: var(--fill-4);
+  border: 1px dashed var(--card-edge, var(--separator));
+  border-radius: var(--radius, 10px);
+}
+.portal-empty-icon { font-size: 1.75rem; opacity: 0.6; margin-bottom: 0.6rem; }
+.portal-empty-title { font-weight: 600; color: var(--text); margin: 0 0 0.35rem; }
+.portal-empty-detail { margin: 0; font-size: 0.85rem; max-width: 46ch; margin-inline: auto; }
+.portal-empty-error { border-color: var(--red); }
+.portal-empty-error .portal-empty-icon { color: var(--red); opacity: 1; }
+
+/* ── Secure Score card ───────────────────────────────────────────────────── */
+
+.portal-score-main {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 1.25rem;
+  padding-bottom: 1.1rem; border-bottom: 1px solid var(--separator);
+  margin-bottom: 1.1rem;
+}
+.portal-score-number { font-size: 3rem; font-weight: 650; line-height: 1; }
+.portal-score-number span { font-size: 1.1rem; font-weight: 500; color: var(--muted); }
+.portal-score-band { font-weight: 600; display: flex; flex-direction: column; gap: 0.2rem; }
+.portal-score-delta { font-weight: 400; font-size: 0.78rem; color: var(--muted); }
+.portal-score-spark { margin-left: auto; }
+.portal-spark { width: 240px; height: 48px; max-width: 100%; }
+.portal-score-main.tone-good { color: var(--green); }
+.portal-score-main.tone-warn { color: var(--orange, var(--amber)); }
+.portal-score-main.tone-bad  { color: var(--red); }
+/* The band colours the number and sparkline only; the labels stay body text. */
+.portal-score-band, .portal-score-number span { color: var(--text); }
+
+.portal-score-components { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.portal-score-components li { display: grid; grid-template-columns: 1fr 120px 2.5rem; align-items: center; gap: 0.75rem; }
+.portal-score-clabel { font-size: 0.85rem; }
+.portal-score-cvalue { text-align: right; font-variant-numeric: tabular-nums; font-size: 0.85rem; }
+.portal-score-bar, .portal-progress-bar {
+  display: block; height: 7px; border-radius: 999px;
+  background: var(--fill-3, rgba(120,120,128,.16)); overflow: hidden;
+}
+.portal-score-bar i, .portal-progress-bar i { display: block; height: 100%; background: currentColor; }
+.portal-score-bar.tone-good { color: var(--green); }
+.portal-score-bar.tone-warn { color: var(--orange, var(--amber)); }
+.portal-score-bar.tone-bad  { color: var(--red); }
+
+/* ── Dialog ──────────────────────────────────────────────────────────────── */
+
+.portal-dialog-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0,0,0,.45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 5vh 1rem; overflow-y: auto;
+}
+.portal-dialog-overlay[hidden] { display: none; }
+body.portal-dialog-open { overflow: hidden; }
+.portal-dialog {
+  background: var(--card-bg, var(--surface)); color: var(--text);
+  border-radius: var(--radius, 12px);
+  box-shadow: 0 20px 48px rgba(0,0,0,.28);
+  width: min(680px, 100%); padding: 1.5rem 1.6rem; position: relative;
+}
+.portal-dialog-close {
+  position: absolute; top: 0.65rem; right: 0.75rem;
+  background: none; border: none; color: var(--muted);
+  font-size: 1.5rem; line-height: 1; cursor: pointer; padding: 0.25rem 0.5rem;
+  border-radius: var(--radius, 6px);
+}
+.portal-dialog-close:hover { background: var(--fill-4); color: var(--text); }
+.portal-dialog-meta { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+.portal-dialog-title { font-size: 1.2rem; margin: 0 0 0.6rem; padding-right: 2rem; }
+.portal-dialog-summary { color: var(--muted); font-size: 0.9rem; line-height: 1.6; margin: 0 0 1rem; }
+.portal-dialog-h { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin: 1.5rem 0 0.6rem; }
+
+.portal-deflist { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.85rem; margin: 0; padding: 0.9rem 0; border-top: 1px solid var(--separator); }
+.portal-deflist dt { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.portal-deflist dd { margin: 0.2rem 0 0; font-size: 0.88rem; }
+
+.portal-timeline { list-style: none; margin: 0; padding: 0 0 0 1rem; border-left: 2px solid var(--separator); }
+.portal-timeline li { position: relative; padding: 0 0 0.9rem 0.85rem; font-size: 0.85rem; }
+.portal-timeline li::before {
+  content: ''; position: absolute; left: -1.42rem; top: 0.4rem;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--tint); border: 2px solid var(--card-bg, var(--surface));
+}
+.portal-timeline-at { display: block; color: var(--muted); font-size: 0.74rem; }
+.portal-timeline-what em { font-style: normal; color: var(--muted); }
+
+.portal-progress { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
+.portal-progress li { display: grid; grid-template-columns: 1fr 110px 3rem; align-items: center; gap: 0.7rem; font-size: 0.85rem; }
+.portal-progress-bar { color: var(--tint); }
+.portal-progress-num { text-align: right; color: var(--muted); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+
+.portal-covernote blockquote {
+  margin: 0 0 1rem; padding: 0.9rem 1.1rem;
+  background: var(--fill-4); border-radius: var(--radius, 8px);
+}
+.portal-covernote blockquote p { margin: 0 0 0.5rem; font-size: 0.9rem; line-height: 1.6; }
+.portal-covernote cite { font-style: normal; font-size: 0.76rem; color: var(--muted); }
+
+/* ── Small screens ───────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .portal-header-inner { padding: 0.75rem 1rem; }
+  .portal-user { display: none; }
+  .portal-nav { top: 57px; }
+  .portal-nav-inner, .portal-main, .portal-footer { padding-inline: 1rem; }
+  .portal-score-spark { margin-left: 0; }
+  .portal-score-components li { grid-template-columns: 1fr 70px 2.5rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-tab, .portal-seg { transition: none; }
+}
