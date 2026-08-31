@@ -421,6 +421,64 @@ function request(server, url, tenant, role) {
       client.json.clientName);
   }
 
+  // ── SQL that only a database would reject ──────────────────────────────
+  section('no ORDER BY uses an output alias inside an expression');
+  {
+    /*
+     * THE BUG THIS CATCHES, which shipped and reached a user:
+     *
+     *   SELECT COUNT(*) FILTER (…) AS completed, …
+     *    ORDER BY completed::float / NULLIF(COUNT(*), 0)
+     *
+     * Postgres accepts a bare output alias in ORDER BY but NOT one inside an
+     * expression — it goes looking for a real column called `completed`, finds
+     * none, and raises 42703. The handler then reported "this section is not
+     * available yet", which reads as a missing migration, so the actual cause
+     * was invisible.
+     *
+     * Every other suite passed: the stubbed pool never parses SQL, so this
+     * class of defect is exactly what no database costs. A static check is a
+     * poor substitute for running the query and should be replaced by one.
+     */
+    const src = require('fs').readFileSync(
+      path.join(ROOT, 'lib', 'portal-routes.js'), 'utf8');
+
+    // Template literals holding SQL, minus comment lines.
+    const queries = (src.match(/`[^`]*SELECT[\s\S]*?`/gi) || [])
+      .map(q => q.split('\n').filter(l => !/^\s*--/.test(l)).join('\n'));
+    check('SQL was found to inspect', queries.length >= 5, queries.length);
+
+    const offenders = [];
+    queries.forEach((q) => {
+      const aliases = (q.match(/\bAS\s+"?([a-z_][a-z0-9_]*)"?/gi) || [])
+        .map(a => a.replace(/\bAS\s+"?/i, '').replace(/"$/, ''));
+      const order = (q.match(/ORDER BY([\s\S]*?)(?:LIMIT|$)/i) || [])[1] || '';
+      aliases.forEach((a) => {
+        // A bare alias is legal; an alias with anything operator-like attached
+        // to it is not.
+        const bad = new RegExp('\\b' + a + '\\b\\s*(::|[+\\-*/])');
+        if (bad.test(order)) offenders.push(a + ' in "' + order.trim().slice(0, 60) + '"');
+      });
+    });
+    check('none found', offenders.length === 0, offenders.join(' | '));
+  }
+
+  section('a database error says which kind it is');
+  {
+    const routesSrc = require('fs').readFileSync(
+      path.join(ROOT, 'lib', 'portal-routes.js'), 'utf8');
+    // The failure above was silent. An undefined column is almost always our
+    // bug; an undefined table is almost always an un-run migration; and neither
+    // should reach a log as nothing at all.
+    check('the error is logged, not swallowed',
+      /console\.error\('\[portal\]/.test(routesSrc));
+    check('the log distinguishes a missing column from a missing table',
+      /bug in this query/.test(routesSrc) && /migration has not been run/.test(routesSrc));
+    check('staff previewing see the real reason',
+      /req\.session\.role !== 'client'/.test(routesSrc));
+    check('but a client does not', /: ''/.test(routesSrc));
+  }
+
   server.close();
   done();
 })();
