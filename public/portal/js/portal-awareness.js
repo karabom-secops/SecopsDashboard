@@ -10,6 +10,11 @@
 
   var P = window.Portal;
 
+  // Held so filtering never refetches: the whole list is already in memory and
+  // a keystroke should not cost a round trip.
+  var _people = [];
+  var _q = '';
+
   function bar(pct) {
     var accent = pct >= 90 ? 'green' : pct >= 70 ? 'amber' : 'red';
     return '<span class="portal-bar accent-' + accent + '">' +
@@ -49,32 +54,27 @@
         sub: unit },
     ];
 
-    var people = data.people || [];
+    _people = data.people || [];
+    _q = '';
+
     var table = '';
-    if (people.length) {
-      var hasPct = people[0].pct !== undefined;
+    if (_people.length) {
       // The list is ordered least-covered first. Without saying so, the top of
       // the table is all zeroes and reads as "nobody has done anything" — which
       // is exactly how it was first reported.
       table = '<h3 class="portal-card-title">By person</h3>' +
         '<p class="portal-note">Least complete first, so whoever needs ' +
           'chasing is at the top.</p>' +
-        P.table([
-          { label: 'Name', raw: function (r) {
-              return P.esc(r.name || '—') +
-                (r.email ? '<div class="cell-sub"><span>' + P.esc(r.email) + '</span></div>' : '');
-            } },
-          hasPct
-            ? { label: 'Completed', cls: 'col-narrow', raw: function (r) {
-                return P.esc(r.completed + ' of ' + r.assigned); } }
-            : { label: 'Outstanding', cls: 'col-num', raw: function (r) {
-                return P.esc(r.outstanding); } },
-          hasPct
-            ? { label: 'Progress', cls: 'col-narrow', raw: function (r) { return bar(r.pct); } }
-            : { label: '', cls: 'col-narrow', raw: function () { return ''; } },
-        ], people, { emptyTitle: 'No individual records' }) +
-        (people.length >= 500
-          ? '<p class="portal-note">Showing the first 500 people.</p>' : '');
+        '<div class="filter-bar">' +
+          '<input id="awSearch" class="form-input table-search-input" type="search"' +
+            ' placeholder="Search by name or email"' +
+            ' aria-label="Search people" aria-controls="awPeople" />' +
+          '<span id="awCount" class="portal-count" role="status" aria-live="polite"></span>' +
+        '</div>' +
+        // Only THIS div is re-rendered while typing. Rebuilding the wrapper
+        // would destroy and recreate the input, losing focus and caret after
+        // the first keystroke.
+        '<div id="awPeople"></div>';
     }
 
     el.innerHTML = head + P.statCards(cards) +
@@ -87,6 +87,63 @@
           'run training programme and have not been verified against records ' +
           'held by us.</p>'
         : '');
+
+    if (_people.length) {
+      refreshPeople();
+      var input = document.getElementById('awSearch');
+      if (input) input.addEventListener('input', function () {
+        _q = input.value;
+        refreshPeople();
+      });
+    }
+  }
+
+  /** Case-insensitive match on the two things anyone would type. */
+  function matches(p) {
+    if (!_q) return true;
+    var q = _q.trim().toLowerCase();
+    if (!q) return true;
+    return String(p.name || '').toLowerCase().indexOf(q) >= 0 ||
+           String(p.email || '').toLowerCase().indexOf(q) >= 0;
+  }
+
+  function refreshPeople() {
+    var host = document.getElementById('awPeople');
+    if (!host) return;
+
+    var rows = _people.filter(matches);
+    var hasPct = _people[0] && _people[0].pct !== undefined;
+
+    var countEl = document.getElementById('awCount');
+    if (countEl) {
+      countEl.textContent = _q.trim()
+        ? rows.length + ' of ' + _people.length + ' people'
+        : _people.length + ' people';
+    }
+
+    host.innerHTML = P.table([
+      { label: 'Name', raw: function (r) {
+          return P.esc(r.name || '—') +
+            (r.email ? '<div class="cell-sub"><span>' + P.esc(r.email) + '</span></div>' : '');
+        } },
+      hasPct
+        ? { label: 'Completed', cls: 'col-narrow', raw: function (r) {
+            return P.esc(r.completed + ' of ' + r.assigned); } }
+        : { label: 'Outstanding', cls: 'col-num', raw: function (r) {
+            return P.esc(r.outstanding); } },
+      hasPct
+        ? { label: 'Progress', cls: 'col-narrow', raw: function (r) { return bar(r.pct); } }
+        : { label: '', cls: 'col-narrow', raw: function () { return ''; } },
+    ], rows, {
+      emptyTitle: _q.trim() ? 'Nobody matches that search' : 'No individual records',
+      emptyDetail: _q.trim() ? 'Try part of a name or an email address.' : '',
+    }) +
+    // The server caps the list, so a search that finds nothing may simply be
+    // looking past the cap rather than at someone who is not enrolled.
+    (_people.length >= 500
+      ? '<p class="portal-note">Showing the first 500 people, least complete ' +
+        'first. Anyone beyond that is not searchable here.</p>'
+      : '');
   }
 
   window.PortalAwareness = {

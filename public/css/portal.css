@@ -120,6 +120,10 @@
   margin-bottom: 1.25rem;
 }
 .chip-row { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; }
+/* .form-input is width:100%, so a search box that is the only control in the
+   bar stretched the full row and pushed its result count onto the next line.
+   Shrinkable, so it still collapses gracefully on a narrow screen. */
+.filter-bar .table-search-input { flex: 0 1 22rem; min-width: 12rem; }
 
 /* ── Score readout ───────────────────────────────────────────────────────── */
 
@@ -176,6 +180,48 @@
   color: var(--muted);
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Incident detail dialog ──────────────────────────────────────────────── */
+
+/*
+ * The shared .modal-overlay is a BOTTOM SHEET: align-items:flex-end, top-only
+ * corner radius, and a rise-from-below animation. That is the right idiom on a
+ * phone and the wrong one on a desktop, where it sits flush against the bottom
+ * edge with no visible lower boundary and reads as a panel hanging off the
+ * screen — which is exactly how it was reported.
+ *
+ * From 720px up the portal's dialog is centred instead, with a real gap on all
+ * four sides so its edges are visible and it is obviously a complete thing.
+ * Below that the sheet behaviour is left alone, because there it is correct.
+ *
+ * Scoped to #portalDialog on purpose: nine dashboard modals share these
+ * classes, and re-idioming all of them is not this change's business.
+ */
+@media (min-width: 720px) {
+  #portalDialog {
+    align-items: center;
+    padding: 2rem 1rem;
+  }
+  #portalDialog .modal-box {
+    border-radius: var(--radius-sheet, 14px);
+    /* Fits the padding above, so the dialog can never reach either edge. */
+    max-height: calc(100vh - 4rem);
+    animation: none;             /* rising from below makes no sense centred */
+  }
+  /* The drag grabber is a sheet affordance; centred there is nothing to drag. */
+  #portalDialog .modal-box::before { display: none; }
+}
+
+/* The body already scrolls (styles.css sets overflow-y:auto); this makes the
+   fact visible, so a clipped list reads as "more below" rather than "broken". */
+#portalDialog .modal-body {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #portalDialog .modal-box { animation: none; }
 }
 
 /* ── Incident detail ─────────────────────────────────────────────────────── */
@@ -247,4 +293,13 @@
   .portal-client-chip { display: none; }
   .portal-score-spark { margin-left: 0; }
   .portal-components li { grid-template-columns: 1fr 70px 3rem; }
+}
+
+/* Result count beside a search box. Announced politely so a screen-reader user
+   hears how many rows survived their query rather than only seeing it. */
+.portal-count {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
