@@ -2335,8 +2335,27 @@ window.ReportSections = (function () {
   // ══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Phishing simulation outcomes. `clicked_at` is the only behavioural signal
-   * in the awareness feed — everything else is completion tracking.
+   * Did this person click? true, false, or null when the export did not say.
+   *
+   * `clicked` is authoritative; `clicked_at` only ever proves a click, and its
+   * absence proves nothing on rows written before
+   * db/migrate-awareness-clicked.sql — the old parser left it NULL for a real
+   * non-click and for a value it could not read alike.
+   */
+  function clickState(s) {
+    if (!s) return null;
+    if (s.clicked === true || s.clicked === false) return s.clicked;
+    if (s.clicked_at) return true;
+    return null;
+  }
+
+  /**
+   * Phishing simulation outcomes.
+   *
+   * Rows whose click state is unknown are excluded from the denominator as
+   * well as the numerator. This slide goes to a board: a rate computed over
+   * rows we never had an answer for would be presented as fact, and the most
+   * likely direction of that error is flattering.
    */
   function phishingMetrics(sessions) {
     var sims = (sessions || []).filter(function (s) {
@@ -2347,11 +2366,14 @@ window.ReportSections = (function () {
     });
     if (!sims.length && !remed.length) return null;
 
-    var clicked = sims.filter(function (s) { return !!s.clicked_at; }).length;
+    var known   = sims.filter(function (s) { return clickState(s) !== null; });
+    var clicked = known.filter(function (s) { return clickState(s) === true; }).length;
     return {
       sent:      sims.length,
+      measured:  known.length,
+      unknown:   sims.length - known.length,
       clicked:   clicked,
-      clickPct:  sims.length ? completionPct(clicked, sims.length) : null,
+      clickPct:  known.length ? completionPct(clicked, known.length) : null,
       assigned:  remed.length,
       completed: remed.filter(function (s) { return s.status === 'Complete'; }).length,
     };
@@ -2369,11 +2391,16 @@ window.ReportSections = (function () {
         buckets[key] = { sentDate: day, title: s.title || '(untitled)', sent: 0, clicked: 0 };
         order.push(key);
       }
+      var state = clickState(s);
+      if (state === null) return;          // not measured — not in either total
       buckets[key].sent++;
-      if (s.clicked_at) buckets[key].clicked++;
+      if (state === true) buckets[key].clicked++;
     });
 
     return order.map(function (k) { return buckets[k]; })
+      // A campaign where nothing was measured has no rate to report; dropping
+      // it beats printing a 0% next to a real campaign's 14%.
+      .filter(function (c) { return c.sent > 0; })
       .sort(function (a, b) { return a.sentDate < b.sentDate ? 1 : -1; })
       .slice(0, limit || 3)
       .map(function (c) { c.clickPct = completionPct(c.clicked, c.sent); return c; });

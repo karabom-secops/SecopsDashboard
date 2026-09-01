@@ -17,6 +17,24 @@
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  /**
+   * Did this person click? true, false, or null when the export did not say.
+   *
+   * `clicked` is authoritative when present; `clicked_at` is a fallback for
+   * rows written before db/migrate-awareness-clicked.sql, and only ever proves
+   * a click — its absence there proves nothing, because the old parser left it
+   * NULL both for a genuine non-click and for a value it could not read.
+   *
+   * The tri-state is the point. Counting "not reported" as "did not click" is
+   * how a broken import reports a perfect score.
+   */
+  function clickState(s) {
+    if (!s) return null;
+    if (s.clicked === true || s.clicked === false) return s.clicked;
+    if (s.clicked_at) return true;
+    return null;
+  }
+
   // ── Tenant query param helper ───────────────────────────────────────────────
   function tenantParam(sep) {
     var isSA = window.currentUser && window.currentUser.role === 'superadmin';
@@ -390,17 +408,31 @@
       ? Math.round(completedTrain / trainSessions.length * 100)
       : 0;
 
-    // Phishing click rate: unique users clicked / unique users sent at least one phishing sim
+    /* Phishing click rate: unique users who clicked / unique users sent a sim.
+     *
+     * `clicked` is the fact and `clicked_at` is only the time, so the fact is
+     * what gets counted. Reading a click as !!clicked_at was half of why this
+     * card once showed 99%: the parser was manufacturing timestamps out of a
+     * yes/no column, and the value meaning "no" produced the year 1999.
+     *
+     * A row whose click state is unknown is excluded from BOTH sides rather
+     * than counted as a non-click, so a reporting gap cannot masquerade as
+     * good news. */
     var phishingSims = sessions.filter(function (s) { return s.session_type === 'Phishing Simulation'; });
-    var sentPhishEmails   = new Set(phishingSims.map(function (s) { return (s.user_email || '').toLowerCase(); }));
+    var knownSims = phishingSims.filter(function (s) { return clickState(s) !== null; });
+
+    var sentPhishEmails = new Set(knownSims.map(function (s) {
+      return (s.user_email || '').toLowerCase();
+    }));
     var clickedPhishEmails = new Set(
-      phishingSims
-        .filter(function (s) { return s.clicked_at; })
+      knownSims
+        .filter(function (s) { return clickState(s) === true; })
         .map(function (s) { return (s.user_email || '').toLowerCase(); })
     );
+    var unknownSims = phishingSims.length - knownSims.length;
     var phishClickRate = sentPhishEmails.size > 0
       ? Math.round(clickedPhishEmails.size / sentPhishEmails.size * 100)
-      : 0;
+      : null;
 
     // Avg quiz score (only rows where quiz_score is a number)
     var quizRows = sessions.filter(function (s) { return s.quiz_score !== null && s.quiz_score !== undefined; });
@@ -411,7 +443,15 @@
     el.innerHTML =
       _card('Total Employees',          totalUsers,                       'accent-blue',   '') +
       _card('Training Completion Rate', compRate + '%',                   'accent-green',  completedTrain + ' / ' + trainSessions.length + ' sessions') +
-      _card('Phishing Click Rate',      phishClickRate + '%',             'accent-red',    clickedPhishEmails.size + ' / ' + sentPhishEmails.size + ' employees') +
+      _card('Phishing Click Rate',
+            phishClickRate === null ? 'Not reported' : phishClickRate + '%',
+            'accent-red',
+            phishClickRate === null
+              ? (phishingSims.length
+                  ? 'This export carried no click result'
+                  : 'No phishing simulations in this export')
+              : clickedPhishEmails.size + ' / ' + sentPhishEmails.size + ' employees' +
+                (unknownSims ? ' · ' + unknownSims + ' not reported' : '')) +
       _card('Avg Quiz Score',           avgQuiz + (avgQuiz !== 'N/A' ? '%' : ''), 'accent-amber', quizRows.length + ' quiz attempts');
   }
 
@@ -519,8 +559,9 @@
     if (!tbody) return;
 
     var sessions = _data.sessions || [];
+    // A click is a click whether or not the export dated it.
     var phishing = sessions.filter(function (s) {
-      return s.session_type === 'Phishing Simulation' && s.clicked_at;
+      return s.session_type === 'Phishing Simulation' && clickState(s) === true;
     });
 
     // Group by user email — count clicks
@@ -536,11 +577,22 @@
             : '\u2014',
           clicks:   0,
           lastSim:  null,
+          // Kept as a Date so the comparison below is date-to-date. It used to
+          // compare against lastSim, which holds a TITLE — so the comparison
+          // was always false and the column showed the first sim, not the last.
+          lastClickAt: null,
         };
       }
       byUser[key].clicks++;
-      var cd = new Date(s.clicked_at);
-      if (!byUser[key].lastSim || cd > new Date(byUser[key].lastSim)) {
+      // Only a dated click can order the list; a flag-only row still counts
+      // toward the total but cannot claim to be the most recent one.
+      if (s.clicked_at) {
+        var cd = new Date(s.clicked_at);
+        if (!byUser[key].lastClickAt || cd > byUser[key].lastClickAt) {
+          byUser[key].lastClickAt = cd;
+          byUser[key].lastSim = s.title || '';
+        }
+      } else if (!byUser[key].lastSim) {
         byUser[key].lastSim = s.title || '';
       }
     });

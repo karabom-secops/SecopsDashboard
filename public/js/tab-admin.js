@@ -241,7 +241,11 @@
         const suspended = u.is_active === false;
         const stateTags = [
           suspended ? '<span class="role-badge state-suspended">Suspended</span>' : '',
-          u.must_change_password ? '<span class="role-badge state-pending">Password reset</span>' : '',
+          // Only staff are ever asked to change a password at sign-in. A client
+          // cannot — resets are admin-only — so the badge would promise a step
+          // that never comes.
+          (u.must_change_password && u.role !== 'client')
+            ? '<span class="role-badge state-pending">Password reset</span>' : '',
           // Only meaningful where MFA is actually required of the role.
           (u.role === 'client' || u.role === 'superadmin')
             ? (u.totp_enabled

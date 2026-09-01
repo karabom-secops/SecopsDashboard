@@ -1,0 +1,1124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>html{color-scheme:light dark}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>SecOps Dashboard Architecture</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  /* ── Tokens ────────────────────────────────────────────────────────────
+     Complete light palette on bare :root, so the un-stamped "system" state
+     resolves. Dark redefines tokens only — never component colours. */
+  :root {
+    --ground:      #f1f4f8;
+    --surface:     #ffffff;
+    --surface-2:   #e8edf3;
+    --ink:         #132234;
+    --ink-2:       #33475c;
+    --muted:       #64798f;
+    --rule:        #d3dce6;
+    --accent:      #1560d0;
+    --accent-soft: #e4edfb;
+    --deny:        #a8354a;
+    --deny-soft:   #f8e6e9;
+    --caution:     #8a5a08;
+    --caution-soft:#fbf0d9;
+
+    --fig-box:     #ffffff;
+    --fig-band:    #eef2f7;
+    --fig-line:    #94a7ba;
+
+    --shadow: 0 1px 2px rgba(19,34,52,.06), 0 8px 24px -16px rgba(19,34,52,.28);
+
+    --measure: 68ch;
+    --wide: 1120px;
+
+    --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --f-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0c141e;
+      --surface:     #141e2a;
+      --surface-2:   #1c2836;
+      --ink:         #dee7f0;
+      --ink-2:       #b3c3d3;
+      --muted:       #869bb1;
+      --rule:        #2a3949;
+      --accent:      #5a9ffa;
+      --accent-soft: #16283f;
+      --deny:        #e5808f;
+      --deny-soft:   #2e1a20;
+      --caution:     #d6a544;
+      --caution-soft:#2b2314;
+
+      --fig-box:     #17222f;
+      --fig-band:    #1c2836;
+      --fig-line:    #5c7188;
+
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.9);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0c141e;
+    --surface:     #141e2a;
+    --surface-2:   #1c2836;
+    --ink:         #dee7f0;
+    --ink-2:       #b3c3d3;
+    --muted:       #869bb1;
+    --rule:        #2a3949;
+    --accent:      #5a9ffa;
+    --accent-soft: #16283f;
+    --deny:        #e5808f;
+    --deny-soft:   #2e1a20;
+    --caution:     #d6a544;
+    --caution-soft:#2b2314;
+
+    --fig-box:     #17222f;
+    --fig-band:    #1c2836;
+    --fig-line:    #5c7188;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.9);
+  }
+
+  /* ── Base ──────────────────────────────────────────────────────────── */
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: clamp(2rem, 5vw, 4.5rem) clamp(1.1rem, 4vw, 2.5rem) 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3.25rem;
+  }
+
+  /* ── Masthead ──────────────────────────────────────────────────────── */
+  .masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding-bottom: 2rem;
+    border-bottom: 2px solid var(--ink);
+  }
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: .74rem;
+    font-weight: 500;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(2.1rem, 5.5vw, 3.4rem);
+    line-height: 1.04;
+    letter-spacing: -.022em;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .standfirst {
+    max-width: var(--measure);
+    font-size: 1.075rem;
+    color: var(--ink-2);
+    margin: 0;
+  }
+
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem 1.75rem;
+    margin: .75rem 0 0;
+    padding: 0;
+    list-style: none;
+    font-family: var(--f-mono);
+    font-size: .78rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .facts b { color: var(--ink); font-weight: 500; }
+
+  /* ── Sections ──────────────────────────────────────────────────────── */
+  section { display: flex; flex-direction: column; gap: 1.15rem; }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(1.4rem, 3vw, 1.85rem);
+    letter-spacing: -.015em;
+    line-height: 1.15;
+    text-wrap: balance;
+    margin: 0;
+  }
+  h3 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.05rem;
+    letter-spacing: -.008em;
+    margin: 0;
+  }
+  p { max-width: var(--measure); margin: 0; }
+  p + p { margin-top: -.25rem; }
+
+  code {
+    font-family: var(--f-mono);
+    font-size: .875em;
+    background: var(--surface-2);
+    padding: .1em .38em;
+    border-radius: 3px;
+    overflow-wrap: anywhere;
+  }
+
+  strong { font-weight: 600; }
+
+  /* ── Figures ───────────────────────────────────────────────────────── */
+  figure {
+    margin: .5rem 0;
+    padding: 1.5rem 1.25rem 1.25rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    box-shadow: var(--shadow);
+    overflow-x: auto;
+  }
+  figure svg { display: block; width: 100%; min-width: 620px; height: auto; }
+  figcaption {
+    margin-top: 1.15rem;
+    padding-top: .9rem;
+    border-top: 1px solid var(--rule);
+    font-size: .875rem;
+    color: var(--muted);
+    max-width: 78ch;
+  }
+  figcaption b { color: var(--ink-2); font-weight: 600; }
+
+  /* SVG primitives — no <style> inside the SVG, so classes live here. */
+  .d-box   { fill: var(--fig-box); stroke: var(--fig-line); stroke-width: 1.5; }
+  .d-band  { fill: var(--fig-band); stroke: var(--fig-line); stroke-width: 1.5; }
+  .d-hero  { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.75; }
+  .d-deny-box { fill: var(--deny-soft); stroke: var(--deny); stroke-width: 1.5; }
+  .d-warn-box { fill: var(--caution-soft); stroke: var(--caution); stroke-width: 1.5; }
+  .d-shell { fill: none; stroke: var(--fig-line); stroke-width: 1.5; stroke-dasharray: 5 4; }
+
+  .d-t   { fill: var(--ink); font-family: var(--f-body); font-size: 13.5px; font-weight: 600; }
+  .d-s   { fill: var(--ink-2); font-family: var(--f-body); font-size: 12px; font-weight: 400; }
+  .d-m   { fill: var(--muted); font-family: var(--f-mono); font-size: 11px; }
+  .d-mi  { fill: var(--ink); font-family: var(--f-mono); font-size: 11.5px; font-weight: 500; }
+  .d-num { fill: var(--muted); font-family: var(--f-mono); font-size: 11px; font-weight: 500; }
+  .d-acc { fill: var(--accent); font-family: var(--f-mono); font-size: 11px; font-weight: 500; }
+  .d-dny { fill: var(--deny); font-family: var(--f-mono); font-size: 11px; font-weight: 500; }
+  .d-wrn { fill: var(--caution); font-family: var(--f-mono); font-size: 11px; font-weight: 500; }
+
+  .d-line { stroke: var(--fig-line); stroke-width: 1.5; fill: none; }
+  .d-line-a { stroke: var(--accent); stroke-width: 2; fill: none; }
+  .d-line-d { stroke: var(--deny); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+  .d-rule { stroke: var(--rule); stroke-width: 1; }
+
+  .ah   { fill: var(--fig-line); }
+  .ah-a { fill: var(--accent); }
+  .ah-d { fill: var(--deny); }
+
+  /* ── Note blocks ───────────────────────────────────────────────────── */
+  .note {
+    max-width: var(--measure);
+    border-left: 3px solid var(--caution);
+    background: var(--caution-soft);
+    padding: .9rem 1.1rem;
+    border-radius: 0 3px 3px 0;
+    font-size: .94rem;
+    color: var(--ink-2);
+  }
+  .note strong { color: var(--ink); }
+
+  /* ── Table ─────────────────────────────────────────────────────────── */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: .9rem; }
+  th, td { text-align: left; padding: .72rem .95rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  thead th {
+    font-family: var(--f-mono);
+    font-size: .72rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    background: var(--surface-2);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td code { background: transparent; padding: 0; color: var(--accent); }
+  td:first-child { white-space: nowrap; }
+
+  /* ── Sharp-edge list ───────────────────────────────────────────────── */
+  .edges { display: grid; gap: .85rem; margin: 0; padding: 0; list-style: none; }
+  .edges li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: .9rem;
+    align-items: start;
+    padding: .9rem 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--deny);
+    border-radius: 0 4px 4px 0;
+    font-size: .93rem;
+    color: var(--ink-2);
+  }
+  .edges .tag {
+    font-family: var(--f-mono);
+    font-size: .68rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--deny);
+    padding-top: .28rem;
+    white-space: nowrap;
+  }
+  .edges b { color: var(--ink); font-weight: 600; display: block; }
+
+  .colophon {
+    font-family: var(--f-mono);
+    font-size: .76rem;
+    color: var(--muted);
+    border-top: 1px solid var(--rule);
+    padding-top: 1.25rem;
+    max-width: var(--measure);
+  }
+
+  @media (max-width: 620px) {
+    .edges li { grid-template-columns: 1fr; gap: .35rem; }
+    .edges .tag { padding-top: 0; }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">Reflex Solutions &middot; SecOps Dashboard</p>
+    <h1>How the SecOps Dashboard is put together</h1>
+    <p class="standfirst">
+      One Node process serves two audiences that must never see each other's data:
+      Reflex analysts, who see every client, and clients themselves, who see only
+      their own. Everything below is about how that separation is enforced, and
+      where it still depends on someone remembering.
+    </p>
+    <ul class="facts">
+      <li><b>Express 4</b> + PostgreSQL</li>
+      <li><b>server.js</b> — 5,790 lines</li>
+      <li><b>24</b> lib modules</li>
+      <li><b>35</b> tables</li>
+      <li><b>25</b> browser tab modules</li>
+      <li>no build step</li>
+    </ul>
+  </header>
+
+  <!-- ── 1. The shape of it ────────────────────────────────────────────── -->
+  <section>
+    <h2>Two surfaces, one process</h2>
+    <p>
+      There is no separate client app. <code>public/portal.html</code> and
+      <code>public/index.html</code> are served by the same Express instance, from
+      the same database, and share a stylesheet — the portal deliberately reuses
+      the dashboard's header, drawer and tab chrome so it reads as one product.
+      What separates them is not deployment. It is a single middleware.
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 1060 560" role="img"
+           aria-label="Two browser surfaces, the staff dashboard and the client portal, both reach one Express process; a gate chain routes staff requests to the staff API and client requests to the portal API, and both read the same PostgreSQL database with tenant_id in the WHERE clause.">
+        <defs>
+          <marker id="f1ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah" points="0,0 10,5 0,10" />
+          </marker>
+          <marker id="f1aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah-a" points="0,0 10,5 0,10" />
+          </marker>
+        </defs>
+
+        <!-- surfaces -->
+        <rect class="d-box" x="120" y="30" width="340" height="96" rx="4" />
+        <text class="d-t" x="140" y="60">Staff dashboard</text>
+        <text class="d-m" x="140" y="80">public/index.html</text>
+        <text class="d-s" x="140" y="101">25 tab modules &middot; every client</text>
+
+        <rect class="d-hero" x="600" y="30" width="340" height="96" rx="4" />
+        <text class="d-t" x="620" y="60">Client portal</text>
+        <text class="d-m" x="620" y="80">public/portal.html</text>
+        <text class="d-s" x="620" y="101">6 views &middot; read-only &middot; one client</text>
+
+        <!-- server shell -->
+        <rect class="d-shell" x="60" y="176" width="940" height="250" rx="6" />
+        <text class="d-m" x="76" y="197">Node / Express &mdash; server.js</text>
+
+        <rect class="d-band" x="92" y="212" width="876" height="60" rx="4" />
+        <text class="d-t" x="530" y="238" text-anchor="middle">The gate chain</text>
+        <text class="d-m" x="530" y="257" text-anchor="middle">session &rarr; requireAuth &rarr; requireActiveUser &rarr; requirePortalConfinement &rarr; pageGate</text>
+
+        <rect class="d-box" x="92" y="306" width="420" height="100" rx="4" />
+        <text class="d-t" x="112" y="333">Staff API</text>
+        <text class="d-m" x="112" y="353">/api/*</text>
+        <text class="d-s" x="112" y="376">15 tenant resolvers, one per route family</text>
+        <text class="d-s" x="112" y="394">superadmin may pass ?tenantId=</text>
+
+        <rect class="d-hero" x="548" y="306" width="420" height="100" rx="4" />
+        <text class="d-t" x="568" y="333">Portal API</text>
+        <text class="d-m" x="568" y="353">/api/portal/*</text>
+        <text class="d-s" x="568" y="376">1 tenant resolver, session only</text>
+        <text class="d-s" x="568" y="394">no route reads a tenantId parameter</text>
+
+        <!-- database -->
+        <rect class="d-box" x="300" y="480" width="460" height="64" rx="4" />
+        <text class="d-t" x="530" y="508" text-anchor="middle">PostgreSQL</text>
+        <text class="d-m" x="530" y="528" text-anchor="middle">35 tables &middot; sessions &middot; every tenant side by side</text>
+
+        <!-- arrows in -->
+        <line class="d-line" x1="290" y1="126" x2="290" y2="206" marker-end="url(#f1ah)" />
+        <text class="d-m" x="300" y="170">/secops/api/&hellip;</text>
+
+        <line class="d-line-a" x1="770" y1="126" x2="770" y2="206" marker-end="url(#f1aha)" />
+        <text class="d-acc" x="780" y="170">/secops/api/portal/&hellip;</text>
+
+        <!-- gate to APIs -->
+        <line class="d-line" x1="302" y1="272" x2="302" y2="300" marker-end="url(#f1ah)" />
+        <text class="d-m" x="312" y="292">staff role</text>
+
+        <line class="d-line-a" x1="758" y1="272" x2="758" y2="300" marker-end="url(#f1aha)" />
+        <text class="d-acc" x="768" y="292">role: client</text>
+
+        <!-- APIs to db -->
+        <path class="d-line" d="M 340 406 L 400 474" marker-end="url(#f1ah)" />
+        <path class="d-line-a" d="M 720 406 L 660 474" marker-end="url(#f1aha)" />
+        <text class="d-mi" x="530" y="452" text-anchor="middle">SQL &mdash; tenant_id in the WHERE clause</text>
+      </svg>
+      <figcaption>
+        Both surfaces enter through the same chain. The portal's isolation is
+        <b>structural</b>, not per-route: its one resolver reads
+        <code>req.session.tenantId</code> and nothing else, so there is no
+        escape hatch anyone can forget to close.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ── 2. Hosting ────────────────────────────────────────────────────── -->
+  <section>
+    <h2>Where it actually runs</h2>
+    <p>
+      One host, one Node process, nginx in front of it. There is no container, no
+      orchestrator, and no process manager in the repository — <code>npm start</code>
+      is <code>node server.js</code>. Everything below is what the code itself
+      asserts about its environment: <code>trust proxy 1</code>, a
+      <code>/secops</code> base path, a Postgres pool, and a data directory it
+      writes to.
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 1060 620" role="img"
+           aria-label="Browsers reach nginx over HTTPS at secops.reflex.co.za; nginx terminates TLS, strips the /secops prefix and proxies to a single Node process on localhost port 3000. That process talks to PostgreSQL and a local data directory on the same host, and makes outbound calls to Arctic Wolf, SentinelOne, Wazuh and an optional SAML identity provider.">
+        <defs>
+          <marker id="f6ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah" points="0,0 10,5 0,10" />
+          </marker>
+          <marker id="f6aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah-a" points="0,0 10,5 0,10" />
+          </marker>
+        </defs>
+
+        <!-- browsers -->
+        <rect class="d-box" x="150" y="18" width="400" height="66" rx="4" />
+        <text class="d-t" x="350" y="46" text-anchor="middle">Staff and client browsers</text>
+        <text class="d-m" x="350" y="68" text-anchor="middle">every page carries &lt;base href="/secops/"&gt;</text>
+
+        <line class="d-line-a" x1="350" y1="84" x2="350" y2="164" marker-end="url(#f6aha)" />
+        <text class="d-acc" x="362" y="120">HTTPS 443</text>
+        <text class="d-m" x="362" y="138">secops.reflex.co.za</text>
+
+        <!-- host boundary -->
+        <rect class="d-shell" x="40" y="140" width="620" height="440" rx="6" />
+        <text class="d-m" x="56" y="162">ONE HOST</text>
+
+        <!-- nginx -->
+        <rect class="d-box" x="68" y="176" width="564" height="80" rx="4" />
+        <text class="d-t" x="88" y="204">nginx</text>
+        <text class="d-s" x="88" y="226">terminates TLS &middot; strips /secops/ &middot; forwards the client IP</text>
+        <text class="d-m" x="88" y="246">app.set('trust proxy', 1) is what makes that IP trustworthy</text>
+
+        <line class="d-line-a" x1="350" y1="256" x2="350" y2="296" marker-end="url(#f6aha)" />
+        <text class="d-mi" x="362" y="282">proxy_pass &rarr; 127.0.0.1:3000</text>
+
+        <!-- node -->
+        <rect class="d-hero" x="68" y="300" width="564" height="152" rx="4" />
+        <text class="d-t" x="88" y="328">node server.js &mdash; a single process</text>
+        <text class="d-s" x="88" y="350">PORT 3000, bound behind nginx. No cluster, no container, no restart supervisor in the repo.</text>
+
+        <rect class="d-band" x="90" y="366" width="520" height="70" rx="4" />
+        <text class="d-t" x="106" y="392">In-process timers</text>
+        <text class="d-s" x="106" y="412">integration sync &middot; EDR sync &middot; Wazuh rollups &middot; report-archive prune</text>
+        <text class="d-m" x="106" y="429">they run because the process is up &mdash; there is no scheduler outside it</text>
+
+        <!-- stores -->
+        <rect class="d-box" x="68" y="488" width="270" height="76" rx="4" />
+        <text class="d-t" x="86" y="514">PostgreSQL</text>
+        <text class="d-m" x="86" y="533">127.0.0.1:5432</text>
+        <text class="d-s" x="86" y="553">tenant data and the sessions table</text>
+
+        <rect class="d-box" x="362" y="488" width="270" height="76" rx="4" />
+        <text class="d-t" x="380" y="514">data/ on local disk</text>
+        <text class="d-m" x="380" y="533">reports/ &middot; weeks.json</text>
+        <text class="d-s" x="380" y="553">outside public/, deliberately</text>
+
+        <line class="d-line" x1="203" y1="452" x2="203" y2="482" marker-end="url(#f6ah)" />
+        <line class="d-line" x1="497" y1="452" x2="497" y2="482" marker-end="url(#f6ah)" />
+
+        <!-- external -->
+        <rect class="d-box" x="700" y="300" width="330" height="100" rx="4" />
+        <text class="d-t" x="718" y="328">Managed-service APIs</text>
+        <text class="d-s" x="718" y="350">Arctic Wolf &middot; SentinelOne &middot; Wazuh</text>
+        <text class="d-m" x="718" y="370">API keys encrypted at rest in the</text>
+        <text class="d-m" x="718" y="387">integrations table, never in .env</text>
+
+        <rect class="d-box" x="700" y="424" width="330" height="76" rx="4" />
+        <text class="d-t" x="718" y="450">SAML identity provider</text>
+        <text class="d-s" x="718" y="472">optional &mdash; off unless SAML_ENABLED</text>
+        <text class="d-m" x="718" y="491">local password + TOTP otherwise</text>
+
+        <line class="d-line" x1="632" y1="340" x2="694" y2="340" marker-end="url(#f6ah)" />
+        <text class="d-m" x="640" y="330">pull</text>
+        <path class="d-line" d="M 632 410 L 664 410 L 664 462 L 694 462" marker-end="url(#f6ah)" />
+
+        <line class="d-rule" x1="40" y1="596" x2="1030" y2="596" />
+        <text class="d-m" x="40" y="616">server.js strips /secops itself as well, so the app answers correctly whether or not nginx got there first &mdash; a health check or a curl against port 3000 behaves the same as the browser.</text>
+      </svg>
+      <figcaption>
+        The base path is handled <b>twice on purpose</b>. nginx strips it in
+        production; the app strips it again for anything that reaches the port
+        directly. Re-mounting the routes under a second <code>/secops/api</code>
+        prefix would have been the obvious fix and a dangerous one — every gate is
+        bound to <code>/api</code>, so the parallel mount would have been
+        completely ungated.
+      </figcaption>
+    </figure>
+
+    <h3>The runtime surface</h3>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th scope="col">What</th><th scope="col">Where it comes from</th><th scope="col">If it is wrong</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Port</td>
+            <td><code>PORT</code>, default 3000</td>
+            <td>Startup fails loudly on <code>EADDRINUSE</code></td>
+          </tr>
+          <tr>
+            <td>Database</td>
+            <td><code>PG_HOST/PORT/DATABASE/USER/PASSWORD</code></td>
+            <td>Nothing serves; the session store needs it too</td>
+          </tr>
+          <tr>
+            <td>Session secret</td>
+            <td><code>SESSION_SECRET</code></td>
+            <td>Falls back to a published default — cookies become forgeable</td>
+          </tr>
+          <tr>
+            <td>Secure cookies</td>
+            <td><code>NODE_ENV=production</code></td>
+            <td>Session cookie is sent over plain HTTP</td>
+          </tr>
+          <tr>
+            <td>Integration keys</td>
+            <td><code>INTEGRATION_ENCRYPT_KEY</code></td>
+            <td>Stored keys cannot be decrypted; syncs stop</td>
+          </tr>
+          <tr>
+            <td>Report archive</td>
+            <td><code>REPORT_ARCHIVE_DIR</code>, default <code>data/reports</code></td>
+            <td>Published reports are unreadable; DB rows survive</td>
+          </tr>
+          <tr>
+            <td>Retention</td>
+            <td><code>REPORT_ARCHIVE_KEEP_DAYS</code>, default 730</td>
+            <td>Files pruned early or never; rows are always kept</td>
+          </tr>
+          <tr>
+            <td>SSO</td>
+            <td><code>SAML_ENABLED</code> and four <code>SAML_*</code> values</td>
+            <td>Login silently falls back to password + TOTP</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <strong>This shape is deliberately single-instance.</strong>
+      Sessions live in Postgres and would survive a second process, but nothing
+      else would: each instance runs its own timers — double-syncing every
+      integration and duplicating Wazuh rollups — and each holds part of the
+      report archive and its own copy of <code>data/weeks.json</code> on local
+      disk. Scaling out means moving those two things first, not adding a load
+      balancer.
+    </div>
+  </section>
+
+  <!-- ── 3. The gate ───────────────────────────────────────────────────── -->
+  <section>
+    <h2>What a request passes through</h2>
+    <p>
+      Order is the whole design here. Each stage can only protect what runs after
+      it, so the sequence below is the security model — moving any box changes
+      what is exposed.
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 1220 400" role="img"
+           aria-label="A request passes through eight stages in order: strip the /secops prefix, static files, session, requireAuth, requireActiveUser, requirePortalConfinement, pageGate, then the route handler. Stages four, five and six can reject the request; pageGate allows anything whose prefix it does not recognise.">
+        <defs>
+          <marker id="f2ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah" points="0,0 10,5 0,10" />
+          </marker>
+          <marker id="f2ahd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah-d" points="0,0 10,5 0,10" />
+          </marker>
+        </defs>
+
+        <text class="d-m" x="20" y="28">request &rarr;</text>
+
+        <!-- stage 1 -->
+        <rect class="d-box" x="20" y="120" width="130" height="84" rx="4" />
+        <text class="d-num" x="34" y="142">01</text>
+        <text class="d-t" x="34" y="165">strip prefix</text>
+        <text class="d-m" x="34" y="184">/secops/&hellip;</text>
+
+        <!-- stage 2 -->
+        <rect class="d-box" x="170" y="120" width="130" height="84" rx="4" />
+        <text class="d-num" x="184" y="142">02</text>
+        <text class="d-t" x="184" y="165">static</text>
+        <text class="d-m" x="184" y="184">public/</text>
+
+        <!-- stage 3 -->
+        <rect class="d-box" x="320" y="120" width="130" height="84" rx="4" />
+        <text class="d-num" x="334" y="142">03</text>
+        <text class="d-t" x="334" y="165">session</text>
+        <text class="d-m" x="334" y="184">pg-backed</text>
+
+        <!-- stage 4 -->
+        <rect class="d-box" x="470" y="120" width="130" height="84" rx="4" />
+        <text class="d-num" x="484" y="142">04</text>
+        <text class="d-t" x="484" y="165">requireAuth</text>
+        <text class="d-m" x="484" y="184">signed in?</text>
+
+        <!-- stage 5 -->
+        <rect class="d-box" x="620" y="120" width="130" height="84" rx="4" />
+        <text class="d-num" x="634" y="142">05</text>
+        <text class="d-t" x="634" y="165">requireActive</text>
+        <text class="d-m" x="634" y="184">is_active</text>
+
+        <!-- stage 6 -->
+        <rect class="d-hero" x="770" y="120" width="130" height="84" rx="4" />
+        <text class="d-num" x="784" y="142">06</text>
+        <text class="d-t" x="784" y="165">confinement</text>
+        <text class="d-m" x="784" y="184">the membrane</text>
+
+        <!-- stage 7 -->
+        <rect class="d-warn-box" x="920" y="120" width="130" height="84" rx="4" />
+        <text class="d-num" x="934" y="142">07</text>
+        <text class="d-t" x="934" y="165">pageGate</text>
+        <text class="d-m" x="934" y="184">per-page ACL</text>
+
+        <!-- stage 8 -->
+        <rect class="d-band" x="1070" y="120" width="130" height="84" rx="4" />
+        <text class="d-num" x="1084" y="142">08</text>
+        <text class="d-t" x="1084" y="165">handler</text>
+        <text class="d-m" x="1084" y="184">your data</text>
+
+        <!-- connectors -->
+        <line class="d-line" x1="150" y1="162" x2="166" y2="162" marker-end="url(#f2ah)" />
+        <line class="d-line" x1="300" y1="162" x2="316" y2="162" marker-end="url(#f2ah)" />
+        <line class="d-line" x1="450" y1="162" x2="466" y2="162" marker-end="url(#f2ah)" />
+        <line class="d-line" x1="600" y1="162" x2="616" y2="162" marker-end="url(#f2ah)" />
+        <line class="d-line" x1="750" y1="162" x2="766" y2="162" marker-end="url(#f2ah)" />
+        <line class="d-line" x1="900" y1="162" x2="916" y2="162" marker-end="url(#f2ah)" />
+        <line class="d-line" x1="1050" y1="162" x2="1066" y2="162" marker-end="url(#f2ah)" />
+
+        <!-- static short-circuits -->
+        <path class="d-line" d="M 235 120 L 235 74 L 470 74" marker-end="url(#f2ah)" />
+        <text class="d-m" x="250" y="66">login.html and portal.html are served before any auth runs &mdash; they carry no tenant data</text>
+
+        <!-- rejections -->
+        <line class="d-line-d" x1="535" y1="204" x2="535" y2="252" marker-end="url(#f2ahd)" />
+        <text class="d-dny" x="535" y="272" text-anchor="middle">401</text>
+        <text class="d-s" x="535" y="290" text-anchor="middle">to login</text>
+
+        <line class="d-line-d" x1="685" y1="204" x2="685" y2="252" marker-end="url(#f2ahd)" />
+        <text class="d-dny" x="685" y="272" text-anchor="middle">403 / 428</text>
+        <text class="d-s" x="685" y="290" text-anchor="middle">revoked, or</text>
+        <text class="d-s" x="685" y="306" text-anchor="middle">owes a password change</text>
+
+        <line class="d-line-d" x1="835" y1="204" x2="835" y2="252" marker-end="url(#f2ahd)" />
+        <text class="d-dny" x="835" y="272" text-anchor="middle">404</text>
+        <text class="d-s" x="835" y="290" text-anchor="middle">client outside</text>
+        <text class="d-s" x="835" y="306" text-anchor="middle">/api/portal &mdash; not 403,</text>
+        <text class="d-s" x="835" y="322" text-anchor="middle">so nothing is confirmed</text>
+
+        <!-- pageGate fails open -->
+        <path class="d-line" d="M 985 204 L 985 244" marker-end="url(#f2ah)" />
+        <text class="d-wrn" x="985" y="264" text-anchor="middle">fails open</text>
+        <text class="d-s" x="985" y="282" text-anchor="middle">unmapped prefix</text>
+        <text class="d-s" x="985" y="298" text-anchor="middle">&rarr; any signed-in</text>
+        <text class="d-s" x="985" y="314" text-anchor="middle">staff user</text>
+
+        <line class="d-rule" x1="20" y1="356" x2="1200" y2="356" />
+        <text class="d-m" x="20" y="378">Stage 06 exists because stage 07 cannot be trusted to deny by default. It is one rule, not an allowlist maintained per route.</text>
+      </svg>
+      <figcaption>
+        Stage 07 admits any <code>/api</code> route whose first path segment is
+        absent from its map — tolerable for staff, unacceptable for an external
+        user. Stage 06 is the answer: <b>a client session may reach
+        <code>/api/portal</code> and nothing else</b>, so a new route added
+        tomorrow is closed to clients without anyone touching the gate.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ── 3. Tenant scoping ─────────────────────────────────────────────── -->
+  <section>
+    <h2>Why the two APIs resolve tenancy differently</h2>
+    <p>
+      Staff routes accept a tenant as a parameter, because a superadmin
+      legitimately switches between clients all day. Portal routes cannot, for
+      exactly the same reason. The difference is one line of code and the entire
+      threat model.
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 1060 330" role="img"
+           aria-label="A staff route passes a tenantId query parameter to one of fifteen resolvers, which honours it for a superadmin. A portal route receives the same parameter but its single resolver ignores it entirely and reads the session, so a forged parameter changes nothing.">
+        <defs>
+          <marker id="f3ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah" points="0,0 10,5 0,10" />
+          </marker>
+          <marker id="f3aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah-a" points="0,0 10,5 0,10" />
+          </marker>
+        </defs>
+
+        <!-- lane A -->
+        <text class="d-m" x="20" y="34">STAFF ROUTE</text>
+        <rect class="d-box" x="20" y="50" width="250" height="84" rx="4" />
+        <text class="d-mi" x="36" y="80">GET /api/vulns</text>
+        <text class="d-mi" x="36" y="102">?tenantId=42</text>
+        <text class="d-s" x="36" y="122">session: superadmin</text>
+
+        <line class="d-line" x1="270" y1="92" x2="326" y2="92" marker-end="url(#f3ah)" />
+
+        <rect class="d-box" x="330" y="50" width="240" height="84" rx="4" />
+        <text class="d-t" x="346" y="80">resolveVulnTenant</text>
+        <text class="d-s" x="346" y="102">one of 15 near-identical</text>
+        <text class="d-s" x="346" y="120">helpers across server.js</text>
+
+        <line class="d-line" x1="570" y1="92" x2="626" y2="92" marker-end="url(#f3ah)" />
+
+        <rect class="d-band" x="630" y="50" width="410" height="84" rx="4" />
+        <text class="d-t" x="648" y="80">tenant 42</text>
+        <text class="d-s" x="648" y="102">parameter honoured &mdash; superadmin only;</text>
+        <text class="d-s" x="648" y="120">every other staff role is pinned to its own tenant</text>
+
+        <line class="d-rule" x1="20" y1="172" x2="1040" y2="172" />
+
+        <!-- lane B -->
+        <text class="d-acc" x="20" y="206">PORTAL ROUTE</text>
+        <rect class="d-hero" x="20" y="222" width="250" height="84" rx="4" />
+        <text class="d-mi" x="36" y="252">GET /api/portal/vulns</text>
+        <text class="d-mi" x="36" y="274">?tenantId=42</text>
+        <text class="d-s" x="36" y="294">session: client, tenant 7</text>
+
+        <line class="d-line-a" x1="270" y1="264" x2="326" y2="264" marker-end="url(#f3aha)" />
+
+        <rect class="d-hero" x="330" y="222" width="240" height="84" rx="4" />
+        <text class="d-t" x="346" y="252">resolvePortalTenant</text>
+        <text class="d-s" x="346" y="274">the only resolver the</text>
+        <text class="d-s" x="346" y="292">portal is allowed to call</text>
+
+        <line class="d-line-a" x1="570" y1="264" x2="626" y2="264" marker-end="url(#f3aha)" />
+
+        <rect class="d-hero" x="630" y="222" width="410" height="84" rx="4" />
+        <text class="d-t" x="648" y="252">tenant 7</text>
+        <text class="d-dny" x="648" y="274">?tenantId=42 is never read</text>
+        <text class="d-s" x="648" y="292">a forged parameter changes nothing &mdash; there is no branch to reach</text>
+      </svg>
+      <figcaption>
+        Ownership always sits <b>in the WHERE clause</b>, never in a check after
+        the row is fetched. A wrong id and another tenant's id therefore produce
+        the same 404, and the response cannot confirm that the other tenant's
+        record exists.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ── 4. Data in, data out ──────────────────────────────────────────── -->
+  <section>
+    <h2>Where the data comes from</h2>
+    <p>
+      Three ways in, and one thing worth knowing about the way out: the headline
+      numbers are not stored. Secure Score is recomputed on every request from the
+      client's declared estate and its current component scores, so changing an
+      estate figure moves the score immediately and no stale copy survives
+      anywhere to contradict it.
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 1060 480" role="img"
+           aria-label="Three inbound paths reach PostgreSQL: analyst file uploads parsed in memory, scheduled pulls from Arctic Wolf, SentinelOne and Wazuh, and manual entry. Reads out of the database are recomputed at request time into the Secure Score, the report deck and the portal projections.">
+        <defs>
+          <marker id="f4ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah" points="0,0 10,5 0,10" />
+          </marker>
+          <marker id="f4aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah-a" points="0,0 10,5 0,10" />
+          </marker>
+        </defs>
+
+        <text class="d-m" x="20" y="28">IN</text>
+        <text class="d-m" x="740" y="28">OUT</text>
+
+        <!-- inbound -->
+        <rect class="d-box" x="20" y="44" width="290" height="94" rx="4" />
+        <text class="d-t" x="38" y="72">Analyst uploads</text>
+        <text class="d-m" x="38" y="92">.csv &middot; .xlsx &middot; .nessus &middot; .docx</text>
+        <text class="d-s" x="38" y="114">multer memory &rarr; lib/&hellip;-parser.js</text>
+        <text class="d-s" x="38" y="130">nothing is written to disk</text>
+
+        <rect class="d-box" x="20" y="166" width="290" height="94" rx="4" />
+        <text class="d-t" x="38" y="194">Scheduled pulls</text>
+        <text class="d-m" x="38" y="214">Arctic Wolf &middot; SentinelOne &middot; Wazuh</text>
+        <text class="d-s" x="38" y="236">timers in-process, keys encrypted</text>
+        <text class="d-s" x="38" y="252">at rest in the integrations table</text>
+
+        <rect class="d-box" x="20" y="288" width="290" height="94" rx="4" />
+        <text class="d-t" x="38" y="316">Manual entry</text>
+        <text class="d-m" x="38" y="336">risks &middot; IR &middot; GRC &middot; estate</text>
+        <text class="d-s" x="38" y="358">typed by analysts in the dashboard</text>
+
+        <!-- store -->
+        <rect class="d-band" x="400" y="120" width="240" height="230" rx="4" />
+        <text class="d-t" x="520" y="160" text-anchor="middle">PostgreSQL</text>
+        <text class="d-m" x="520" y="182" text-anchor="middle">35 tables</text>
+        <line class="d-rule" x1="424" y1="200" x2="616" y2="200" />
+        <text class="d-s" x="520" y="224" text-anchor="middle">every row carries</text>
+        <text class="d-mi" x="520" y="243" text-anchor="middle">tenant_id</text>
+        <line class="d-rule" x1="424" y1="264" x2="616" y2="264" />
+        <text class="d-s" x="520" y="288" text-anchor="middle">MDR tickets upsert on</text>
+        <text class="d-mi" x="520" y="307" text-anchor="middle">(tenant_id, ticket_number)</text>
+        <text class="d-s" x="520" y="328" text-anchor="middle">so a ticket keeps its identity</text>
+
+        <!-- outbound -->
+        <rect class="d-box" x="740" y="44" width="300" height="94" rx="4" />
+        <text class="d-t" x="758" y="72">Secure Score</text>
+        <text class="d-s" x="758" y="94">weights derived from the estate:</text>
+        <text class="d-s" x="758" y="112">exposure, headcount, incident load</text>
+        <text class="d-m" x="758" y="132">computed per request &mdash; never stored</text>
+
+        <rect class="d-box" x="740" y="166" width="300" height="94" rx="4" />
+        <text class="d-t" x="758" y="194">Board report deck</text>
+        <text class="d-s" x="758" y="216">assembled in the browser,</text>
+        <text class="d-s" x="758" y="234">rendered to .pptx on the server</text>
+        <text class="d-m" x="758" y="254">see the next figure</text>
+
+        <rect class="d-hero" x="740" y="288" width="300" height="94" rx="4" />
+        <text class="d-t" x="758" y="316">Portal projections</text>
+        <text class="d-s" x="758" y="338">explicit column allowlist &mdash; no analyst</text>
+        <text class="d-s" x="758" y="356">names, no internal notes, no host or CVE</text>
+
+        <!-- arrows -->
+        <path class="d-line" d="M 310 91 L 356 91 L 356 200 L 396 200" marker-end="url(#f4ah)" />
+        <path class="d-line" d="M 310 213 L 396 213" marker-end="url(#f4ah)" />
+        <path class="d-line" d="M 310 335 L 356 335 L 356 226 L 396 226" marker-end="url(#f4ah)" />
+
+        <path class="d-line" d="M 640 200 L 686 200 L 686 91 L 736 91" marker-end="url(#f4ah)" />
+        <path class="d-line" d="M 640 213 L 736 213" marker-end="url(#f4ah)" />
+        <path class="d-line-a" d="M 640 226 L 686 226 L 686 335 L 736 335" marker-end="url(#f4aha)" />
+
+        <line class="d-rule" x1="20" y1="418" x2="1040" y2="418" />
+        <text class="d-m" x="20" y="440">The external scan reaches public-facing assets only. Internal servers and workstations are counted in the estate but are not scanned yet,</text>
+        <text class="d-m" x="20" y="458">so scan coverage is measured against the external estate alone &mdash; and caps the infrastructure score when it is short.</text>
+      </svg>
+      <figcaption>
+        Uploaded files are parsed in memory and discarded; only the extracted rows
+        persist. The one artefact that <b>is</b> written to disk is a published
+        report, which is the subject of the next figure.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ── 5. Reports ────────────────────────────────────────────────────── -->
+  <section>
+    <h2>The report pipeline</h2>
+    <p>
+      A board report has three destinations and must be identical in all of them.
+      That is guaranteed by construction: preview, PowerPoint and publish all call
+      the same <code>assembleDeck()</code>, and publishing never re-fetches. If it
+      did, the archived report could differ from the one someone approved, and
+      nobody would ever find out.
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 1060 470" role="img"
+           aria-label="assembleDeck in the browser is the single source for three outputs: a preview window, a PowerPoint download, and a publish that writes a pptx file to disk plus an immutable row in report_publications, which the client portal then reads.">
+        <defs>
+          <marker id="f5ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah" points="0,0 10,5 0,10" />
+          </marker>
+          <marker id="f5aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon class="ah-a" points="0,0 10,5 0,10" />
+          </marker>
+        </defs>
+
+        <rect class="d-hero" x="330" y="24" width="400" height="82" rx="4" />
+        <text class="d-t" x="530" y="54" text-anchor="middle">assembleDeck()</text>
+        <text class="d-m" x="530" y="74" text-anchor="middle">public/js/tab-reports.js &mdash; in the browser</text>
+        <text class="d-s" x="530" y="94" text-anchor="middle">fetches every metric once, applies the analyst's overrides</text>
+
+        <!-- fan out -->
+        <path class="d-line-a" d="M 530 106 L 530 128 L 170 128 L 170 168" marker-end="url(#f5aha)" />
+        <path class="d-line-a" d="M 530 106 L 530 168" marker-end="url(#f5aha)" />
+        <path class="d-line-a" d="M 530 106 L 530 128 L 890 128 L 890 168" marker-end="url(#f5aha)" />
+
+        <text class="d-acc" x="560" y="120">one model, three destinations &mdash; publish never re-fetches</text>
+
+        <!-- three paths -->
+        <rect class="d-box" x="20" y="172" width="300" height="86" rx="4" />
+        <text class="d-t" x="38" y="200">Preview</text>
+        <text class="d-m" x="38" y="220">buildSlides &rarr; renderDeck</text>
+        <text class="d-s" x="38" y="242">a print-ready window, client-side only</text>
+
+        <rect class="d-box" x="380" y="172" width="300" height="86" rx="4" />
+        <text class="d-t" x="398" y="200">PowerPoint</text>
+        <text class="d-m" x="398" y="220">POST /api/reports/pptx</text>
+        <text class="d-s" x="398" y="242">lib/report-pptx.js &rarr; streamed, not kept</text>
+
+        <rect class="d-hero" x="740" y="172" width="300" height="86" rx="4" />
+        <text class="d-t" x="758" y="200">Publish</text>
+        <text class="d-m" x="758" y="220">POST /api/reports/publish</text>
+        <text class="d-s" x="758" y="242">the same slides, plus the viewable HTML</text>
+
+        <!-- publish detail: one publish writes the bytes and the index row -->
+        <path class="d-line-a" d="M 890 258 L 890 278" />
+        <path class="d-line-a" d="M 700 278 L 890 278" />
+        <line class="d-line-a" x1="700" y1="278" x2="700" y2="292" marker-end="url(#f5aha)" />
+        <line class="d-line-a" x1="890" y1="278" x2="890" y2="292" marker-end="url(#f5aha)" />
+
+        <rect class="d-box" x="600" y="296" width="200" height="82" rx="4" />
+        <text class="d-t" x="618" y="324">data/reports/</text>
+        <text class="d-m" x="618" y="344">&lt;tenant&gt;/&lt;id&gt;.pptx</text>
+        <text class="d-s" x="618" y="365">written, then renamed</text>
+
+        <rect class="d-box" x="840" y="296" width="200" height="82" rx="4" />
+        <text class="d-t" x="858" y="324">report_publications</text>
+        <text class="d-m" x="858" y="344">append-only</text>
+        <text class="d-s" x="858" y="365">republish &rarr; version + 1</text>
+
+        <!-- portal read -->
+        <line class="d-line-a" x1="700" y1="378" x2="700" y2="410" marker-end="url(#f5aha)" />
+        <line class="d-line-a" x1="940" y1="378" x2="940" y2="410" marker-end="url(#f5aha)" />
+        <text class="d-m" x="712" y="398">bytes</text>
+        <text class="d-m" x="952" y="398">index</text>
+        <rect class="d-hero" x="600" y="414" width="440" height="46" rx="4" />
+        <text class="d-t" x="820" y="443" text-anchor="middle">Client portal &mdash; download or read in the browser</text>
+
+        <text class="d-m" x="20" y="320">Nothing is ever overwritten.</text>
+        <text class="d-m" x="20" y="340">Withdrawal is a state change,</text>
+        <text class="d-m" x="20" y="360">not an edit &mdash; the record of</text>
+        <text class="d-m" x="20" y="380">what was sent to whom survives</text>
+        <text class="d-m" x="20" y="400">even after the bytes are pruned.</text>
+      </svg>
+      <figcaption>
+        Client name and period label are <b>frozen at publish time</b>. Renaming a
+        tenant changes what future reports say and leaves every past one exactly
+        as it was sent.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ── 6. Module map ─────────────────────────────────────────────────── -->
+  <section>
+    <h2>What lives where</h2>
+    <p>
+      <code>server.js</code> holds the routes; the logic that is worth testing has
+      been pulled out beside it. The newest modules were extracted precisely
+      because they needed tests — <code>npm test</code> runs seven suites, no
+      database required.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th scope="col">Module</th><th scope="col">Responsibility</th><th scope="col">Note</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>lib/portal-gate.js</code></td>
+            <td>The membrane, the active-user check, the one portal tenant resolver</td>
+            <td>Mounted before <code>pageGate</code>, which is the point</td>
+          </tr>
+          <tr>
+            <td><code>lib/portal-routes.js</code></td>
+            <td>Every client-facing read, each an explicit column allowlist</td>
+            <td>Merges MDR tickets and IR incidents into one list</td>
+          </tr>
+          <tr>
+            <td><code>lib/secure-score.js</code></td>
+            <td>Composite scoring and the weight curves that feed it</td>
+            <td>Weights derived from estate, not fixed</td>
+          </tr>
+          <tr>
+            <td><code>lib/estate.js</code></td>
+            <td>What the client owns, and how much of it the scan can see</td>
+            <td>Measure and score share one set of constants</td>
+          </tr>
+          <tr>
+            <td><code>lib/mdr-ingest.js</code></td>
+            <td>Ticket upsert, field diffing, event history</td>
+            <td>A sync over unchanged tickets writes zero event rows</td>
+          </tr>
+          <tr>
+            <td><code>lib/report-archive.js</code></td>
+            <td>Publish, list, serve, withdraw, prune</td>
+            <td>Path re-validated before every file open</td>
+          </tr>
+          <tr>
+            <td><code>lib/report-pptx.js</code></td>
+            <td>Section HTML translated into native PowerPoint slides</td>
+            <td>Recomputes nothing — the deck cannot disagree with itself</td>
+          </tr>
+          <tr>
+            <td><code>lib/pages.js</code></td>
+            <td>The page catalogue and per-role defaults</td>
+            <td>The <code>client</code> role is granted nothing here</td>
+          </tr>
+          <tr>
+            <td><code>lib/integrations/</code></td>
+            <td>Arctic Wolf, SentinelOne, Wazuh adapters</td>
+            <td>Pure fetch-and-shape; no writes</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 7. Sharp edges ────────────────────────────────────────────────── -->
+  <section>
+    <h2>Sharp edges</h2>
+    <p>
+      A diagram that only shows the intended paths is half a picture. These are
+      real, known, and currently load-bearing on someone remembering them.
+    </p>
+
+    <ul class="edges">
+      <li>
+        <span class="tag">fails open</span>
+        <span>
+          <b>pageGate admits unmapped prefixes.</b>
+          Any <code>/api</code> route whose first segment is missing from its map
+          is reachable by any signed-in staff user. The membrane is what keeps
+          this from being a client-facing problem — so the membrane must never be
+          reordered or removed.
+        </span>
+      </li>
+      <li>
+        <span class="tag">untested</span>
+        <span>
+          <b>No database has been available during development.</b>
+          Every migration and every query has been written and reviewed but never
+          run. For a system whose worst failure is showing one client another's
+          data, a throwaway Postgres with two fake tenants is worth more than any
+          further code review.
+        </span>
+      </li>
+      <li>
+        <span class="tag">unrun</span>
+        <span>
+          <b>Several migrations are still pending.</b>
+          Features degrade quietly rather than erroring — the incident phase
+          timeline, for example, simply does not appear until
+          <code>migrate-ir-phase-history.sql</code> is applied.
+        </span>
+      </li>
+      <li>
+        <span class="tag">duplicates</span>
+        <span>
+          <b>An escalated event appears twice</b> until an analyst links the IR
+          record to its MDR ticket. Deliberate: fuzzy subject matching would merge
+          unrelated incidents silently, which is worse than a visible duplicate.
+        </span>
+      </li>
+      <li>
+        <span class="tag">single point</span>
+        <span>
+          <b>One process, and no supervisor in the repo.</b>
+          If it stops, the site is down and every scheduled sync stops with it —
+          the timers are in-process. Nothing in the repository restarts it, so
+          whatever does that on the host is undocumented here and worth writing
+          down.
+        </span>
+      </li>
+      <li>
+        <span class="tag">local state</span>
+        <span>
+          <b>Some state is a file, not a row.</b>
+          The Operations tab is a single global <code>weeks.json</code> — not
+          per-tenant — and published reports are files under <code>data/</code>.
+          Both are on local disk, so a rebuilt host without that directory loses
+          them, and no <code>pg_dump</code> contains them.
+        </span>
+      </li>
+      <li>
+        <span class="tag">no csrf</span>
+        <span>
+          <b>Protection is <code>sameSite: strict</code> alone.</b>
+          The portal is read-only so the practical exposure is login CSRF, but an
+          external audience makes this harder to defend in a client security
+          review.
+        </span>
+      </li>
+      <li>
+        <span class="tag">config</span>
+        <span>
+          <b><code>SESSION_SECRET</code> falls back to a literal default.</b>
+          Confirm it is set in the environment before any external user signs in.
+        </span>
+      </li>
+    </ul>
+  </section>
+
+  <p class="colophon">
+    Drawn from the source at commit <code>b99b831</code>, main branch.
+    Figures describe the code as written, not as deployed — no database was
+    reachable to verify runtime behaviour.
+  </p>
+
+</div>
+
+</body>
+</html>

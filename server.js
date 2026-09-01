@@ -1092,16 +1092,21 @@ app.put('/api/users/:id', async (req, res) => {
 
     // Tenant admin can only edit users in their own tenant.
     let targetAuthType = 'local';
+    let targetRole     = null;
     if (!isSA) {
-      const check = await pool.query('SELECT tenant_id, auth_type FROM users WHERE id=$1', [targetId]);
+      const check = await pool.query('SELECT tenant_id, auth_type, role FROM users WHERE id=$1', [targetId]);
       if (check.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
       if (check.rows[0].tenant_id !== req.session.tenantId) {
         return res.status(403).json({ error: 'You can only edit users in your own organisation.' });
       }
       targetAuthType = check.rows[0].auth_type || 'local';
+      targetRole     = check.rows[0].role || null;
     } else {
-      const check = await pool.query('SELECT auth_type FROM users WHERE id=$1', [targetId]);
-      if (check.rows.length > 0) targetAuthType = check.rows[0].auth_type || 'local';
+      const check = await pool.query('SELECT auth_type, role FROM users WHERE id=$1', [targetId]);
+      if (check.rows.length > 0) {
+        targetAuthType = check.rows[0].auth_type || 'local';
+        targetRole     = check.rows[0].role || null;
+      }
     }
 
     const { role, password, tenantIds, pageAccess,
@@ -1122,7 +1127,20 @@ app.put('/api/users/:id', async (req, res) => {
       values.push(!!isActive);
     }
 
-    if (mustChangePassword !== undefined) {
+    /*
+     * Whether the target ends up as an external (client) account, taking a
+     * role change in this same request into account.
+     *
+     * A forced password change is only meaningful for someone who has a screen
+     * to satisfy it on. Staff do; clients do not — password reset for the
+     * portal is admin-only by design, so a client has no way to clear the flag
+     * and would be answered 428 on every portal call with nothing to click.
+     * That is not a lockout worth having, so the flag is never set on them.
+     */
+    const targetIsExternal = pagesLib.isExternalRole(
+      role !== undefined ? role : targetRole);
+
+    if (mustChangePassword !== undefined && !targetIsExternal) {
       updates.push(`must_change_password = $${values.length + 1}`);
       values.push(!!mustChangePassword);
     }
@@ -1175,9 +1193,16 @@ app.put('/api/users/:id', async (req, res) => {
       values.push(hash);
 
       // An admin-set password has been typed by someone else and probably read
-      // out loud, so it is a handover credential, not the user's own. Force a
-      // change on next sign-in unless the caller explicitly says otherwise.
-      if (mustChangePassword === undefined && targetId !== req.session.userId) {
+      // out loud, so for STAFF it is a handover credential, not the user's own:
+      // force a change on next sign-in unless the caller says otherwise.
+      //
+      // For a client it is the opposite. An admin reset is the only reset there
+      // is, so the credential the admin just issued has to work as it stands.
+      // Clearing the flag rather than leaving it alone also repairs an account
+      // that an earlier reset already stranded behind a 428.
+      if (targetIsExternal) {
+        updates.push('must_change_password = FALSE');
+      } else if (mustChangePassword === undefined && targetId !== req.session.userId) {
         updates.push('must_change_password = TRUE');
       }
     }
@@ -1802,31 +1827,65 @@ async function writeAwarenessHistory(client, tenantId, uploadedBy, rows, stats) 
   const uploadId   = uploadRes.rows[0].id;
   const uploadedAt = uploadRes.rows[0].uploaded_at;
 
-  for (const row of rows) {
-    await client.query(
-      `INSERT INTO awareness_sessions
-         (upload_id, user_first_name, user_last_name, user_email,
+  /*
+   * `clicked` is separate from `clicked_at` because an export may report the
+   * fact without the time. Probed once rather than per row, and the whole
+   * import falls back to the old column set if migrate-awareness-clicked.sql
+   * has not been run — the same degrade-open idiom the user list uses.
+   */
+  const hasClicked = await hasAwarenessClickedColumn();
+
+  const cols = `(upload_id, user_first_name, user_last_name, user_email,
           manager_first_name, manager_last_name, manager_email,
           sent_date, session_type, title, status,
-          completed_date, elapsed_seconds, clicked_at, quiz_score)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-      [
-        uploadId,
-        row.userFirstName, row.userLastName, row.userEmail,
-        row.managerFirstName, row.managerLastName, row.managerEmail,
-        row.sentDate        ? new Date(row.sentDate)        : null,
-        row.sessionType,
-        row.title,
-        row.status,
-        row.completedDate   ? new Date(row.completedDate)   : null,
-        row.elapsedSeconds,
-        row.clickedAt       ? new Date(row.clickedAt)       : null,
-        row.quizScore,
-      ]
+          completed_date, elapsed_seconds, clicked_at, quiz_score` +
+        (hasClicked ? ', clicked)' : ')');
+  const placeholders = hasClicked
+    ? '($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)'
+    : '($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)';
+
+  for (const row of rows) {
+    const values = [
+      uploadId,
+      row.userFirstName, row.userLastName, row.userEmail,
+      row.managerFirstName, row.managerLastName, row.managerEmail,
+      row.sentDate        ? new Date(row.sentDate)        : null,
+      row.sessionType,
+      row.title,
+      row.status,
+      row.completedDate   ? new Date(row.completedDate)   : null,
+      row.elapsedSeconds,
+      row.clickedAt       ? new Date(row.clickedAt)       : null,
+      row.quizScore,
+    ];
+    // Tri-state: true, false, or null for "the export did not say".
+    if (hasClicked) values.push(row.clicked === undefined ? null : row.clicked);
+
+    await client.query(
+      `INSERT INTO awareness_sessions ${cols} VALUES ${placeholders}`,
+      values
     );
   }
 
   return { uploadId, uploadedAt, notStartedCount };
+}
+
+/**
+ * Whether db/migrate-awareness-clicked.sql has been run.
+ *
+ * Same shape as hasUserLifecycleColumns: cached only on a positive answer, so
+ * running the migration takes effect without a restart.
+ */
+let _awarenessClickedColumn = null;
+async function hasAwarenessClickedColumn() {
+  if (_awarenessClickedColumn) return true;
+  try {
+    const r = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'awareness_sessions' AND column_name = 'clicked' LIMIT 1`);
+    if (r.rows.length) _awarenessClickedColumn = true;
+    return r.rows.length > 0;
+  } catch (_) { return false; }
 }
 
 app.post('/api/awareness/upload', awarenessUpload.single('awarenessFile'), async (req, res) => {
@@ -1935,11 +1994,17 @@ app.get('/api/awareness', requireAuth, async (req, res) => {
     const upload = uploadRes.rows[0];
 
     if ((upload.upload_type || 'summary') === 'history') {
+      // NULL, not FALSE, when the column is missing: on an un-migrated
+      // database we genuinely do not know, and saying FALSE would report a
+      // perfect zero click rate off the back of a missing migration.
+      const clickedCol = await hasAwarenessClickedColumn()
+        ? 'clicked' : 'NULL::boolean AS clicked';
+
       const sessRes = await pool.query(
         `SELECT user_first_name, user_last_name, user_email,
                 manager_first_name, manager_last_name, manager_email,
                 sent_date, session_type, title, status,
-                completed_date, elapsed_seconds, clicked_at, quiz_score
+                completed_date, elapsed_seconds, clicked_at, ${clickedCol}, quiz_score
          FROM awareness_sessions WHERE upload_id = $1
          ORDER BY sent_date ASC, user_last_name, user_first_name`,
         [upload.id]

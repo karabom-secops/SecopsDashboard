@@ -54,7 +54,8 @@ check('password age is left unknown rather than invented',
 section('the route accepts the lifecycle fields');
 check('the route body was found', putRoute.length > 500, putRoute.length);
 check('isActive is handled', /if \(isActive !== undefined\)/.test(putRoute));
-check('mustChangePassword is handled', /if \(mustChangePassword !== undefined\)/.test(putRoute));
+check('mustChangePassword is handled',
+  /if \(mustChangePassword !== undefined && !targetIsExternal\)/.test(putRoute));
 check('resetMfa is handled', /if \(resetMfa\)/.test(putRoute));
 check('resetMfa clears the secret AND the enabled flag',
   /totp_secret = NULL', 'totp_enabled = FALSE/.test(putRoute), 'both must go');
@@ -85,6 +86,29 @@ check('unless the caller explicitly says otherwise',
 check('and never for your own password change',
   /targetId !== req\.session\.userId/.test(putRoute));
 
+section('but a client account works the moment the admin resets it');
+/*
+ * Clients have no self-service reset — that is the product decision — so the
+ * credential an admin issues has to be usable as issued. Forcing a change on
+ * an account with no change screen produced a 428 on every portal call and an
+ * error page with nothing to click.
+ */
+check('the role is read before deciding, and a role change in the same request wins',
+  /const targetIsExternal = pagesLib\.isExternalRole\(\s*role !== undefined \? role : targetRole\)/.test(putRoute));
+check('a client password reset clears the flag rather than setting it',
+  /if \(targetIsExternal\) \{\s*updates\.push\('must_change_password = FALSE'\)/.test(putRoute));
+check('so an account stranded by an earlier reset is repaired by the next one',
+  /must_change_password = FALSE/.test(putRoute));
+check('and an explicit mustChangePassword is refused for a client',
+  /mustChangePassword !== undefined && !targetIsExternal/.test(putRoute));
+check('the target role is actually selected from the database',
+  /SELECT tenant_id, auth_type, role FROM users/.test(putRoute) &&
+  /SELECT auth_type, role FROM users/.test(putRoute));
+
+// The admin list would otherwise promise a step that never comes.
+check('the admin badge is not shown for a client',
+  /u\.must_change_password && u\.role !== 'client'/.test(adminJs));
+
 section('suspension bites on the next request, not at session expiry');
 check('requireActiveUser is mounted globally on /api',
   /app\.use\('\/api', portalGate\.requireActiveUser\)/.test(src));
@@ -93,7 +117,7 @@ check('requireActiveUser is mounted globally on /api',
   // per-request check a suspended user keeps working for up to eight hours.
   const gateSrc = fs.readFileSync(path.join(ROOT, 'lib', 'portal-gate.js'), 'utf8');
   check('it reads is_active fresh from the database each request',
-    /SELECT is_active, must_change_password FROM users WHERE id = \$1/.test(gateSrc));
+    /SELECT role, is_active, must_change_password FROM users WHERE id = \$1/.test(gateSrc));
   check('a suspended session is destroyed, not merely refused',
     /is_active === false[\s\S]{0,120}session\.destroy/.test(gateSrc));
   check('a deleted account is handled too', /no longer available/.test(gateSrc));
@@ -107,14 +131,17 @@ section('the forced-change block leaves a way out');
     status(c) { res.statusCode = c; return res; },
     json(o) { res.body = o; return res; },
   };
-  // Stand in for the pool: the user owes a password change.
+  // Stand in for the pool: the user owes a password change. `stubRow` is
+  // reassigned below to run the same middleware as a staff user and as a
+  // client, because the two must NOT behave the same way.
+  let stubRow = { role: 'admin', is_active: true, must_change_password: true };
   const gatePath = require.resolve(path.join(ROOT, 'lib', 'portal-gate.js'));
   const dbPath = require.resolve(path.join(ROOT, 'lib', 'db.js'));
   require.cache[dbPath] = {
     id: dbPath, filename: dbPath, loaded: true, exports: {
       async query(sql, params) {
         calls.push(params);
-        return { rows: [{ is_active: true, must_change_password: true }] };
+        return { rows: [stubRow] };
       },
     },
   };
@@ -124,7 +151,9 @@ section('the forced-change block leaves a way out');
   const run = (p) => new Promise((resolve) => {
     let nexted = false;
     gate.requireActiveUser(
-      { session: { userId: 1 }, path: p },
+      // destroy() is needed for the suspended path, which tears the session
+      // down rather than merely answering 403.
+      { session: { userId: 1, destroy(cb) { cb(); } }, path: p },
       Object.assign({}, res, {
         status(c) { res.statusCode = c; return this; },
         json(o) { res.body = o; resolve({ blocked: true, status: res.statusCode, body: o }); return this; },
@@ -145,6 +174,31 @@ section('the forced-change block leaves a way out');
       const r = await run(p);
       check('but ' + p + ' stays reachable', r.blocked === false, r.status);
     }
+
+    /* ── The client case ──────────────────────────────────────────────────
+       Portal password resets are admin-only, so a client has NO screen on
+       which to satisfy a forced change. Enforcing the flag would answer 428
+       on every portal call and leave them looking at an error with nothing
+       to click — an account the admin has just reset would arrive broken.
+
+       The flag is refused here as well as at the point it is written,
+       because a row stranded by an earlier reset is already in the database
+       and no future write will visit it. */
+    stubRow = { role: 'client', is_active: true, must_change_password: true };
+
+    const clientOrdinary = await run('/portal/incidents');
+    check('a client owing a password change is NOT blocked',
+      clientOrdinary.blocked === false, clientOrdinary.status);
+
+    const clientScore = await run('/portal/secure-score');
+    check('and the rest of the portal stays reachable too',
+      clientScore.blocked === false, clientScore.status);
+
+    // Suspension is a different thing and must still bite for a client.
+    stubRow = { role: 'client', is_active: false, must_change_password: false };
+    const suspended = await run('/portal/incidents');
+    check('but a SUSPENDED client is still refused',
+      suspended.blocked === true && suspended.status === 403, suspended.status);
 
     delete require.cache[dbPath];
     delete require.cache[gatePath];
