@@ -2454,7 +2454,22 @@ async function runArcticWolfReportsSync(tenantId, userId) {
     await client.query(
       `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'ok', last_sync_message = $1
        WHERE tenant_id = $2 AND provider = $3`,
-      [`Synced ${stats.totalRows} session row${stats.totalRows !== 1 ? 's' : ''}`, tenantId, provider]
+      /*
+       * The click signal is called out explicitly.
+       *
+       * This feed is the only source of the phishing click rate, and when its
+       * Clicked column changed shape the dashboard reported 99% without a word
+       * of complaint. A sync that lands no click data now says so here, where
+       * an admin looking at the integrations panel will see it, rather than
+       * leaving the number on the Awareness tab to be believed.
+       */
+      [`Synced ${stats.totalRows} session row${stats.totalRows !== 1 ? 's' : ''}` +
+       (stats.clickSource === 'absent'
+         ? ' — no phishing click column in this export'
+         : stats.clickUnknown
+           ? ` — ${stats.clickUnknown} row${stats.clickUnknown !== 1 ? 's' : ''} with an unreadable click value`
+           : ''),
+       tenantId, provider]
     );
     await client.query('COMMIT');
     console.log(`[integrations] ${provider} sync: ${stats.totalRows} rows for tenant ${tenantId}`);

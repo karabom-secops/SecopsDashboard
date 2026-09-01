@@ -275,11 +275,18 @@
     const logoutBtn = document.getElementById('logoutBtn');
     if (logoutBtn) {
       logoutBtn.addEventListener('click', async function () {
+        logoutBtn.disabled = true;
         try {
-          await fetch(apiUrl('auth/logout'), {
-            method:      'POST',
-            credentials: 'same-origin',
-          });
+          // Raced against a timeout: an awaited fetch that never settles would
+          // skip the redirect and leave the button looking dead. The local
+          // sign-out must not depend on the server answering.
+          await Promise.race([
+            fetch(apiUrl('auth/logout'), {
+              method:      'POST',
+              credentials: 'same-origin',
+            }),
+            new Promise(function (r) { setTimeout(r, 3000); }),
+          ]);
         } catch (_) { /* ignore network errors on logout */ }
         location.replace(BASE + 'login.html');
       });

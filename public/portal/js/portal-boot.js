@@ -163,8 +163,17 @@
     var logout = document.getElementById('logoutBtn');
     if (logout) {
       logout.addEventListener('click', async function () {
+        logout.disabled = true;
+        logout.textContent = 'Signing out…';
         try {
-          await fetch(P.BASE + 'api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+          // Raced against a timeout: an awaited fetch that never settles — a
+          // hung server, a captive portal — would skip the redirect below and
+          // leave the button looking broken. Signing out locally is the part
+          // the person can see, so it must not depend on the server answering.
+          await Promise.race([
+            fetch(P.BASE + 'api/auth/logout', { method: 'POST', credentials: 'same-origin' }),
+            new Promise(function (r) { setTimeout(r, 3000); }),
+          ]);
         } catch (e) { /* sign out locally regardless */ }
         location.replace(P.BASE + 'login.html');
       });
@@ -175,6 +184,21 @@
 
   (async function boot() {
     var loading = document.getElementById('portalLoading');
+
+    /*
+     * Chrome is wired BEFORE the session call, not after.
+     *
+     * Sign out used to be wired at the end of boot, so any failure of
+     * /api/portal/me returned early and left the button inert — a real button,
+     * visibly enabled, doing nothing. That is precisely the state in which
+     * someone wants to sign out: the portal is showing them an error they
+     * cannot act on. It was also dead for the whole of a slow first load.
+     *
+     * Nothing in here depends on the response, so there is no reason for it to
+     * wait on one.
+     */
+    wireChrome();
+
     var me;
     try {
       me = await P.get('me');
@@ -208,7 +232,6 @@
     }
 
     if (loading) loading.remove();
-    wireChrome();
 
     // sidenav.js resolves visibility from .side-nav-item[hidden]; the portal's
     // items are never hidden, so this simply syncs its internal state.
