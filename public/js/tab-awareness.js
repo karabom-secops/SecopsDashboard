@@ -28,6 +28,11 @@
    * The tri-state is the point. Counting "not reported" as "did not click" is
    * how a broken import reports a perfect score.
    */
+  /** Thousands separators, so 4579 reads as 4,579 the way the vendor shows it. */
+  function _n(v) {
+    return String(v == null ? '' : v).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+
   function clickState(s) {
     if (!s) return null;
     if (s.clicked === true || s.clicked === false) return s.clicked;
@@ -408,18 +413,26 @@
       ? Math.round(completedTrain / trainSessions.length * 100)
       : 0;
 
-    /* Phishing click rate: unique users who clicked / unique users sent a sim.
+    /* Phishing click rate — PER SIMULATION, matching the Arctic Wolf console.
      *
-     * `clicked` is the fact and `clicked_at` is only the time, so the fact is
-     * what gets counted. Reading a click as !!clicked_at was half of why this
-     * card once showed 99%: the parser was manufacturing timestamps out of a
-     * yes/no column, and the value meaning "no" produced the year 1999.
+     * This card used to divide unique people who ever clicked by unique people
+     * ever sent a simulation. That is a real number, but it is not the one the
+     * vendor calls "Phishing Simulation Click-Rate", and it is far larger:
+     * across ~9 simulations each, almost everyone clicks something eventually.
+     * Reflex read 99% while Arctic Wolf read 20% for the same client, on the
+     * same data, because the two were measuring different things under the
+     * same name.
      *
-     * A row whose click state is unknown is excluded from BOTH sides rather
-     * than counted as a non-click, so a reporting gap cannot masquerade as
-     * good news. */
+     * The headline now counts click events against simulations sent, so the
+     * dashboard and the vendor agree. The per-person figure is kept below,
+     * where it is labelled for what it is — it answers "how many of our staff
+     * have ever fallen for one", which is a different and useful question.
+     *
+     * A row whose click state is unknown is excluded from both sides, so a
+     * reporting gap cannot masquerade as good news. */
     var phishingSims = sessions.filter(function (s) { return s.session_type === 'Phishing Simulation'; });
     var knownSims = phishingSims.filter(function (s) { return clickState(s) !== null; });
+    var clickedSims = knownSims.filter(function (s) { return clickState(s) === true; }).length;
 
     var sentPhishEmails = new Set(knownSims.map(function (s) {
       return (s.user_email || '').toLowerCase();
@@ -430,8 +443,8 @@
         .map(function (s) { return (s.user_email || '').toLowerCase(); })
     );
     var unknownSims = phishingSims.length - knownSims.length;
-    var phishClickRate = sentPhishEmails.size > 0
-      ? Math.round(clickedPhishEmails.size / sentPhishEmails.size * 100)
+    var phishClickRate = knownSims.length > 0
+      ? Math.round(clickedSims / knownSims.length * 100)
       : null;
 
     // Avg quiz score (only rows where quiz_score is a number)
@@ -441,8 +454,8 @@
       : 'N/A';
 
     el.innerHTML =
-      _card('Total Employees',          totalUsers,                       'accent-blue',   '') +
-      _card('Training Completion Rate', compRate + '%',                   'accent-green',  completedTrain + ' / ' + trainSessions.length + ' sessions') +
+      _card('Total Employees',          _n(totalUsers),                   'accent-blue',   '') +
+      _card('Training Completion Rate', compRate + '%',                   'accent-green',  _n(completedTrain) + ' / ' + _n(trainSessions.length) + ' sessions') +
       _card('Phishing Click Rate',
             phishClickRate === null ? 'Not reported' : phishClickRate + '%',
             'accent-red',
@@ -450,8 +463,19 @@
               ? (phishingSims.length
                   ? 'This export carried no click result'
                   : 'No phishing simulations in this export')
-              : clickedPhishEmails.size + ' / ' + sentPhishEmails.size + ' employees' +
-                (unknownSims ? ' · ' + unknownSims + ' not reported' : '')) +
+              : _n(clickedSims) + ' / ' + _n(knownSims.length) + ' simulations clicked' +
+                (unknownSims ? ' · ' + _n(unknownSims) + ' not reported' : '')) +
+      // The per-person view of the same data. Named for the question it
+      // answers, so it can never be mistaken for the vendor's click rate.
+      _card('Staff Who Have Clicked',
+            sentPhishEmails.size
+              ? Math.round(clickedPhishEmails.size / sentPhishEmails.size * 100) + '%'
+              : '—',
+            'accent-amber',
+            sentPhishEmails.size
+              ? _n(clickedPhishEmails.size) + ' of ' + _n(sentPhishEmails.size) +
+                ' clicked at least one, ever'
+              : 'No phishing simulations in this export') +
       _card('Avg Quiz Score',           avgQuiz + (avgQuiz !== 'N/A' ? '%' : ''), 'accent-amber', quizRows.length + ' quiz attempts');
   }
 

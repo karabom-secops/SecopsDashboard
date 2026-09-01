@@ -125,6 +125,42 @@ for (const [name, src] of [['tab-awareness.js', tabJs], ['report-sections.js', r
     !/!!s\.clicked_at/.test(src) && !/\.filter\(function \(s\) \{ return s\.clicked_at; \}\)/.test(src));
 }
 
+section('the click rate means what the vendor means by it');
+
+/*
+ * THE REAL CAUSE OF THE 99%.
+ *
+ * Reflex divided unique people who ever clicked by unique people ever sent a
+ * simulation. Arctic Wolf divides click events by simulations sent. On the
+ * client's live data — 2,182 simulations over 241 people, ~436 clicks — those
+ * are 99% and 20% respectively, and BOTH are arithmetically correct. Across
+ * roughly nine simulations each, nearly everyone clicks something eventually.
+ *
+ * The two numbers were shown under the same name, so the dashboard appeared to
+ * contradict the vendor console the client also has open. Verified in a real
+ * browser against a fixture built to those figures: the card prints 20%, and
+ * reverting this one division prints exactly 99%.
+ *
+ * The cross-check that proves the ingest was never at fault: sessions sent and
+ * training completion match the console exactly (4,579 and 78%).
+ */
+check('the headline divides clicks by SIMULATIONS, as the vendor does',
+  /phishClickRate\s*=\s*knownSims\.length > 0\s*\?\s*Math\.round\(clickedSims \/ knownSims\.length \* 100\)/.test(tabJs));
+check('and says so in the sub-line, so the unit is never ambiguous',
+  /simulations clicked/.test(tabJs));
+check('the per-person figure survives under its own name',
+  /Staff Who Have Clicked/.test(tabJs));
+check('and is the one that divides people by people',
+  /clickedPhishEmails\.size \/ sentPhishEmails\.size/.test(tabJs));
+check('labelled with the question it answers',
+  /clicked at least one, ever/.test(tabJs));
+
+// The board report must not disagree with the console either.
+check('the report divides clicks by measured simulations',
+  /clickPct:\s*known\.length \? completionPct\(clicked, known\.length\)/.test(repJs));
+check('and keeps the per-person view separately named',
+  /staffClickedPct/.test(repJs));
+
 // The denominator is the half people forget.
 check('the tab excludes unknown rows from the denominator',
   /knownSims = phishingSims\.filter/.test(tabJs));

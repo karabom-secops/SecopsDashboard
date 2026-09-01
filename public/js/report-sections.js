@@ -2352,6 +2352,15 @@ window.ReportSections = (function () {
   /**
    * Phishing simulation outcomes.
    *
+   * `clickPct` is PER SIMULATION — click events over simulations sent — which
+   * is what the Arctic Wolf console calls the click-rate. A board report that
+   * disagreed with the vendor's own dashboard would be indefensible in the
+   * room, and the per-person alternative is roughly five times larger: over
+   * many simulations, most people click something eventually.
+   *
+   * `staffClickedPct` keeps that per-person view under its own name, for the
+   * separate question of how much of the workforce has ever fallen for one.
+   *
    * Rows whose click state is unknown are excluded from the denominator as
    * well as the numerator. This slide goes to a board: a rate computed over
    * rows we never had an answer for would be presented as fact, and the most
@@ -2368,12 +2377,25 @@ window.ReportSections = (function () {
 
     var known   = sims.filter(function (s) { return clickState(s) !== null; });
     var clicked = known.filter(function (s) { return clickState(s) === true; }).length;
+
+    var email = function (s) { return (s.user_email || '').toLowerCase(); };
+    var staffSent    = {}; var staffClicked = {};
+    known.forEach(function (s) {
+      staffSent[email(s)] = true;
+      if (clickState(s) === true) staffClicked[email(s)] = true;
+    });
+    var sentCount    = Object.keys(staffSent).length;
+    var clickedCount = Object.keys(staffClicked).length;
+
     return {
       sent:      sims.length,
       measured:  known.length,
       unknown:   sims.length - known.length,
       clicked:   clicked,
       clickPct:  known.length ? completionPct(clicked, known.length) : null,
+      staffSent:       sentCount,
+      staffClicked:    clickedCount,
+      staffClickedPct: sentCount ? completionPct(clickedCount, sentCount) : null,
       assigned:  remed.length,
       completed: remed.filter(function (s) { return s.status === 'Complete'; }).length,
     };
