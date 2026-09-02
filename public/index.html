@@ -1996,6 +1996,7 @@
 
     <h3 class="rpt-sub">Sections to include</h3>
     <div class="rpt-section-list" id="rpt-sections"></div>
+    <p class="rpt-sections-note" id="rpt-sections-note" hidden></p>
 
     <h3 class="rpt-sub">Overview tiles</h3>
     <p class="rpt-help">Each tile shows the value derived from your data. Type in a box to
@@ -2227,6 +2228,35 @@
 
       <p id="estateEffective" class="admin-card-hint" hidden></p>
       <p id="estateMsg" class="admin-form-msg" hidden></p>
+    </div>
+
+    <!-- Services consumed — drives which report sections are pre-selected. -->
+    <div id="servicesSection" class="admin-card">
+      <h3 class="admin-card-title">Services Consumed</h3>
+      <p class="admin-card-hint">
+        What this client actually buys from us. The board report uses this to
+        pre-select the sections that apply, so a client who only buys awareness
+        training does not receive a "Vulnerability Dashboard — no data" slide
+        that reads to their board as a failing control.
+        <strong>Recording nothing is not the same as recording none:</strong>
+        until you save here, every section stays on offer.
+        An analyst can always tick a section back on in the report.
+      </p>
+
+      <form id="servicesForm" class="admin-add-form" novalidate>
+        <div id="servicesList" class="rpt-section-list"></div>
+        <div class="admin-form-row">
+          <div class="form-group admin-form-submit">
+            <button id="servicesSaveBtn" type="submit" class="btn btn-primary">Save Services</button>
+          </div>
+          <div class="form-group admin-form-submit">
+            <button id="servicesClearBtn" type="button" class="btn btn-secondary"
+              title="Go back to &quot;not recorded&quot;, where every report section is offered">Clear</button>
+          </div>
+        </div>
+      </form>
+
+      <p id="servicesMsg" class="admin-form-msg" hidden></p>
     </div>
 
     <!-- Add User Form -->

@@ -251,9 +251,28 @@ window.ReportsTab = (function () {
 
   // ── Rendering the tab ─────────────────────────────────────────────────────
 
+  /**
+   * The services this client consumes, or null when nobody has recorded them.
+   *
+   * Comes from GET /api/tenants, which is already fetched for the client
+   * dropdown, so pre-selecting the deck costs no extra request.
+   */
+  var _tenantServices = null;
+  var _servicesKnown  = false;
+
+  function readTenantServices() {
+    var id = selectedTenantId();
+    var t = (_tenants || []).filter(function (x) { return String(x.id) === String(id); })[0];
+    // Array vs null is the whole distinction: null means "not recorded", and
+    // an empty array means "recorded as none". They must not collapse.
+    _servicesKnown  = !!(t && Array.isArray(t.services));
+    _tenantServices = _servicesKnown ? t.services : null;
+  }
+
   function renderSectionToggles(prefs) {
     var host = document.getElementById('rpt-sections');
     if (!host) return;
+    readTenantServices();
 
     var groups = [];
     var byGroup = {};
@@ -262,22 +281,68 @@ window.ReportsTab = (function () {
       byGroup[s.group].push(s);
     });
 
+    /*
+     * What this client buys decides the STARTING tick-state.
+     *
+     * A client who only buys awareness training got "Vulnerability Dashboard"
+     * ticked by default and a slide reading "no data" — which a board reads as
+     * a failing control rather than a service they never purchased.
+     *
+     * Precedence, and the order matters:
+     *   1. an explicit saved choice for this client wins, always;
+     *   2. otherwise the recorded service mix decides;
+     *   3. and where no service mix has been recorded, everything is offered,
+     *      exactly as before this existed.
+     * So this never silently overrides an analyst who has already chosen.
+     */
+    var byService = window.ReportSections.defaultSectionsFor
+      ? window.ReportSections.defaultSectionsFor(_tenantServices)
+      : null;
+
+    var auto = 0;
     host.innerHTML = groups.map(function (g) {
       return '<div class="rpt-group">' +
           '<div class="rpt-group-label">' + S.esc(g) + '</div>' +
           byGroup[g].map(function (s) {
-            var on = prefs.sections && prefs.sections[s.id] !== undefined
-              ? prefs.sections[s.id] : true;
-            return '<label class="rpt-section-row">' +
+            var saved = prefs.sections && prefs.sections[s.id] !== undefined
+              ? prefs.sections[s.id] : null;
+            var suggested = byService && byService[s.id] !== undefined ? byService[s.id] : true;
+            var on = saved !== null ? saved : suggested;
+
+            // Flag only where the service mix turned something OFF that would
+            // otherwise be on — that is the change worth explaining.
+            var offByService = _servicesKnown && !suggested;
+            if (offByService && saved === null) auto++;
+
+            return '<label class="rpt-section-row' + (offByService ? ' rpt-section-na' : '') + '">' +
                 '<span class="integration-toggle">' +
                   '<input type="checkbox" id="rpt-sec-' + s.id + '"' + (on ? ' checked' : '') + '>' +
                   '<span class="int-toggle-slider"></span>' +
                 '</span>' +
                 '<span class="rpt-section-name">' + s.n + '. ' + S.esc(s.label) + '</span>' +
+                (offByService
+                  ? '<span class="rpt-section-tag" title="This client does not consume the service this section reports on. Tick it to include it anyway.">not subscribed</span>'
+                  : '') +
               '</label>';
           }).join('') +
         '</div>';
     }).join('');
+
+    var note = document.getElementById('rpt-sections-note');
+    if (note) {
+      if (!_servicesKnown) {
+        note.textContent = 'No services recorded for this client, so every section is offered. ' +
+          'Record them on the Admin tab and the deck will pre-select itself.';
+        note.hidden = false;
+      } else if (auto) {
+        note.textContent = auto + ' section' + (auto === 1 ? '' : 's') +
+          ' switched off automatically — this client does not subscribe to those services. ' +
+          'Tick any of them to include it anyway.';
+        note.hidden = false;
+      } else {
+        note.hidden = true;
+      }
+    }
   }
 
   function renderTiles(prefs) {
@@ -980,9 +1045,13 @@ window.ReportsTab = (function () {
 
       renderCommentBoxes(prefs);
 
-      renderSectionToggles(prefs);
-
+      // Clients first: the section toggles pre-select from the selected
+      // client's recorded services, and populateClients is what loads them.
+      // Rendering the toggles first left _tenants empty, so every client
+      // looked unconfigured on the first paint and nothing was pre-selected.
       await populateClients(prefs);
+
+      renderSectionToggles(prefs);
 
       var gen = document.getElementById('rpt-generate-btn');
       if (gen) gen.onclick = generate;

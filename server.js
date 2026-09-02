@@ -20,6 +20,7 @@ const reportArchive = require('./lib/report-archive');
 const portalRoutes = require('./lib/portal-routes');
 const { ROLES, ROLE_LABELS, PAGES, PAGE_KEYS, LEVELS, LEVEL_RANK, resolveAccess } = require('./lib/pages');
 const pagesLib = require('./lib/pages');
+const servicesLib = require('./lib/services');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics } = require('./lib/metrics');
 const { parseVulnFile, computeVulnSummary, computeDueDate } = require('./lib/vuln-parser');
@@ -801,11 +802,35 @@ app.post('/api/auth/switch-tenant', (req, res) => {
 
 const SLUG_RE = /^[a-z0-9_-]{2,30}$/;
 
+/**
+ * Whether db/migrate-tenant-services.sql has been run.
+ *
+ * Cached only on a positive answer, so applying the migration takes effect
+ * without a restart. Same idiom as hasUserLifecycleColumns.
+ */
+let _tenantServicesColumn = null;
+async function hasTenantServicesColumn() {
+  if (_tenantServicesColumn) return true;
+  try {
+    const r = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tenants' AND column_name = 'services' LIMIT 1`);
+    if (r.rows.length) _tenantServicesColumn = true;
+    return r.rows.length > 0;
+  } catch (_) { return false; }
+}
+
 app.get('/api/tenants', async (req, res) => {
   // All authenticated users can list tenants (needed for dropdowns).
   try {
+    // NULL, not '{}', when the column is missing: an un-migrated deployment has
+    // not said this client buys nothing, it has said nothing at all — and the
+    // report treats those two very differently.
+    const servicesCol = await hasTenantServicesColumn()
+      ? 't.services' : 'NULL::text[] AS services';
+
     const result = await pool.query(
-      `SELECT t.id, t.name, t.slug, t.created_at,
+      `SELECT t.id, t.name, t.slug, t.created_at, ${servicesCol},
               COUNT(u.id)::int AS user_count
        FROM tenants t
        LEFT JOIN users u ON u.tenant_id = t.id
@@ -814,6 +839,75 @@ app.get('/api/tenants', async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /api/tenants/:id/services — the catalogue plus this client's selection. */
+app.get('/api/tenants/:id/services', requireAuth, async (req, res) => {
+  try {
+    const tenantId = parseInt(req.params.id, 10);
+    if (isNaN(tenantId)) return res.status(400).json({ error: 'Invalid tenant id.' });
+
+    // A tenant admin may only look at their own organisation.
+    if (req.session.role !== 'superadmin' && req.session.tenantId !== tenantId) {
+      return res.status(403).json({ error: 'You can only view your own organisation.' });
+    }
+
+    if (!await hasTenantServicesColumn()) {
+      return res.json({
+        tenantId, services: null, catalogue: servicesLib.SERVICES,
+        available: false,
+        message: 'Service selection is not available yet. Run db/migrate-tenant-services.sql.',
+      });
+    }
+
+    const r = await pool.query('SELECT services FROM tenants WHERE id = $1', [tenantId]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Tenant not found.' });
+
+    return res.json({
+      tenantId, services: r.rows[0].services, catalogue: servicesLib.SERVICES,
+      available: true,
+    });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+/**
+ * PUT /api/tenants/:id/services — record what this client buys.
+ *
+ * `services: null` clears the record back to "not configured", which is a
+ * different state from an empty array and has to be reachable: an analyst who
+ * ticked the wrong client needs a way back to "we have not said".
+ */
+app.put('/api/tenants/:id/services', requireAuth, async (req, res) => {
+  try {
+    const tenantId = parseInt(req.params.id, 10);
+    if (isNaN(tenantId)) return res.status(400).json({ error: 'Invalid tenant id.' });
+
+    if (req.session.role !== 'superadmin' && req.session.tenantId !== tenantId) {
+      return res.status(403).json({ error: 'You can only edit your own organisation.' });
+    }
+    // Write access is enforced by pageGate: `tenants` maps to the admin page,
+    // and reads short-circuit before that map is consulted.
+
+    if (!await hasTenantServicesColumn()) {
+      return res.status(503).json({
+        error: 'Service selection is not available yet. Run db/migrate-tenant-services.sql.',
+      });
+    }
+
+    const services = servicesLib.normaliseServices(req.body.services);
+
+    const r = await pool.query(
+      'UPDATE tenants SET services = $1 WHERE id = $2 RETURNING id, name, services',
+      [services, tenantId]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Tenant not found.' });
+
+    return res.json({ ok: true, tenant: r.rows[0] });
+  } catch (err) {
+    return serverError(res, err);
   }
 });
 

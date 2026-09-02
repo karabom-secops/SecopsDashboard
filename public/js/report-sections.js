@@ -1418,68 +1418,53 @@ window.ReportSections = (function () {
 
   // ── Detection & Response KPIs ─────────────────────────────────────────────
 
-  /** Target hours to resolution by ticket severity. */
-  // ── Business-hours SLA measurement ────────────────────────────────────────
+  // ── Resolution SLA: 24/7, measured in elapsed hours ───────────────────────
   //
-  // Response SLAs are worked in BUSINESS hours, not wall-clock. A MEDIUM
-  // ticket raised at 17:05 on Friday and closed at 09:00 on Monday is 64
-  // elapsed hours and fails a 24-hour target, even though the team picked it
-  // up in the first working hour available. Measuring elapsed time punished
-  // the service for the calendar rather than for its response.
+  // Security operations run continuously, so the clock does too. This used to
+  // be measured in BUSINESS hours against an 08:00–17:00 Mon–Fri window, which
+  // is the right model for a service desk and the wrong one here: it stopped
+  // the clock overnight and all weekend, so a ticket raised Friday evening and
+  // closed Monday morning was reported as a couple of hours. The number
+  // flattered the service and did not describe what the client experienced.
   //
-  // Change these to match the contracted service window. Holidays are NOT
-  // modelled: a public holiday counts as a working day, so a ticket spanning
-  // one is measured slightly harshly.
-  var BUSINESS_HOURS = {
-    startHour: 8,             // 08:00 local
-    endHour:   17,            // 17:00 local
-    workDays:  [1, 2, 3, 4, 5],   // Mon-Fri (0 = Sunday)
-    utcOffsetMinutes: 120,    // SAST, UTC+2, no daylight saving
+  // Elapsed hours are what a board means by "resolved in 24 hours", and what a
+  // 24/7 service should be held to.
+  var IR_SLA_HOURS = {
+    CRITICAL: 8,
+    HIGH:     24,
+    MEDIUM:   48,
+    LOW:      72,
   };
+  var SLA_TARGET_PCT = 95;
+
+  /** How the target is phrased when the board asks what we committed to. */
+  function slaTargetLabel() {
+    return 'Critical ' + IR_SLA_HOURS.CRITICAL + ' h · High ' + IR_SLA_HOURS.HIGH +
+           ' h · Medium ' + IR_SLA_HOURS.MEDIUM + ' h · Low ' + IR_SLA_HOURS.LOW + ' h';
+  }
 
   /**
-   * Business hours between two timestamps, per BUSINESS_HOURS.
+   * Wall-clock hours between two timestamps.
    *
-   * Returns null when either stamp is unparseable or the end precedes the
-   * start; 0 is a legitimate result (raised and closed outside the window).
-   * Time outside the service window simply does not accrue, so the clock
-   * effectively starts when the office next opens.
+   * Returns null when either stamp is missing or unparseable, or when the end
+   * precedes the start. Empties are rejected explicitly because new Date(null)
+   * is the 1970 epoch rather than an invalid date, so a ticket missing a
+   * timestamp would otherwise be measured from 1970 and report half a million
+   * hours — which is how a single bad row can wreck an average.
    */
-  function businessHoursBetween(startTs, endTs, cfg) {
-    var c = cfg || BUSINESS_HOURS;
-    // Reject empties explicitly: new Date(null) is the 1970 epoch, not an
-    // invalid date, so a ticket missing a timestamp would otherwise be measured
-    // from 1970 and report thousands of business hours.
+  function elapsedHoursBetween(startTs, endTs) {
     if (!startTs || !endTs) return null;
     var a = new Date(startTs), b = new Date(endTs);
     if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
     if (b.getTime() < a.getTime()) return null;
-
-    var DAY = 86400000;
-    var off = c.utcOffsetMinutes * 60000;
-    // Shift into local time so UTC arithmetic below reads as local wall time.
-    var s = a.getTime() + off;
-    var e = b.getTime() + off;
-
-    var work = {};
-    c.workDays.forEach(function (d) { work[d] = true; });
-    var open  = c.startHour * 3600000;
-    var close = c.endHour   * 3600000;
-
-    var total = 0;
-    var day = Math.floor(s / DAY) * DAY;   // local midnight of the start day
-    // Guard against a nonsense range walking for ever on bad data.
-    var guard = 0;
-    for (; day < e && guard < 4000; day += DAY, guard++) {
-      if (!work[new Date(day).getUTCDay()]) continue;
-      var from = Math.max(s, day + open);
-      var to   = Math.min(e, day + close);
-      if (to > from) total += (to - from);
-    }
-    return total / 3600000;
+    return (b.getTime() - a.getTime()) / 3600000;
   }
-  var MDR_SLA_HOURS = { HIGH: 8, MEDIUM: 24, LOW: 72 };   // business hours, not elapsed
-  var SLA_TARGET_PCT = 95;
+
+  /** The contracted target for a ticket, or null when its severity is unknown. */
+  function slaTargetFor(severity) {
+    var key = String(severity || '').trim().toUpperCase();
+    return IR_SLA_HOURS[key] != null ? IR_SLA_HOURS[key] : null;
+  }
 
   function irKpiBlock(ctx) {
     var tickets = ((ctx.data.mdr || {}).tickets) || [];
@@ -1491,17 +1476,22 @@ window.ReportSections = (function () {
       return t.resolvedAt && monthOf(t.resolvedAt) === period;
     });
 
-    // Business hours throughout, so MTTR and the SLA figure in the same table
+    // Elapsed hours throughout, so MTTR and the SLA figure in the same table
     // are measured the same way. Mixing an elapsed-time MTTR with a
     // business-hours SLA made the two rows contradict each other.
+    //
+    // A ticket whose severity we do not recognise is counted in MTTR but NOT
+    // in the SLA figure: it has no contracted target, and defaulting it to
+    // MEDIUM would invent a commitment and then grade the service against it.
     var hours = [];
-    var slaMet = 0, slaTotal = 0;
+    var slaMet = 0, slaTotal = 0, slaUngraded = 0;
     resolved.forEach(function (t) {
-      var h = businessHoursBetween(t.createdAt, t.resolvedAt);
+      var h = elapsedHoursBetween(t.createdAt, t.resolvedAt);
       if (h == null) return;
       hours.push(h);
-      var target = MDR_SLA_HOURS[(t.severity || 'MEDIUM').toUpperCase()];
+      var target = slaTargetFor(t.severity);
       if (target != null) { slaTotal++; if (h <= target) slaMet++; }
+      else slaUngraded++;
     });
 
     if (!raised.length && !resolved.length) return null;
@@ -1526,12 +1516,24 @@ window.ReportSections = (function () {
       { kpi: 'Mean time to respond (MTTR)', target: '—',                    actual: hrs(mttr), ok: null },
       { kpi: 'Mean time to mitigate (EDR)', target: '—',                    actual: hrs(mttm), ok: null },
       { kpi: 'Median time to respond',      target: '—',                    actual: hrs(median), ok: null },
-      { kpi: 'Resolution SLA achievement',  target: SLA_TARGET_PCT + ' %',  actual: slaPct == null ? '—' : slaPct + ' %',
+      // The commitment is stated on the row it is measured against, so the
+      // board can see what 95% is 95% OF without turning to a contract.
+      { kpi: 'Resolution within SLA',       target: slaTargetLabel(),
+        actual: slaPct == null ? '—' : slaPct + ' %',
         ok: slaPct == null ? null : slaPct >= SLA_TARGET_PCT },
+      { kpi: 'SLA achievement target',      target: SLA_TARGET_PCT + ' %',
+        actual: slaTotal ? slaMet + ' of ' + slaTotal + ' tickets' : '—', ok: null },
       { kpi: 'Tickets raised',              target: '—',                    actual: String(raised.length), ok: null },
       { kpi: 'Tickets resolved',            target: '—',                    actual: String(resolved.length), ok: null },
       { kpi: 'Resolution rate',             target: '—',                    actual: resRate == null ? '—' : resRate + ' %', ok: null },
     ];
+
+    // Only shown when it happened. A silent exclusion is how a partial SLA
+    // figure gets read as a complete one.
+    if (slaUngraded) {
+      rows.push({ kpi: 'Not graded (severity unrecognised)', target: '—',
+        actual: String(slaUngraded) + ' ticket' + (slaUngraded === 1 ? '' : 's'), ok: null });
+    }
 
     return D.dataTable({
       cols: [
@@ -1545,14 +1547,10 @@ window.ReportSections = (function () {
       ],
       rows: rows,
     }) +
-    '<div class="rag-note">Response time is measured from ticket creation to ' +
-      'resolution in <strong>business hours</strong> (' +
-      String(BUSINESS_HOURS.startHour).padStart(2, '0') + ':00–' +
-      String(BUSINESS_HOURS.endHour).padStart(2, '0') + ':00, Monday to Friday), ' +
-      'so time outside the service window does not count against the target. ' +
-      'Public holidays are treated as working days. ' +
-      'SLA targets: High ' + MDR_SLA_HOURS.HIGH + ' business hrs, Medium ' +
-      MDR_SLA_HOURS.MEDIUM + ' business hrs, Low ' + MDR_SLA_HOURS.LOW + ' business hrs. ' +
+    '<div class="rag-note">Security operations run <strong>24/7</strong>, so ' +
+      'response time is measured in elapsed hours from ticket creation to ' +
+      'resolution — nights, weekends and public holidays included. ' +
+      'SLA targets: ' + slaTargetLabel() + '. ' +
       'Mean time to detect is not reported: the ticket feed carries no detection ' +
       'timestamp, so mean time to mitigate from the EDR platform is shown instead.</div>';
   }
@@ -2553,10 +2551,13 @@ window.ReportSections = (function () {
     });
     if (tickets.length) {
       var met = 0, total = 0;
+      // Same measure as the Detection & Response KPI table, or the assurance
+      // dashboard and the KPI slide would print two different SLA figures for
+      // the same month.
       tickets.forEach(function (t2) {
-        var target = MDR_SLA_HOURS[(t2.severity || 'MEDIUM').toUpperCase()];
+        var target = slaTargetFor(t2.severity);
         if (target == null) return;
-        var h = businessHoursBetween(t2.createdAt, t2.resolvedAt);
+        var h = elapsedHoursBetween(t2.createdAt, t2.resolvedAt);
         if (h == null) return;
         total++;
         if (h <= target) met++;
@@ -3138,65 +3139,130 @@ window.ReportSections = (function () {
   // ══════════════════════════════════════════════════════════════════════════
   var SECTIONS = [
     { n: 1,  id: 'execSummary',        label: 'Executive Summary',                       group: 'Executive',
+      services: null,          // always offered, whatever the client buys
       requires: [],
       optional: ['secureScore', 'secureScoreHistory', 'vulnFindings', 'mdr', 'awareness', 'vulnSummary'],
       render: renderExecSummary, commentable: true },
 
     { n: 2,  id: 'assuranceDashboard', label: 'Cybersecurity Assurance Dashboard',       group: 'Executive',
+      services: null,          // always offered, whatever the client buys
       requires: ['secureScore'], optional: ['secureScoreHistory', 'mdr', 'edr'],
       render: renderAssuranceDashboard, commentable: true },
 
     { n: 3,  id: 'heatMap',            label: 'Cyber Risk Heat Map',                     group: 'Risk',
+      services: ['vciso'],
       requires: ['vulnFindings'],                  render: renderRiskHeatMap, commentable: true },
 
     { n: 4,  id: 'assurance',          label: 'Board Assurance Statement',               group: 'Executive',
+      services: null,          // always offered, whatever the client buys
       requires: [],                                render: renderAssurance },
 
     { n: 5,  id: 'topRisks',           label: 'Top Cyber Risks',                         group: 'Risk',
+      services: ['vciso'],
       requires: ['vulnFindings'],                  render: renderTopRisks, commentable: true },
 
     { n: 6,  id: 'execRisk',           label: 'Risk Appetite Dashboard',                 group: 'Risk',
+      services: ['vciso'],
       requires: ['secureScore'], optional: ['edr', 'o365', 'vulnFindings', 'secureScoreHistory'],
       render: renderRiskAppetite, commentable: true },
 
     { n: 7,  id: 'businessImpact',     label: 'Business Impact Summary',                 group: 'Risk',
+      services: ['vciso'],
       requires: ['vulnFindings'],                  render: renderBusinessImpact, commentable: true },
 
     { n: 8,  id: 'threatLandscape',    label: 'Threat Landscape Overview',               group: 'Dashboards',
+      services: ['mdr', 'edr', 'ndr', 'vciso'],
       requires: ['vulnFindings'], optional: ['mdr'],
       render: renderThreatLandscape, commentable: true },
 
     { n: 9,  id: 'thirdParty',         label: 'Third-Party Risk Dashboard',              group: 'Dashboards',
+      services: ['vciso'],
       requires: [], optional: ['vendors', 'grcAssessment', 'grcQuestions', 'vulnFindings'],
       render: renderThirdPartyRisk },
 
     { n: 10, id: 'identityRisk',       label: 'Identity and Access Risk Dashboard',      group: 'Dashboards',
+      services: ['identity', 'vciso'],
       requires: [], optional: ['o365', 'grcAssessment', 'grcQuestions'],
       render: renderIdentityRisk },
 
     { n: 11, id: 'vulnDashboard',      label: 'Vulnerability Dashboard',                 group: 'Dashboards',
+      services: ['vuln'],
       requires: ['vulnFindings'], optional: ['vulnSummary', 'vulnTrends'],
       render: renderVulnDashboard },
 
     { n: 12, id: 'humanRisk',          label: 'Human Risk Dashboard',                    group: 'Dashboards',
+      services: ['awareness'],
       requires: ['awareness'], optional: ['grcAssessment', 'grcQuestions'],
       render: renderHumanRisk },
 
     { n: 13, id: 'resilience',         label: 'Recovery and Resilience Dashboard',       group: 'Dashboards',
+      services: ['mdr', 'edr', 'vciso'],
       requires: ['grcAssessment', 'grcQuestions'], optional: ['vulnFindings'],
       render: renderResilience },
 
     { n: 14, id: 'compliance',         label: 'Compliance Dashboard',                    group: 'Governance',
+      services: ['vciso'],
       requires: ['grcAssessment', 'grcQuestions'], render: renderCompliance },
 
     { n: 15, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',
+      services: null,          // always offered, whatever the client buys
       requires: ['secureScore'], optional: ['vulnFindings'],
       render: renderDecisions, commentable: true },
   ];
 
-  // Exported for the business-hours test suite.
-  SECTIONS.businessHoursBetween = businessHoursBetween;
-  SECTIONS.BUSINESS_HOURS = BUSINESS_HOURS;
+  // ══════════════════════════════════════════════════════════════════════════
+  // Which sections apply to which services
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * The services that make a section relevant. null means "always relevant".
+   *
+   * Read from the section itself rather than a second lookup table, so a new
+   * section cannot be added without someone deciding who it is for — a
+   * separate map would just silently omit it.
+   */
+  function servicesForSection(id) {
+    var sec = null;
+    SECTIONS.forEach(function (s) { if (s.id === id) sec = s; });
+    return sec ? (sec.services || null) : null;
+  }
+
+  /**
+   * defaultSectionsFor(services) — the starting tick-state for a client.
+   *
+   * @param {Array<string>|null} services  what the client buys, or null when
+   *        nobody has recorded it yet.
+   * @returns {Object<string, boolean>} keyed by section id.
+   *
+   * THE null CASE IS NOT AN EDGE CASE. Most clients will be unconfigured on the
+   * day this ships, and treating "not recorded" as "buys nothing" would quietly
+   * reduce every one of their reports to four sections. Unknown therefore means
+   * everything, which is exactly the behaviour that existed before.
+   *
+   * This sets a STARTING POINT. The analyst can tick anything back on; sections
+   * are still self-disabling when their data is missing, so ticking a section
+   * for a service the client does not buy costs nothing worse than a skip.
+   */
+  function defaultSectionsFor(services) {
+    var known = Array.isArray(services);
+    var out = {};
+
+    SECTIONS.forEach(function (s) {
+      if (!s.services) { out[s.id] = true; return; }   // always offered
+      if (!known)      { out[s.id] = true; return; }   // not recorded => all
+      out[s.id] = s.services.some(function (k) { return services.indexOf(k) >= 0; });
+    });
+
+    return out;
+  }
+
+  // Exported for the SLA test suite.
+  SECTIONS.elapsedHoursBetween = elapsedHoursBetween;
+  SECTIONS.IR_SLA_HOURS        = IR_SLA_HOURS;
+  SECTIONS.slaTargetFor        = slaTargetFor;
+  SECTIONS.phishingMetrics     = phishingMetrics;
+  SECTIONS.servicesForSection  = servicesForSection;
+  SECTIONS.defaultSectionsFor  = defaultSectionsFor;
   SECTIONS.draftObservations = draftObservations;
   SECTIONS.draftAssurance    = draftAssurance;
   SECTIONS.draftExecSummary  = draftExecSummary;

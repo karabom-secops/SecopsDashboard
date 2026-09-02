@@ -765,6 +765,125 @@
     }
   }
 
+  /* ── Services consumed ─────────────────────────────────────────────────────
+     What the client buys, which the board report uses to pre-select its
+     sections. Kept beside the estate because both describe the client rather
+     than the platform, and both are edited by the same person. */
+
+  let _serviceCatalogue = [];
+
+  function servicesMsg(text, isError) {
+    const el = document.getElementById('servicesMsg');
+    if (!el) return;
+    el.textContent = text || '';
+    el.hidden = !text;
+    el.classList.toggle('is-error', !!isError);
+  }
+
+  /** Which tenant this card is editing. Mirrors the estate card exactly. */
+  function servicesTenantId() {
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+    if (isSA && window.globalTenantId) return window.globalTenantId;
+    return (window.currentUser && window.currentUser.tenantId) || null;
+  }
+
+  function renderServices(selected) {
+    const host = document.getElementById('servicesList');
+    if (!host) return;
+
+    // null (not recorded) and [] (recorded as none) both render as all-clear;
+    // the message below is what tells them apart, because the checkboxes
+    // cannot.
+    const on = Array.isArray(selected) ? selected : [];
+
+    host.innerHTML = _serviceCatalogue.map(function (s) {
+      return '<label class="rpt-section-row">' +
+          '<span class="integration-toggle">' +
+            '<input type="checkbox" class="svc-check" value="' + escapeHtml(s.key) + '"' +
+              (on.indexOf(s.key) >= 0 ? ' checked' : '') + '>' +
+            '<span class="int-toggle-slider"></span>' +
+          '</span>' +
+          '<span class="rpt-section-name">' + escapeHtml(s.label) +
+            '<small class="rpt-section-hint">' + escapeHtml(s.hint || '') + '</small>' +
+          '</span>' +
+        '</label>';
+    }).join('');
+  }
+
+  async function loadServices() {
+    const section = document.getElementById('servicesSection');
+    if (!section) return;
+
+    const tid = servicesTenantId();
+    if (!tid) { section.hidden = true; return; }
+    section.hidden = false;
+
+    try {
+      const res = await fetch(apiUrl('tenants/' + encodeURIComponent(tid) + '/services'),
+        { credentials: 'same-origin' });
+      const j = await res.json().catch(function () { return {}; });
+
+      if (!res.ok) {
+        servicesMsg(j.error || ('Could not load services (HTTP ' + res.status + ').'), true);
+        return;
+      }
+
+      _serviceCatalogue = j.catalogue || [];
+      renderServices(j.services);
+
+      const saveBtn = document.getElementById('servicesSaveBtn');
+      if (saveBtn) saveBtn.disabled = j.available === false;
+
+      if (j.available === false) {
+        servicesMsg(j.message || 'Service selection is not available yet.', true);
+      } else if (!Array.isArray(j.services)) {
+        servicesMsg('Not recorded yet — every report section is currently offered ' +
+          'for this client.');
+      } else if (!j.services.length) {
+        servicesMsg('Recorded as no services. Only the always-on report sections ' +
+          'will be pre-selected.');
+      } else {
+        servicesMsg('');
+      }
+    } catch (err) {
+      servicesMsg('Could not load services: ' + err.message, true);
+    }
+  }
+
+  async function saveServices(services) {
+    const tid = servicesTenantId();
+    if (!tid) return;
+
+    const btn = document.getElementById('servicesSaveBtn');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch(apiUrl('tenants/' + encodeURIComponent(tid) + '/services'), {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ services: services }),
+      });
+      const j = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        servicesMsg(j.error || ('Save failed (HTTP ' + res.status + ').'), true);
+        return;
+      }
+      await loadServices();
+      if (services !== null) showAdminSuccess('Services saved.');
+    } catch (err) {
+      servicesMsg('Save failed: ' + err.message, true);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function handleSaveServices(e) {
+    e.preventDefault();
+    const picked = Array.prototype.map.call(
+      document.querySelectorAll('#servicesList .svc-check:checked'),
+      function (c) { return c.value; });
+    saveServices(picked);
+  }
+
   async function initAdmin() {
     configureTableForRole();
 
@@ -772,6 +891,21 @@
     if (estateForm) {
       estateForm.addEventListener('submit', handleSaveEstate);
       loadEstate();
+    }
+
+    const servicesForm = document.getElementById('servicesForm');
+    if (servicesForm) {
+      servicesForm.addEventListener('submit', handleSaveServices);
+      const clearBtn = document.getElementById('servicesClearBtn');
+      if (clearBtn) {
+        clearBtn.addEventListener('click', function () {
+          if (!confirm('Clear the recorded services for this client?\n\n' +
+                       'The report will go back to offering every section.')) return;
+          // null, not [] — "we have not said" rather than "they buy nothing".
+          saveServices(null);
+        });
+      }
+      loadServices();
     }
 
     if (isSuperAdmin()) {

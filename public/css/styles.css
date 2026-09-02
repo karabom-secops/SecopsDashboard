@@ -3873,6 +3873,34 @@ body.login-page {
 }
 .rpt-section-name { font-size: 0.9rem; color: var(--text); }
 
+/* A section switched off because the client does not buy the service it
+   reports on. Dimmed rather than hidden: the analyst must be able to see what
+   was decided for them, and tick it back on. */
+.rpt-section-na .rpt-section-name { opacity: 0.62; }
+.rpt-section-tag {
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--separator);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  color: var(--text-muted, #6b7a89);
+  white-space: nowrap;
+  cursor: help;
+}
+.rpt-section-hint {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--text-muted, #6b7a89);
+  margin-top: 0.1rem;
+}
+.rpt-sections-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-muted, #6b7a89);
+}
+
 .rpt-tile-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
