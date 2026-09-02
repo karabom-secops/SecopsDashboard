@@ -1036,8 +1036,10 @@ window.ReportSections = (function () {
   var VULN_OPEN_STATUSES = { open: 1, 'in-progress': 1 };
 
   function vulnExposureBlock(ctx) {
-    // Not shown at all for a client without vulnerability management.
-    if (!componentInScope(ctx, 'vulnerabilities')) return null;
+    // Scan findings, so this follows the Vulnerability Management SERVICE — not
+    // the vulnerabilities score component, which an MDR client satisfies
+    // through endpoint patch currency without buying a scan.
+    if (!serviceInScope(ctx, 'vuln')) return null;
     var findings = ((ctx.data.vulnFindings || {}).vulns) || [];
     if (!findings.length) return null;
 
@@ -1648,8 +1650,20 @@ window.ReportSections = (function () {
      * The scoped score and its coverage have their own section.
      */
     var scoped = scopeRecorded(ctx);
+
+    /*
+     * The vulnerability row is named for the yardstick actually applied. An
+     * MDR client is scored on endpoint patch currency, not on a scan they do
+     * not buy, and a row headed "Vulnerability Management" would invite them
+     * to ask about scanning that was never in the engagement.
+     */
+    var vulnBasis = (((ctx.data.secureScore || {}).components || {})
+      .vulnerabilities || {}).basis;
+    var vulnLabel = vulnBasis === 'endpoint'
+      ? 'Endpoint Patch Currency' : 'Vulnerability Management';
+
     var domains = [
-      { label: 'Vulnerability Management', key: 'vulnerabilities',  target: MATURITY_TARGETS.vulnerabilities },
+      { label: vulnLabel, key: 'vulnerabilities',  target: MATURITY_TARGETS.vulnerabilities },
       { label: 'Security Awareness',       key: 'awareness',        target: MATURITY_TARGETS.awareness },
       { label: 'Incident Response',        key: 'incidentResponse', target: MATURITY_TARGETS.incidentResponse },
       { label: 'Secure Score',             key: 'overall',          target: MATURITY_TARGETS.overall },
@@ -2695,17 +2709,30 @@ window.ReportSections = (function () {
      * not even a zero, which on a board pack reads as a clean scan rather than
      * as a service never purchased.
      */
-    if (componentInScope(ctx, 'vulnerabilities')) {
+    /*
+     * Gated on the SERVICE THAT PRODUCES THE DATA, not on the score component.
+     *
+     * These are not the same thing and conflating them put an empty
+     * "Critical & high vulnerabilities open — No data" tile in front of an MDR
+     * client. The vulnerabilities COMPONENT is legitimately in scope for them:
+     * MDR includes endpoint detection, so it is scored on endpoint patch
+     * currency. But this tile is fed by SCAN findings, which come from the
+     * Vulnerability Management service they do not buy.
+     *
+     * The component answers "what are they scored on". The service answers
+     * "where does this number come from". A tile has to ask the second.
+     */
+    if (serviceInScope(ctx, 'vuln')) {
       tiles.push({ v: crit == null ? null : String(crit),
                    l: 'Critical &amp; high vulnerabilities open' });
     }
-    if (componentInScope(ctx, 'incidentResponse')) {
+    if (serviceInScope(ctx, 'mdr')) {
       tiles.push({ v: String(incidents), l: 'Security incidents this period' +
         (mdrRaised && irIncidents ? ' (' + mdrRaised + ' MDR, ' + irIncidents + ' logged)' : '') });
       tiles.push({ v: slaPct == null ? null : slaPct + '%',
                    l: 'Resolution SLA met' });
     }
-    if (componentInScope(ctx, 'awareness')) {
+    if (serviceInScope(ctx, 'awareness')) {
       tiles.push({ v: awPct == null ? null : awPct + '%', l: 'Awareness completion' });
     }
     // The risk register is a governance deliverable, not a technical feed.

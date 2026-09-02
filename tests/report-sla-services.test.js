@@ -670,13 +670,24 @@ section('the blocks behind the tiles are gated too');
 // Gating the tile but not the block behind it would drop the headline number
 // and keep the whole dashboard it came from.
 const gateCode = codeOnly(src);
-[['awarenessBlock', 'awareness'],
- ['vulnExposureBlock', 'vulnerabilities'],
- ['irKpiBlock', 'incidentResponse']].forEach(function (pair) {
+/*
+ * Each block is gated on the thing that actually feeds it.
+ *
+ * vulnExposureBlock is SCAN data, so it follows the Vulnerability Management
+ * SERVICE — not the vulnerabilities score component, which an MDR client
+ * satisfies through endpoint patch currency without buying a scan. Gating it
+ * on the component put an empty tile in an MDR client's board pack.
+ */
+[['awarenessBlock', "componentInScope\\(ctx, 'awareness'\\)"],
+ ['vulnExposureBlock', "serviceInScope\\(ctx, 'vuln'\\)"],
+ ['irKpiBlock', "componentInScope\\(ctx, 'incidentResponse'\\)"]].forEach(function (pair) {
   const fn = gateCode.slice(gateCode.indexOf('function ' + pair[0] + '(ctx)'));
   check(pair[0] + ' returns nothing when out of scope',
-    new RegExp("componentInScope\\(ctx, '" + pair[1] + "'\\)").test(fn.slice(0, 400)));
+    new RegExp(pair[1]).test(fn.slice(0, 400)), pair[1]);
 });
+// The distinction that caused the bug, pinned so it cannot be undone.
+check('the vulnerability tile follows the scanning service, not the component',
+  /if \(serviceInScope\(ctx, 'vuln'\)\) \{[\s\S]{0,200}vulnerabilities open/.test(src));
 check('endpoint coverage is gated on Managed EDR',
   /serviceInScope\(ctx, 'edr'\)/.test(gateCode));
 check('the maturity table drops out-of-scope domains',
@@ -859,6 +870,21 @@ const FINGERPRINT = {
   identity: /ZZIDENTITYZZ/, edr: /ZZEDRZZ/, viso: /ZZVENDORZZ/,
 };
 
+/**
+ * Tile labels that belong to a service, matched against the rendered captions.
+ *
+ * "Critical & high vulnerabilities open" is scan data even when the
+ * vulnerabilities SCORE COMPONENT is in scope — an MDR client is scored on
+ * endpoint patch currency and buys no scan, so the tile must not appear.
+ * That distinction is why these are keyed on the service, not the component.
+ */
+const TILE_SERVICE = {
+  vuln:      /vulnerabilities open/i,
+  mdr:       /Security incidents this period|Resolution SLA met/i,
+  awareness: /Awareness completion/i,
+  viso:      /risks above appetite/i,
+};
+
 function allSourceData() {
   return {
     vulnFindings: { vulns: [{ name: 'ZZVULNZZ finding', risk: 'Critical', status: 'open',
@@ -883,11 +909,27 @@ function allSourceData() {
   };
 }
 
+/*
+ * An endpoint-only estate, which is where the reported bug lived.
+ *
+ * With no servers, public assets or cloud, the vulnerability component is
+ * scored on ENDPOINT PATCH CURRENCY rather than a scan — so for an MDR client
+ * (MDR includes EDR) the component is in scope while the scanning service is
+ * not. Every audit case ran against an infrastructure estate, where the
+ * component is out of scope too, so the distinction never arose and the empty
+ * "Critical & high vulnerabilities open" tile went unnoticed.
+ */
+const endpointEstate = mkEstate({
+  servers: 0, publicAssets: 0, cloudTenancies: 0,
+  endpoints: 240, users: 242, trainedUsers: 242, awarenessProgram: 'platform',
+});
+
 /** Renders the deck for one service mix and returns any leaked service keys. */
 function auditDeck(services, opts) {
   const withhold = !(opts && opts.withholdNothing);
+  const est = (opts && opts.estate) || estate;
   const sc = SS.calculateSecureScore(null, { upload: { total_users: 242 } }, null,
-    { estate, services });
+    { estate: est, services });
   const eff = svcLib0.effectiveServices(services);
 
   const full = allSourceData();
@@ -919,9 +961,32 @@ function auditDeck(services, opts) {
     if (!html) return;
     rendered.push(sec.id);
     if (!eff) return;
+
+    // A) Data from a service they do not buy appearing in the output.
     Object.keys(FINGERPRINT).forEach((svc) => {
       if (eff.indexOf(svc) >= 0) return;
       if (FINGERPRINT[svc].test(String(html))) leaks.push(sec.id + '/' + svc);
+    });
+
+    /*
+     * B) An EMPTY tile for a service they do not buy.
+     *
+     * The first version of this audit only looked for leaked content, so an
+     * MDR client's "Critical & high vulnerabilities open — No data" sailed
+     * through: the data WAS correctly withheld, and the tile rendered anyway.
+     * On a board pack an empty tile reads as a control that failed, which is
+     * the exact harm this whole exercise exists to prevent — so a tile whose
+     * subject is out of scope is a leak whether or not it carries a number.
+     */
+    const labels = [...String(html).matchAll(/<div class="bi-l">([\s\S]*?)<\/div>/g)]
+      .map(m => m[1].replace(/&amp;/g, '&').replace(/&middot;/g, '·'));
+    labels.forEach((label) => {
+      Object.keys(TILE_SERVICE).forEach((svc) => {
+        if (eff.indexOf(svc) >= 0) return;
+        if (TILE_SERVICE[svc].test(label)) {
+          leaks.push(sec.id + '/tile "' + label.trim() + '" (' + svc + ')');
+        }
+      });
     });
   });
   return { leaks, rendered };
@@ -941,6 +1006,24 @@ function auditDeck(services, opts) {
 
 check('an unrecorded client still gets the full deck',
   auditDeck(null).rendered.length >= 8, auditDeck(null).rendered.join(', '));
+
+/*
+ * THE REPORTED CASE. An MDR client on an endpoint-only estate: scored on
+ * endpoint patch currency, buys no scan. The component is in scope, the
+ * scanning service is not, and the deck must show nothing scan-derived.
+ */
+const endpointMdr = auditDeck(['mdr'], { estate: endpointEstate });
+check('an MDR client on an endpoint estate is scored on endpoints',
+  SS.calculateSecureScore(null, { upload: { total_users: 242 } }, null,
+    { estate: endpointEstate, services: ['mdr'] }).vulnDetail.basis === 'endpoint');
+check('and sees no scan-derived tile anywhere',
+  endpointMdr.leaks.length === 0, endpointMdr.leaks.join(', '));
+
+[['awareness', ['awareness']], ['vISO', ['viso']], ['none', []]].forEach(function (p) {
+  const r = auditDeck(p[1], { estate: endpointEstate });
+  check('nor does an ' + p[0] + '-only client on an endpoint estate',
+    r.leaks.length === 0, r.leaks.join(', '));
+});
 
 /*
  * The audit has to be able to FAIL, or it proves nothing. Feeding every source
