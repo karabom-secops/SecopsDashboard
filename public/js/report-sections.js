@@ -2652,11 +2652,26 @@ window.ReportSections = (function () {
       if (t.assigned) awPct = t.completionPct;
     }
 
-    // Resolution SLA achievement over tickets resolved in the period.
+    /*
+     * Resolution SLA achievement over tickets resolved in the period.
+     *
+     * THREE DIFFERENT REASONS THIS COMES OUT EMPTY, AND THEY MUST NOT LOOK
+     * ALIKE ON A BOARD PACK:
+     *
+     *   MDR not bought       no tile at all — the service gate below.
+     *   nothing resolved     a quiet month. The service worked and there was
+     *                        simply nothing to grade. Printing "No data" beside
+     *                        "0 Security incidents this period" said the
+     *                        reporting had failed when the month had not.
+     *   resolved but         tickets closed with no recognised severity or no
+     *   ungradeable          usable timestamps. That IS a data gap, and it is
+     *                        the only case that still says so.
+     */
     var slaPct = null;
     var tickets = ((ctx.data.mdr || {}).tickets || []).filter(function (t2) {
       return t2.resolvedAt && monthOf(t2.resolvedAt) === ctx.period;
     });
+    var nothingToResolve = tickets.length === 0;
     if (tickets.length) {
       var met = 0, total = 0;
       // Same measure as the resolution KPI table, or the assurance
@@ -2736,7 +2751,10 @@ window.ReportSections = (function () {
       tiles.push({ v: String(incidents), l: 'Security incidents this period' +
         (mdrRaised && irIncidents ? ' (' + mdrRaised + ' MDR, ' + irIncidents + ' logged)' : '') });
       tiles.push({ v: slaPct == null ? null : slaPct + '%',
-                   l: 'Resolution SLA met' });
+                   l: 'Resolution SLA met' +
+                      (slaPct == null && nothingToResolve
+                        ? ' &middot; nothing to resolve this period' : ''),
+                   nd: slaPct == null && nothingToResolve ? 'n/a' : null });
     }
     if (serviceInScope(ctx, 'awareness')) {
       tiles.push({ v: awPct == null ? null : awPct + '%', l: 'Awareness completion' });
@@ -2752,8 +2770,12 @@ window.ReportSections = (function () {
     var html = '<div class="bi-grid tight">' +
       tiles.map(function (t3) {
         return '<div class="bi-cell">' +
+            // `nd` lets a tile say WHY it is empty. "No data" is the default
+            // because an unexplained blank is worse, but it is a claim about
+            // our reporting and must not be made when the truth is that the
+            // month had nothing to measure.
             '<div class="bi-v' + (t3.v == null ? ' nd' : '') + '">' +
-              (t3.v == null ? 'No data' : esc(t3.v)) + '</div>' +
+              (t3.v == null ? esc(t3.nd || 'No data') : esc(t3.v)) + '</div>' +
             '<div class="bi-l">' + t3.l + '</div>' +
           '</div>';
       }).join('') +

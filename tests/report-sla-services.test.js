@@ -665,6 +665,62 @@ const allTiles = tileLabels(execSec.render(execCtx(['vuln', 'mdr', 'awareness', 
 check('a full-service client still gets everything',
   allTiles.length >= 6, allTiles.join(' | '));
 
+/* ── A quiet month is not a data gap ──────────────────────────────────────
+ *
+ * An MDR client with no incidents resolved in the period got
+ * "Resolution SLA met — No data" sitting beside "0 Security incidents this
+ * period". Both statements were about the same fact, and one of them blamed
+ * our reporting for it.
+ *
+ * The distinction that has to survive: NOTHING TO GRADE is not the same as
+ * COULD NOT GRADE IT.
+ */
+section('an empty SLA tile says which kind of empty it is');
+
+const tilePairs = (html) =>
+  [...String(html || '').matchAll(
+    /<div class="bi-v( nd)?">([\s\S]*?)<\/div><div class="bi-l">([\s\S]*?)<\/div>/g)]
+    .map(m => ({ nd: !!m[1],
+                 v: m[2].trim(),
+                 l: m[3].replace(/&middot;/g, '·').replace(/&amp;/g, '&').trim() }));
+
+function mdrExecWith(tickets) {
+  const c = execCtx(['mdr']);
+  c.data.mdr = { tickets };
+  return execSec.render(c);
+}
+
+const slaTile = (html) => tilePairs(html).filter(t => /Resolution SLA/.test(t.l))[0];
+
+// 1. Nothing resolved at all — the case in the screenshot.
+const quiet = slaTile(mdrExecWith([]));
+check('the tile is still shown (MDR is bought)', !!quiet);
+check('but it does not claim missing data',
+  !!quiet && !/No data/i.test(quiet.v), quiet && quiet.v);
+check('it says nothing was there to resolve',
+  !!quiet && /nothing to resolve this period/i.test(quiet.l), quiet && quiet.l);
+check('and stays visually muted rather than reading as a result',
+  !!quiet && quiet.nd === true && quiet.v === 'n/a', quiet && (quiet.v + '/' + quiet.nd));
+
+// 2. Tickets WERE resolved but carry no gradeable severity. That is a real
+//    gap in what we hold, and the tile must keep saying so.
+const ungraded = slaTile(mdrExecWith([
+  { createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-03T08:00:00Z', severity: 'WEIRD' },
+]));
+check('a resolved-but-ungradeable month still reports No data',
+  !!ungraded && /No data/i.test(ungraded.v), ungraded && ungraded.v);
+check('and does not claim the month was quiet',
+  !!ungraded && !/nothing to resolve/i.test(ungraded.l), ungraded && ungraded.l);
+
+// 3. A graded month is unaffected.
+const graded = slaTile(mdrExecWith([
+  { createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' },
+]));
+check('a month with resolved tickets still prints a percentage',
+  !!graded && /^\d+(\.\d+)?%$/.test(graded.v), graded && graded.v);
+check('with no empty-state wording attached',
+  !!graded && graded.l === 'Resolution SLA met', graded && graded.l);
+
 section('an unconfigured client sees the report they always saw');
 
 const plainExec  = execSec.render(execCtx(null));
