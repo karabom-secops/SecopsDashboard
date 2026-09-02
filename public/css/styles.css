@@ -1447,9 +1447,12 @@ input[type="file"] {
 .rt-gantt-bar.overdue        { outline: 2px solid #dc2626; outline-offset: 1px; }
 .rt-gantt-empty { padding: 1.5rem; text-align: center; color: var(--muted); }
 
-/* Scrollable findings table */
+/* Scrollable findings table.
+   Sized to the viewport rather than a fixed 500px: this list runs to hundreds
+   of rows, and 500px showed seven of them on a 1080p screen. The floor keeps it
+   usable on a short window. */
 .vuln-findings-wrap {
-  max-height: 500px;
+  max-height: max(60vh, 420px);
   overflow-y: auto;
 }
 
@@ -4501,8 +4504,20 @@ h1, h2, h3, h4,
 
 /* border-collapse: collapse paints cell backgrounds over the wrapper's rounded
    corners, so the table reads as a square block inside a rounded container.
-   Clipping the wrapper restores the radius. */
-.table-wrapper { overflow: hidden; overflow-x: auto; }
+   Clipping the wrapper restores the radius.
+
+   `auto`, NOT the `overflow: hidden` shorthand this used to be. The shorthand
+   sets BOTH axes, and this rule sits ~3000 lines below
+   `.vuln-findings-wrap { max-height: 500px; overflow-y: auto }` at equal
+   specificity — so it won, silently clamped overflow-y to hidden, and left the
+   Vulnerabilities table showing its first seven rows of 257 with no way to
+   reach the rest. The sticky `thead` a few hundred lines up is there precisely
+   because that table is meant to scroll.
+
+   `auto` clips to the border radius exactly as `hidden` did, so the reason this
+   rule exists is unaffected, and a wrapper that sets its own height can scroll
+   again. */
+.table-wrapper { overflow: auto; }
 
 /* The zebra stripe is gone rather than tuned. iOS lists do not stripe — inset
    separators already give the eye a row to track, and a stripe on top of them

@@ -305,25 +305,99 @@ check('and resilience', mdr.indexOf('resilience') >= 0);
 check('but not vulnerabilities or awareness',
   mdr.indexOf('vulnDashboard') < 0 && mdr.indexOf('humanRisk') < 0);
 
-section('vCISO covers governance AND the managed-service views');
+section('vISO covers governance AND the managed-service views');
 
-const vciso = on(['vciso']);
+const viso = on(['viso']);
 ['heatMap', 'topRisks', 'execRisk', 'businessImpact', 'thirdParty', 'compliance']
-  .forEach(id => check('vCISO includes ' + id, vciso.indexOf(id) >= 0));
+  .forEach(id => check('vISO includes ' + id, viso.indexOf(id) >= 0));
 ['threatLandscape', 'identityRisk', 'resilience']
-  .forEach(id => check('vCISO also includes ' + id, vciso.indexOf(id) >= 0));
-// vCISO is governance and oversight, not the scanning or training subscriptions.
-check('but vCISO alone does not include the vulnerability dashboard',
-  vciso.indexOf('vulnDashboard') < 0);
-check('nor the human risk dashboard', vciso.indexOf('humanRisk') < 0);
+  .forEach(id => check('vISO also includes ' + id, viso.indexOf(id) >= 0));
+// vISO is governance and oversight, not the scanning or training subscriptions.
+check('but vISO alone does not include the vulnerability dashboard',
+  viso.indexOf('vulnDashboard') < 0);
+check('nor the human risk dashboard', viso.indexOf('humanRisk') < 0);
 
 section('services combine, they do not compete');
 
 const both = on(['awareness', 'vuln']);
 check('two services yield the union',
   both.indexOf('humanRisk') >= 0 && both.indexOf('vulnDashboard') >= 0);
-const all = on(['mdr', 'vuln', 'awareness', 'edr', 'ndr', 'identity', 'pentest', 'vciso']);
+const all = on(['mdr', 'vuln', 'awareness', 'edr', 'ndr', 'identity', 'pentest', 'viso']);
 check('the full stack yields every section', all.length === S.length, all.length + '/' + S.length);
+
+section('MDR includes endpoint, network and identity');
+
+/*
+ * A client on MDR is not asked to buy Managed EDR, NDR or Identity separately,
+ * so they must not be reported as lacking them. Before this they showed three
+ * coverage gaps for capabilities they were already paying for, and the deck
+ * withheld the endpoint and identity sections their MDR service produces.
+ *
+ * The implication is applied on READ. tenants.services stays a record of what
+ * was sold; what that entitles them to is derived, because the two change for
+ * different reasons.
+ */
+const svcLib0 = require(path.join(ROOT, 'lib', 'services.js'));
+
+check('MDR expands to the three it includes',
+  JSON.stringify(svcLib0.effectiveServices(['mdr'])) ===
+  JSON.stringify(['mdr', 'edr', 'ndr', 'identity']),
+  JSON.stringify(svcLib0.effectiveServices(['mdr'])));
+check('buying them explicitly changes nothing',
+  JSON.stringify(svcLib0.effectiveServices(['mdr', 'edr', 'ndr', 'identity'])) ===
+  JSON.stringify(svcLib0.effectiveServices(['mdr'])));
+check('and EDR alone does NOT imply MDR',
+  svcLib0.effectiveServices(['edr']).indexOf('mdr') < 0);
+check('unrecorded survives expansion as unrecorded',
+  svcLib0.effectiveServices(null) === null);
+
+// The stored record must keep saying what was sold.
+check('expansion does not leak into what gets stored',
+  JSON.stringify(svcLib0.normaliseServices(['mdr'])) === JSON.stringify(['mdr']),
+  JSON.stringify(svcLib0.normaliseServices(['mdr'])));
+check('and an implied service is identifiable as implied',
+  svcLib0.isImplied(['mdr'], 'edr') === true &&
+  svcLib0.isImplied(['edr'], 'edr') === false);
+
+// Coverage: MDR supplies the endpoint yardstick but not an external scan.
+check('an MDR client covers the endpoint vulnerability basis',
+  svcLib0.coversComponent(['mdr'], 'vulnerabilities', 'endpoint') === true);
+check('but MDR does not cover an infrastructure scan it cannot see',
+  svcLib0.coversComponent(['mdr'], 'vulnerabilities', 'infrastructure') === false);
+
+// Report sections follow the same expansion.
+const mdrSections = on(svcLib0.effectiveServices(['mdr']));
+const bundleSections = on(svcLib0.effectiveServices(['mdr', 'edr', 'ndr', 'identity']));
+check('MDR alone offers the same sections as buying the bundle',
+  JSON.stringify(mdrSections) === JSON.stringify(bundleSections),
+  mdrSections.join(', '));
+check('including the identity dashboard MDR delivers',
+  mdrSections.indexOf('identityRisk') >= 0, mdrSections.join(', '));
+
+// And the report gates read the effective set rather than re-deriving it.
+check('serviceInScope reads the effective list',
+  /scope\.effectiveServices \|\| scope\.services/.test(src));
+check('the score ships the effective list to the browser',
+  /effectiveServices: servicesLib\.effectiveServices\(services\)/.test(
+    fs.readFileSync(path.join(ROOT, 'lib', 'secure-score.js'), 'utf8')));
+check('the tenant list ships it too',
+  /effectiveServices: servicesLib\.effectiveServices\(r\.services\)/.test(serverJs));
+check('and the Reports tab prefers it',
+  /Array\.isArray\(t\.effectiveServices\) \? t\.effectiveServices : t\.services/.test(rptJs));
+
+section('vCISO is now vISO');
+
+check('the catalogue uses the new key',
+  svcLib0.SERVICE_KEYS.indexOf('viso') >= 0 && svcLib0.SERVICE_KEYS.indexOf('vciso') < 0,
+  svcLib0.SERVICE_KEYS.join(','));
+check('and the new label', svcLib0.serviceLabel('viso') === 'vISO',
+  svcLib0.serviceLabel('viso'));
+// Cheap insurance: a stored value outliving a rename is expensive to diagnose.
+check('a stored legacy key is migrated on read',
+  JSON.stringify(svcLib0.normaliseServices(['vciso'])) === JSON.stringify(['viso']),
+  JSON.stringify(svcLib0.normaliseServices(['vciso'])));
+check('no section still points at the old key',
+  !S.some(x => (x.services || []).indexOf('vciso') >= 0));
 
 section('the catalogue validates what it stores');
 
@@ -335,7 +409,7 @@ check('an unknown key is dropped rather than stored',
 check('duplicates collapse',
   JSON.stringify(svcLib.normaliseServices(['mdr', 'mdr'])) === JSON.stringify(['mdr']));
 check('order is the catalogue order, not the click order',
-  JSON.stringify(svcLib.normaliseServices(['vciso', 'mdr'])) === JSON.stringify(['mdr', 'vciso']));
+  JSON.stringify(svcLib.normaliseServices(['viso', 'mdr'])) === JSON.stringify(['mdr', 'viso']));
 check('an empty list stays an empty list',
   JSON.stringify(svcLib.normaliseServices([])) === JSON.stringify([]));
 check('every catalogue key is one the report knows about',
@@ -468,11 +542,11 @@ check('overall is NOT derived from serviceScore x coverage',
 
 section('nothing in scope is not a zero');
 
-const vcisoOnly = score(['vciso']);
-// vCISO is governance; it does not scan a host or work a ticket. Dividing by a
+const vcisoOnly = score(['viso']);
+// vISO is governance; it does not scan a host or work a ticket. Dividing by a
 // zero in-scope weight would produce NaN, and reporting 0 would say they are
 // failing at services they were never sold.
-check('vCISO alone covers none of the scored components',
+check('vISO alone covers none of the scored components',
   vcisoOnly.coverage === 0, vcisoOnly.coverage);
 check('and the in-scope score is null rather than 0 or NaN',
   vcisoOnly.serviceScore === null, vcisoOnly.serviceScore);
@@ -575,7 +649,7 @@ check('an MDR-only client gets incident tiles',
 check('and no awareness tile',
   !mdrTiles.some(l => /Awareness completion/.test(l)), mdrTiles.join(' | '));
 
-const allTiles = tileLabels(execSec.render(execCtx(['vuln', 'mdr', 'awareness', 'edr', 'vciso'])));
+const allTiles = tileLabels(execSec.render(execCtx(['vuln', 'mdr', 'awareness', 'edr', 'viso'])));
 check('a full-service client still gets everything',
   allTiles.length >= 6, allTiles.join(' | '));
 

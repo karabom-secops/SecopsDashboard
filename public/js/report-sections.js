@@ -2709,7 +2709,7 @@ window.ReportSections = (function () {
       tiles.push({ v: awPct == null ? null : awPct + '%', l: 'Awareness completion' });
     }
     // The risk register is a governance deliverable, not a technical feed.
-    if (serviceInScope(ctx, 'vciso')) {
+    if (serviceInScope(ctx, 'viso')) {
       tiles.push({ v: String(above), l: 'Open risks above appetite' });
     }
 
@@ -2785,11 +2785,19 @@ window.ReportSections = (function () {
     return (scope.covered || []).indexOf(key) >= 0;
   }
 
-  /** Is a service consumed? Keys are those in lib/services.js. */
+  /**
+   * Is a service consumed? Keys are those in lib/services.js.
+   *
+   * Reads the EFFECTIVE set, so a client on MDR counts as having Managed EDR,
+   * NDR and Identity — those are delivered inside MDR and they are not asked
+   * to buy them separately. Falls back to the raw list only for payloads
+   * predating that field.
+   */
   function serviceInScope(ctx, key) {
     var scope = ((ctx.data || {}).secureScore || {}).scope;
     if (!scope || !scope.recorded) return true;
-    return (scope.services || []).indexOf(key) >= 0;
+    var list = scope.effectiveServices || scope.services || [];
+    return list.indexOf(key) >= 0;
   }
 
   /** Has a service mix been recorded at all? */
@@ -3421,7 +3429,7 @@ window.ReportSections = (function () {
       render: renderServiceCoverage, commentable: true },
 
     { n: 4,  id: 'heatMap',            label: 'Cyber Risk Heat Map',                     group: 'Risk',
-      services: ['vciso'],
+      services: ['viso'],
       requires: ['vulnFindings'],                  render: renderRiskHeatMap, commentable: true },
 
     { n: 5,  id: 'assurance',          label: 'Board Assurance Statement',               group: 'Executive',
@@ -3429,30 +3437,30 @@ window.ReportSections = (function () {
       requires: [],                                render: renderAssurance },
 
     { n: 6,  id: 'topRisks',           label: 'Top Cyber Risks',                         group: 'Risk',
-      services: ['vciso'],
+      services: ['viso'],
       requires: ['vulnFindings'],                  render: renderTopRisks, commentable: true },
 
     { n: 7,  id: 'execRisk',           label: 'Risk Appetite Dashboard',                 group: 'Risk',
-      services: ['vciso'],
+      services: ['viso'],
       requires: ['secureScore'], optional: ['edr', 'o365', 'vulnFindings', 'secureScoreHistory'],
       render: renderRiskAppetite, commentable: true },
 
     { n: 8,  id: 'businessImpact',     label: 'Business Impact Summary',                 group: 'Risk',
-      services: ['vciso'],
+      services: ['viso'],
       requires: ['vulnFindings'],                  render: renderBusinessImpact, commentable: true },
 
     { n: 9,  id: 'threatLandscape',    label: 'Threat Landscape Overview',               group: 'Dashboards',
-      services: ['mdr', 'edr', 'ndr', 'vciso'],
+      services: ['mdr', 'edr', 'ndr', 'viso'],
       requires: ['vulnFindings'], optional: ['mdr'],
       render: renderThreatLandscape, commentable: true },
 
     { n: 10,  id: 'thirdParty',         label: 'Third-Party Risk Dashboard',              group: 'Dashboards',
-      services: ['vciso'],
+      services: ['viso'],
       requires: [], optional: ['vendors', 'grcAssessment', 'grcQuestions', 'vulnFindings'],
       render: renderThirdPartyRisk },
 
     { n: 11, id: 'identityRisk',       label: 'Identity and Access Risk Dashboard',      group: 'Dashboards',
-      services: ['identity', 'vciso'],
+      services: ['identity', 'viso'],
       requires: [], optional: ['o365', 'grcAssessment', 'grcQuestions'],
       render: renderIdentityRisk },
 
@@ -3467,12 +3475,12 @@ window.ReportSections = (function () {
       render: renderHumanRisk },
 
     { n: 14, id: 'resilience',         label: 'Recovery and Resilience Dashboard',       group: 'Dashboards',
-      services: ['mdr', 'edr', 'vciso'],
+      services: ['mdr', 'edr', 'viso'],
       requires: ['grcAssessment', 'grcQuestions'], optional: ['vulnFindings'],
       render: renderResilience },
 
     { n: 15, id: 'compliance',         label: 'Compliance Dashboard',                    group: 'Governance',
-      services: ['vciso'],
+      services: ['viso'],
       requires: ['grcAssessment', 'grcQuestions'], render: renderCompliance },
 
     { n: 16, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',

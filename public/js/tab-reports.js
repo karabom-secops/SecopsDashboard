@@ -266,7 +266,13 @@ window.ReportsTab = (function () {
     // Array vs null is the whole distinction: null means "not recorded", and
     // an empty array means "recorded as none". They must not collapse.
     _servicesKnown  = !!(t && Array.isArray(t.services));
-    _tenantServices = _servicesKnown ? t.services : null;
+    // The EFFECTIVE set decides which sections are offered: MDR includes
+    // endpoint, network and identity detection, so an MDR client should be
+    // offered those sections without having ticked those boxes. The server
+    // expands it — the rule lives in lib/services.js and only there.
+    _tenantServices = _servicesKnown
+      ? (Array.isArray(t.effectiveServices) ? t.effectiveServices : t.services)
+      : null;
   }
 
   function renderSectionToggles(prefs) {

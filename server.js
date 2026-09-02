@@ -865,7 +865,14 @@ app.get('/api/tenants', async (req, res) => {
        LEFT JOIN users u ON u.tenant_id = t.id
        GROUP BY t.id ORDER BY t.name ASC`
     );
-    res.json(result.rows);
+
+    // What was sold, plus what it entitles them to. The Reports tab
+    // pre-selects sections from the effective set, so an MDR client is offered
+    // the endpoint and identity sections MDR actually delivers — without the
+    // browser needing its own copy of the implication rule.
+    res.json(result.rows.map(r => Object.assign({}, r, {
+      effectiveServices: servicesLib.effectiveServices(r.services),
+    })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -884,7 +891,8 @@ app.get('/api/tenants/:id/services', requireAuth, async (req, res) => {
 
     if (!await hasTenantServicesColumn()) {
       return res.json({
-        tenantId, services: null, catalogue: servicesLib.SERVICES,
+        tenantId, services: null, effectiveServices: null,
+        catalogue: servicesLib.SERVICES, includes: servicesLib.SERVICE_INCLUDES,
         available: false,
         message: 'Service selection is not available yet. Run db/migrate-tenant-services.sql.',
       });
@@ -894,7 +902,9 @@ app.get('/api/tenants/:id/services', requireAuth, async (req, res) => {
     if (!r.rows.length) return res.status(404).json({ error: 'Tenant not found.' });
 
     return res.json({
-      tenantId, services: r.rows[0].services, catalogue: servicesLib.SERVICES,
+      tenantId, services: r.rows[0].services,
+      effectiveServices: servicesLib.effectiveServices(r.rows[0].services),
+      catalogue: servicesLib.SERVICES, includes: servicesLib.SERVICE_INCLUDES,
       available: true,
     });
   } catch (err) {

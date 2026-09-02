@@ -771,6 +771,7 @@
      than the platform, and both are edited by the same person. */
 
   let _serviceCatalogue = [];
+  let _serviceIncludes  = {};
 
   function servicesMsg(text, isError) {
     const el = document.getElementById('servicesMsg');
@@ -796,16 +797,37 @@
     // cannot.
     const on = Array.isArray(selected) ? selected : [];
 
+    // Services delivered inside another one. MDR includes endpoint, network
+    // and identity detection, so a client on MDR is already covered for those
+    // and should not be ticked again — the row says so rather than leaving an
+    // unticked box that looks like a gap.
+    const includes = _serviceIncludes || {};
+    const impliedBy = {};
+    on.forEach(function (k) {
+      (includes[k] || []).forEach(function (i) { impliedBy[i] = k; });
+    });
+
     host.innerHTML = _serviceCatalogue.map(function (s) {
-      return '<label class="rpt-section-row">' +
+      const parent = impliedBy[s.key];
+      const isImplied = !!parent && on.indexOf(s.key) < 0;
+      const parentLabel = parent
+        ? (_serviceCatalogue.filter(function (x) { return x.key === parent; })[0] || {}).label
+        : '';
+
+      return '<label class="rpt-section-row' + (isImplied ? ' rpt-section-na' : '') + '">' +
           '<span class="integration-toggle">' +
             '<input type="checkbox" class="svc-check" value="' + escapeHtml(s.key) + '"' +
-              (on.indexOf(s.key) >= 0 ? ' checked' : '') + '>' +
+              (on.indexOf(s.key) >= 0 ? ' checked' : '') +
+              (isImplied ? ' disabled' : '') + '>' +
             '<span class="int-toggle-slider"></span>' +
           '</span>' +
           '<span class="rpt-section-name">' + escapeHtml(s.label) +
             '<small class="rpt-section-hint">' + escapeHtml(s.hint || '') + '</small>' +
           '</span>' +
+          (isImplied
+            ? '<span class="rpt-section-tag" title="Delivered as part of ' +
+              escapeHtml(parentLabel) + ' — already covered.">included</span>'
+            : '') +
         '</label>';
     }).join('');
   }
@@ -829,6 +851,7 @@
       }
 
       _serviceCatalogue = j.catalogue || [];
+      _serviceIncludes  = j.includes || {};
       renderServices(j.services);
 
       const saveBtn = document.getElementById('servicesSaveBtn');
