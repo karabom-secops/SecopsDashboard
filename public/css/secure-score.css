@@ -578,3 +578,60 @@
   /* Ensure colours render in print */
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* ── Score scope strip ─────────────────────────────────────────────────────
+   Three figures under the gauge: how the purchased services are performing,
+   how much of the posture they reach, and the whole picture. Kept as three
+   separate cells rather than one combined number because they answer
+   different questions and are not derivable from one another. */
+.ss-scope { margin: 0.9rem auto 0; max-width: 46rem; }
+
+.ss-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+}
+
+.ss-scope-cell {
+  padding: 0.75rem 0.6rem;
+  border: 1px solid var(--card-edge, var(--separator));
+  border-radius: var(--radius-card, 10px);
+  background: var(--surface);
+  text-align: center;
+}
+
+.ss-scope-v {
+  font-size: 1.55rem;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ss-scope-l {
+  margin-top: 0.2rem;
+  font-size: 0.74rem;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.ss-scope-s {
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.ss-scope-gaps {
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* A control nobody is measuring is a security gap, not a commercial one.
+   It reads differently because it is different. */
+.ss-scope-blind { color: var(--danger, #c0392b); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .ss-scope-grid { grid-template-columns: 1fr; }
+}

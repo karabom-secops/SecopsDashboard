@@ -259,6 +259,7 @@ window.ReportsTab = (function () {
    */
   var _tenantServices = null;
   var _servicesKnown  = false;
+  var _withheldSources = [];
 
   function readTenantServices() {
     var id = selectedTenantId();
@@ -320,14 +321,20 @@ window.ReportsTab = (function () {
             var offByService = _servicesKnown && !suggested;
             if (offByService && saved === null) auto++;
 
+            // Disabled, not merely tagged. assembleDeck() refuses to build a
+            // section for a service the client does not consume, so a tickable
+            // box here would be a control that silently does nothing — which
+            // is worse than no control at all.
             return '<label class="rpt-section-row' + (offByService ? ' rpt-section-na' : '') + '">' +
                 '<span class="integration-toggle">' +
-                  '<input type="checkbox" id="rpt-sec-' + s.id + '"' + (on ? ' checked' : '') + '>' +
+                  '<input type="checkbox" id="rpt-sec-' + s.id + '"' +
+                    (on && !offByService ? ' checked' : '') +
+                    (offByService ? ' disabled' : '') + '>' +
                   '<span class="int-toggle-slider"></span>' +
                 '</span>' +
                 '<span class="rpt-section-name">' + s.n + '. ' + S.esc(s.label) + '</span>' +
                 (offByService
-                  ? '<span class="rpt-section-tag" title="This client does not consume the service this section reports on. Tick it to include it anyway.">not subscribed</span>'
+                  ? '<span class="rpt-section-tag" title="This client does not consume the service this section reports on. Record the service on the Admin tab to include it.">not subscribed</span>'
                   : '') +
               '</label>';
           }).join('') +
@@ -460,17 +467,77 @@ window.ReportsTab = (function () {
       parts.join('; ') + '.';
   }
 
+  /**
+   * Which service each data source belongs to.
+   *
+   * THE ENFORCEMENT POINT FOR THE WHOLE DECK.
+   *
+   * Gating sections was not enough, because sections draw across service
+   * boundaries: the Cyber Risk Heat Map is a vISO deliverable built from
+   * VULNERABILITY findings, Threat Landscape mixes vulnerability and MDR data,
+   * Risk Appetite pulls EDR, identity and vulnerability data. A client on vISO
+   * alone would have received a heat map and a business-impact analysis built
+   * entirely from scan data they do not buy.
+   *
+   * So the data is withheld at the source rather than filtered at each of a
+   * dozen render functions. The existing machinery then does the rest: a
+   * section whose `requires` are missing self-disables, and one whose
+   * `optional` extras are missing renders without them. Both behaviours are
+   * already in place and already tested — nothing here needs a new rule.
+   *
+   * `null` means the source is not tied to any service and is always fetched.
+   */
+  var SOURCE_SERVICE = {
+    vulnFindings:       'vuln',
+    vulnSummary:        'vuln',
+    vulnTrends:         'vuln',
+    mdr:                'mdr',
+    edr:                'edr',
+    o365:               'identity',
+    awareness:          'awareness',
+    vendors:            'viso',
+    grcAssessment:      'viso',
+    grcQuestions:       'viso',
+    secureScore:        null,
+    secureScoreHistory: null,
+    metrics:            null,
+  };
+
+  /**
+   * True when the client consumes the service behind this data source.
+   *
+   * `services`/`known` default to the module's state but can be passed in, so
+   * the rule is a pure function a test can drive directly. Without that seam a
+   * suite can only assert the code EXISTS — which is what an earlier version of
+   * the deck audit did, reimplementing this logic itself and therefore passing
+   * happily with the real withholding disabled.
+   */
+  function sourceInScope(key, services, known) {
+    var isKnown = known === undefined ? _servicesKnown : known;
+    var list    = services === undefined ? _tenantServices : services;
+    if (!isKnown) return true;                 // unrecorded => unchanged
+    var svc = SOURCE_SERVICE[key];
+    if (svc === null || svc === undefined) return true;
+    return (list || []).indexOf(svc) >= 0;
+  }
+
   /** Fetch only the endpoints the selected sections actually need. */
   async function fetchNeeded(selectedIds, ctx) {
     var keys = [];
+    var withheld = [];
     window.ReportSections.forEach(function (s) {
       if (selectedIds.indexOf(s.id) === -1) return;
       // `optional` is fetched but does not gate: a section listing it renders
       // with whatever subset arrived, rather than disabling itself outright.
       s.requires.concat(s.optional || []).forEach(function (k) {
+        if (!sourceInScope(k)) {
+          if (withheld.indexOf(k) === -1) withheld.push(k);
+          return;
+        }
         if (keys.indexOf(k) === -1) keys.push(k);
       });
     });
+    _withheldSources = withheld;
     // The Observations draft, the Overview tiles and the awareness gauge all read
     // metrics, so pull it (and the Secure Score that feeds it) whenever anything
     // is selected. Neither is in `requires`: a missing Secure Score must not
@@ -595,12 +662,38 @@ window.ReportsTab = (function () {
     }
 
     var period = prefs.period || new Date().toISOString().slice(0, 7);
+
+    // Re-read before anything is fetched: the client may have changed since
+    // the toggles were last rendered, and every gate below depends on it.
+    readTenantServices();
+
+    /*
+     * A section for a service the client does not buy is not built, whatever
+     * the toggle says.
+     *
+     * This used to be a default the analyst could override. It is now a rule:
+     * the instruction is that the deck shows only what the client consumes,
+     * and a starting point that can be silently overridden is not that. The
+     * toggle for such a section is disabled in the UI, so nothing is
+     * mysteriously ignored.
+     */
+    var notSubscribed = [];
     var selected = window.ReportSections
-      .filter(function (s) { return prefs.sections[s.id]; })
+      .filter(function (s) {
+        if (!prefs.sections[s.id]) return false;
+        if (!_servicesKnown || !s.services) return true;
+        var covered = s.services.some(function (k) {
+          return (_tenantServices || []).indexOf(k) >= 0;
+        });
+        if (!covered) notSubscribed.push(s.label);
+        return covered;
+      })
       .map(function (s) { return s.id; });
 
     if (!selected.length) {
-      notice('Select at least one section to include.', true);
+      notice(notSubscribed.length
+        ? 'Every selected section belongs to a service this client does not consume.'
+        : 'Select at least one section to include.', true);
       return null;
     }
 
@@ -666,6 +759,13 @@ window.ReportsTab = (function () {
     var problems = fetchProblemSummary();
     if (problems) msgs.push(problems);
     if (skipped.length) msgs.push('Skipped: ' + skipped.join(', ') + ' (no data).');
+    // Named separately from 'no data': an analyst chasing a missing upload for
+    // a service the client never bought is chasing something that will never
+    // arrive.
+    if (notSubscribed.length) {
+      msgs.push('Not included: ' + notSubscribed.join(', ') +
+        ' (service not consumed by this client).');
+    }
     (_metrics && _metrics.warnings || []).forEach(function (w) { msgs.push(w); });
 
     saveOverrides(period, prefs.overrides);
@@ -1144,5 +1244,11 @@ window.ReportsTab = (function () {
     await refreshMetrics();
   }
 
-  return { loadAndRender: loadAndRender };
+  return {
+    loadAndRender: loadAndRender,
+    // Test seam: the withholding rule the whole deck depends on, exposed so a
+    // suite can drive the real function instead of restating it.
+    sourceInScope: sourceInScope,
+    SOURCE_SERVICE: SOURCE_SERVICE,
+  };
 })();

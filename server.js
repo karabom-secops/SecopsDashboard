@@ -5783,8 +5783,11 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
     } = calculateSecureScore(vulnData, awarenessData, mdrData,
                              { estate, edr: edrHealth, incidentRate,
                                services: tenantServices });
+    // Services passed through: advice about a control the client does not buy
+    // reads on their board pack as a failing of theirs.
     const recommendations = generateRecommendations(
-      vulnScore, awarenessScore, mdrScore, measured, vulnDetail, estate);
+      vulnScore, awarenessScore, mdrScore, measured, vulnDetail, estate,
+      { services: tenantServices });
 
     // Determine rating
     let rating = 'Critical';

@@ -685,6 +685,293 @@ check('the maturity table drops out-of-scope domains',
 check('all three gates default to in-scope when nothing is recorded',
   /if \(!scope \|\| !scope\.recorded\) return true;/.test(gateCode));
 
+section('advice is only ever about services the client buys');
+
+/*
+ * "Reduce critical and high-severity findings" for a client who does not buy
+ * vulnerability management appears under Executive Decisions in their board
+ * pack as a failing of theirs — when nobody was ever engaged to scan. The
+ * coverage section is where that gap is stated, once.
+ */
+const recEstate = mkEstate({
+  servers: 12, publicAssets: 8, endpoints: 240, cloudTenancies: 2,
+  users: 242, trainedUsers: 120, awarenessProgram: 'platform',
+});
+const recMeasured = { vulnerabilities: false, awareness: true, incidentResponse: false };
+const recDetail = { basis: 'infrastructure', measured: false };
+const recs = (services) => SS.generateRecommendations(
+  10, 55, 0, recMeasured, recDetail, recEstate, { services })
+  .map(r => r.area);
+
+const recAll = recs(null);
+check('an unrecorded client still gets the full advice',
+  recAll.length >= 4, recAll.join(', '));
+
+const recAware = recs(['awareness']);
+check('an awareness-only client gets awareness advice',
+  recAware.indexOf('Security Awareness') >= 0, recAware.join(', '));
+check('and no vulnerability advice',
+  !recAware.some(a => /Vulnerabilit|Scan Coverage|Asset Inventory|Internal Infrastructure|Patch Management|Endpoint/.test(a)),
+  recAware.join(', '));
+check('and no incident-response advice',
+  recAware.indexOf('Incident Response') < 0, recAware.join(', '));
+
+const recVuln = recs(['vuln']);
+check('a vuln-only client gets vulnerability advice',
+  recVuln.some(a => /Vulnerabilit|Internal Infrastructure/.test(a)), recVuln.join(', '));
+check('and no awareness advice',
+  recVuln.indexOf('Security Awareness') < 0, recVuln.join(', '));
+
+check('an MDR client gets incident-response advice',
+  recs(['mdr']).indexOf('Incident Response') >= 0);
+
+/*
+ * The map is the enforcement. An area missing from it keeps its
+ * recommendation — failing open loses no advice — so the only thing stopping a
+ * new area going unmapped is this check.
+ */
+const ssSrc = fs.readFileSync(path.join(ROOT, 'lib', 'secure-score.js'), 'utf8');
+const areasInFile = [...new Set((ssSrc.match(/area: '[^']+'/g) || [])
+  .map(s => s.slice(7, -1)))];
+const unmapped = areasInFile.filter(a => !(a in SS.AREA_COMPONENT));
+check('every recommendation area is mapped to a component',
+  areasInFile.length > 5 && unmapped.length === 0,
+  areasInFile.length + ' areas, unmapped: ' + (unmapped.join(', ') || 'none'));
+check('and "Overall" advice applies whatever they buy',
+  SS.AREA_COMPONENT.Overall === null);
+check('the route passes the services through',
+  /generateRecommendations\([\s\S]{0,200}\{ services: tenantServices \}\)/.test(serverJs));
+
+section('the Secure Score tab shows all three figures');
+
+// renderScopeStrip is a pure function of its arguments — no DOM needed beyond
+// an object with `hidden` and `innerHTML`.
+const tabSandbox = { console, window: {} };
+tabSandbox.window.window = tabSandbox.window;
+tabSandbox.document = { getElementById() { return null; }, addEventListener() {} };
+tabSandbox.window.document = tabSandbox.document;
+vm.createContext(tabSandbox);
+vm.runInContext(
+  fs.readFileSync(path.join(ROOT, 'public', 'js', 'tab-secure-score.js'), 'utf8'),
+  tabSandbox, { filename: 'tab-secure-score.js' });
+const Tab = tabSandbox.window.SecureScoreTab;
+
+check('the tab exposes the scope strip', Tab && typeof Tab.renderScopeStrip === 'function');
+
+function strip(services) {
+  const s = SS.calculateSecureScore(null, awarenessData, null, { estate, services });
+  const el = { hidden: true, innerHTML: '' };
+  Tab.renderScopeStrip(el, {
+    score: s.composite, overall: s.overall,
+    serviceScore: s.serviceScore, coverage: s.coverage, scope: s.scope,
+  });
+  return el;
+}
+
+const stripAware = strip(['awareness']);
+check('it renders for a scoped client', stripAware.hidden === false);
+check('showing the in-scope score', /Secure Score — services in scope/.test(stripAware.innerHTML));
+check('the coverage score', /Service coverage of posture/.test(stripAware.innerHTML));
+check('and the overall score', /Overall Secure Score/.test(stripAware.innerHTML));
+check('with the gaps named', /Vulnerability management/.test(stripAware.innerHTML));
+check('and what would close them',
+  /Covered by Vulnerability Management/.test(stripAware.innerHTML));
+
+// A control the client runs themselves is a commercial gap, not a blind spot.
+const stripMdr = strip(['mdr']);
+check('a client-run control is not called a blind spot',
+  /client-run and evidenced/.test(stripMdr.innerHTML));
+check('while an unmeasured one is',
+  /ss-scope-blind/.test(stripMdr.innerHTML));
+
+// The regression that would hit every unconfigured client.
+const stripNone = strip(null);
+check('the strip is hidden when no services are recorded', stripNone.hidden === true);
+check('and renders nothing at all', stripNone.innerHTML === '');
+
+// The gauge must not compare an in-scope score against a stored composite.
+const tabSrc = fs.readFileSync(path.join(ROOT, 'public', 'js', 'tab-secure-score.js'), 'utf8');
+check('the gauge shows the in-scope score when scoped',
+  /const gaugeValue = scoped \? scoreData\.serviceScore : scoreData\.score;/.test(tabSrc));
+check('and drops the trend delta rather than comparing two measures',
+  /renderScoreGauge\(gaugeContainer, gaugeValue, scoped \? null : delta\)/.test(tabSrc));
+
+section('no section anywhere in the deck shows an unbought service');
+
+/*
+ * THE WHOLE-DECK AUDIT.
+ *
+ * Gating sections by their declared services was not enough, because sections
+ * draw ACROSS service boundaries. Cyber Risk Heat Map, Top Cyber Risks and
+ * Business Impact are vISO deliverables built from VULNERABILITY findings;
+ * Threat Landscape mixes vulnerability and MDR data; Risk Appetite pulls EDR,
+ * identity and vulnerability. A vISO-only client would have received a
+ * business-impact analysis built entirely from scan data they do not buy.
+ *
+ * The fix is to withhold the data at source rather than filter it at each of a
+ * dozen render functions, so this renders every section for real with the
+ * out-of-scope sources removed exactly as tab-reports.js removes them, and
+ * greps the output for fingerprints only that service's data could produce.
+ */
+/*
+ * The withholding rule comes from tab-reports.js itself.
+ *
+ * An earlier version of this audit carried its OWN copy of the source→service
+ * map and its own withholding flag. It passed with a green tick while the real
+ * withholding in tab-reports.js was disabled — it was testing its own
+ * reimplementation. Two mutations went uncaught before that showed up.
+ */
+const rptSandbox = { console };
+rptSandbox.window = rptSandbox;
+rptSandbox.document = { getElementById() { return null; }, addEventListener() {},
+                        querySelectorAll() { return []; }, createElement() { return {}; } };
+rptSandbox.localStorage = { getItem() { return null; }, setItem() {} };
+rptSandbox.fetch = () => Promise.reject(new Error('not used'));
+vm.createContext(rptSandbox);
+for (const f of ['report-shell.js', 'report-deck.js', 'report-sections.js', 'tab-reports.js']) {
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'public', 'js', f), 'utf8'),
+    rptSandbox, { filename: f });
+}
+const RT = rptSandbox.window.ReportsTab;
+const SOURCE_SERVICE = RT && RT.SOURCE_SERVICE;
+
+check('the real withholding rule is reachable',
+  !!(RT && typeof RT.sourceInScope === 'function' && SOURCE_SERVICE));
+// Drive it directly, so the rule itself is under test rather than a restatement.
+check('a vuln source is withheld from an awareness-only client',
+  RT.sourceInScope('vulnFindings', ['awareness'], true) === false);
+check('an MDR source is withheld from an awareness-only client',
+  RT.sourceInScope('mdr', ['awareness'], true) === false);
+check('the source they DO buy is fetched',
+  RT.sourceInScope('awareness', ['awareness'], true) === true);
+// MDR includes endpoint detection, so its data must not be withheld.
+check('an MDR client still gets endpoint data',
+  RT.sourceInScope('edr', svcLib0.effectiveServices(['mdr']), true) === true);
+check('nothing is withheld when services are unrecorded',
+  RT.sourceInScope('vulnFindings', null, false) === true);
+// Withholding these would take the scope object with it and disable every gate.
+check('the secure score is never withheld',
+  RT.sourceInScope('secureScore', ['awareness'], true) === true);
+check('nor the metrics payload',
+  RT.sourceInScope('metrics', ['awareness'], true) === true);
+const FINGERPRINT = {
+  vuln: /ZZVULNZZ/, mdr: /ZZMDRZZ/, awareness: /ZZAWARENESSZZ/,
+  identity: /ZZIDENTITYZZ/, edr: /ZZEDRZZ/, viso: /ZZVENDORZZ/,
+};
+
+function allSourceData() {
+  return {
+    vulnFindings: { vulns: [{ name: 'ZZVULNZZ finding', risk: 'Critical', status: 'open',
+                              firstSeenAt: '2026-05-01', host: 'h1' }],
+                    risks: [{ title: 'ZZVULNZZ risk', stage: 'open', risk_score: 20 }],
+                    pentest: [], incidents: [] },
+    vulnSummary: { critical: 1, high: 2, medium: 3, low: 4, hosts: 5, name: 'ZZVULNZZ' },
+    vulnTrends: { months: [{ period: '2026-08', critical: 1, high: 2, medium: 0, low: 0 }] },
+    mdr: { tickets: [{ ticketNumber: 'ZZMDRZZ-1', subject: 'ZZMDRZZ ticket', severity: 'HIGH',
+                       status: 'Resolved', createdAt: '2026-08-02T08:00:00Z',
+                       resolvedAt: '2026-08-02T20:00:00Z' }] },
+    edr: { threats: { total: 1, mttmHours: 2, ZZEDRZZ: 1 },
+           agents: { total: 10, healthy: 9, label: 'ZZEDRZZ' } },
+    o365: { signIns: { total: 5, risky: 1, label: 'ZZIDENTITYZZ' }, mfa: { enforced: 4, total: 5 } },
+    awareness: { upload: { total_users: 242 },
+                 sessions: [{ session_type: 'Awareness Session', status: 'Complete',
+                              user_email: 'ZZAWARENESSZZ@x', sent_date: '2026-08-01' }] },
+    vendors: [{ name: 'ZZVENDORZZ', tier: 'critical', score: 40 }],
+    grcAssessment: { total: 55, frameworks: {}, sections: [{ name: 'ZZVENDORZZ', score: 50 }] },
+    grcQuestions: [],
+    metrics: { tiles: {} },
+  };
+}
+
+/** Renders the deck for one service mix and returns any leaked service keys. */
+function auditDeck(services, opts) {
+  const withhold = !(opts && opts.withholdNothing);
+  const sc = SS.calculateSecureScore(null, { upload: { total_users: 242 } }, null,
+    { estate, services });
+  const eff = svcLib0.effectiveServices(services);
+
+  const full = allSourceData();
+  const data = { secureScore: {
+    score: sc.composite, overall: sc.overall, serviceScore: sc.serviceScore,
+    coverage: sc.coverage, scope: sc.scope, recommendations: [],
+    components: {
+      vulnerabilities:  { score: sc.vulnScore, measured: sc.measured.vulnerabilities },
+      awareness:        { score: sc.awarenessScore, measured: sc.measured.awareness },
+      incidentResponse: { score: sc.mdrScore, measured: sc.measured.incidentResponse },
+    },
+  } };
+  // The REAL rule decides what arrives, so disabling it in tab-reports.js
+  // shows up here as a leak rather than passing silently.
+  Object.keys(full).forEach((k) => {
+    if (!withhold || RT.sourceInScope(k, eff, !!eff)) data[k] = full[k];
+  });
+
+  const ctx = { period: '2026-08', periodLabel: 'August 2026', clientName: 'Acme',
+                execSummary: '', narrative: '', assurance: '', comments: {}, data };
+
+  const leaks = [];
+  const rendered = [];
+  S.forEach((sec) => {
+    if (eff && sec.services && !sec.services.some(k => eff.indexOf(k) >= 0)) return;
+    if ((sec.requires || []).some(k => ctx.data[k] == null)) return;
+    let html = null;
+    try { html = sec.render(ctx); } catch (e) { html = 'ERR ' + e.message; }
+    if (!html) return;
+    rendered.push(sec.id);
+    if (!eff) return;
+    Object.keys(FINGERPRINT).forEach((svc) => {
+      if (eff.indexOf(svc) >= 0) return;
+      if (FINGERPRINT[svc].test(String(html))) leaks.push(sec.id + '/' + svc);
+    });
+  });
+  return { leaks, rendered };
+}
+
+[['awareness only', ['awareness']],
+ ['vulnerability only', ['vuln']],
+ ['MDR only', ['mdr']],
+ ['vISO only', ['viso']],
+ ['vuln + awareness', ['vuln', 'awareness']],
+ ['explicitly none', []],
+].forEach(function (pair) {
+  const r = auditDeck(pair[1]);
+  check(pair[0] + ' shows nothing from an unbought service',
+    r.leaks.length === 0, r.leaks.join(', ') || r.rendered.join(', '));
+});
+
+check('an unrecorded client still gets the full deck',
+  auditDeck(null).rendered.length >= 8, auditDeck(null).rendered.join(', '));
+
+/*
+ * The audit has to be able to FAIL, or it proves nothing. Feeding every source
+ * regardless of scope must produce a leak — and it does, through exactly the
+ * path section-level gating misses: Top Cyber Risks is declared a vISO section
+ * and built from vulnerability findings.
+ */
+const unguarded = auditDeck(['viso'], { withholdNothing: true });
+check('the audit detects a leak when data is not withheld',
+  unguarded.leaks.length > 0, unguarded.leaks.join(', '));
+
+section('the deck refuses to build an unsubscribed section');
+
+// The rule itself is exercised behaviourally above; this only pins that
+// fetchNeeded actually consults it, which no unit call can show.
+check('fetchNeeded consults the withholding rule',
+  /if \(!sourceInScope\(k\)\) \{/.test(rptJs) && /_withheldSources = withheld;/.test(rptJs));
+check('and skips sections whose services are all out of scope',
+  /notSubscribed\.push\(s\.label\)/.test(rptJs));
+check('saying why, so nobody hunts for a missing upload',
+  /service not consumed by this client/.test(rptJs));
+// A toggle that assembleDeck ignores is worse than no toggle.
+check('the toggle for such a section is disabled, not merely tagged',
+  /\(offByService \? ' disabled' : ''\)/.test(rptJs));
+check('services are re-read before anything is fetched',
+  rptJs.indexOf('readTenantServices();') < rptJs.indexOf('var notSubscribed = []'));
+// Withholding secureScore would take the scope object with it and disable the
+// gates that depend on it.
+check('the score and metrics are never withheld',
+  /secureScore:        null/.test(rptJs) && /metrics:            null/.test(rptJs));
+
 section('the wiring that has no seam');
 
 // The toggles pre-select from the tenant list, so the tenant list has to be

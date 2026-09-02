@@ -28,6 +28,21 @@ const SecureScoreTab = (() => {
     }
   }
 
+  /**
+   * Full five-character escape.
+   *
+   * The values below come from lib/services.js constants rather than user
+   * input, so nothing here is currently attacker-controlled — but a helper
+   * that is correct only while an assumption holds is the kind that outlives
+   * the assumption. The four-character version elsewhere in this codebase
+   * leaves single quotes live, which is a real hole inside an attribute.
+   */
+  function escHtml(v) {
+    return String(v === null || v === undefined ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   function getScoreColor(score) {
     if (score >= 80) return '#27ae60'; // Green - Excellent
     if (score >= 70) return '#f39c12'; // Orange - Good
@@ -92,6 +107,66 @@ const SecureScoreTab = (() => {
         arc.style.strokeDashoffset = targetOffset;
       });
     }
+  }
+
+  /**
+   * The three scores, side by side.
+   *
+   *   In scope   how the services they buy are performing.
+   *   Coverage   how much of their weighted posture those services reach.
+   *   Overall    their whole posture, counting every control that applies.
+   *
+   * Deliberately three separate figures rather than one clever number. They
+   * answer different questions and are NOT related by a formula: a client who
+   * runs their own vulnerability programme is measured but not covered, so
+   * their overall legitimately exceeds anything coverage would predict.
+   *
+   * Hidden entirely when no service mix has been recorded — there is no
+   * coverage statement to make, and an empty strip would imply one is missing.
+   */
+  function renderScopeStrip(el, scoreData) {
+    if (!el) return;
+    const scope = scoreData && scoreData.scope;
+    if (!scope || !scope.recorded) { el.hidden = true; el.innerHTML = ''; return; }
+
+    const svc = scoreData.serviceScore;
+    const cov = scoreData.coverage;
+    const all = scoreData.overall != null ? scoreData.overall : scoreData.score;
+
+    const cell = (value, label, sub, tone) =>
+      `<div class="ss-scope-cell">
+         <div class="ss-scope-v"${tone ? ` style="color:${tone}"` : ''}>${escHtml(value)}</div>
+         <div class="ss-scope-l">${escHtml(label)}</div>
+         ${sub ? `<div class="ss-scope-s">${escHtml(sub)}</div>` : ''}
+       </div>`;
+
+    const gaps = (scope.uncovered || []);
+    const blind = scope.blindSpotPoints || 0;
+
+    el.innerHTML =
+      '<div class="ss-scope-grid">' +
+        cell(svc == null ? 'n/a' : String(svc), 'Secure Score — services in scope',
+             svc == null ? 'No scored service consumed' : getScoreRating(svc),
+             svc == null ? null : getScoreColor(svc)) +
+        cell(cov == null ? '—' : cov + '%', 'Service coverage of posture',
+             gaps.length ? gaps.length + ' control' + (gaps.length === 1 ? '' : 's') + ' outside our services'
+                         : 'All scored controls covered') +
+        cell(all == null ? '—' : String(all), 'Overall Secure Score',
+             blind ? blind + ' points not measured by anyone' : 'Counting every control that applies',
+             all == null ? null : getScoreColor(all)) +
+      '</div>' +
+      (gaps.length
+        ? '<ul class="ss-scope-gaps">' + gaps.map(u =>
+            `<li><strong>${escHtml(u.label)}</strong> — ${escHtml(String(u.pointsForfeited))} points, ` +
+            (u.evidence === 'client-supplied'
+              ? 'client-run and evidenced'
+              : '<span class="ss-scope-blind">not measured</span>') +
+            (u.closedBy && u.closedBy.length
+              ? '. Covered by ' + escHtml(u.closedBy.join(' or ')) + '.' : '.') +
+            '</li>').join('') + '</ul>'
+        : '');
+
+    el.hidden = false;
   }
 
   /**
@@ -701,6 +776,7 @@ const SecureScoreTab = (() => {
         </div>
         <div class="secure-score-main">
           <div id="secure-score-gauge" class="score-gauge-container"></div>
+          <div id="secure-score-scope" class="ss-scope" hidden></div>
           <div id="secure-score-unmeasured" class="score-unmeasured-note" hidden></div>
           <div id="secure-score-estate" class="score-estate-note" hidden></div>
           <div id="secure-score-data-age" class="data-age-info"></div>
@@ -758,9 +834,26 @@ const SecureScoreTab = (() => {
 
     currentScore = scoreData;
 
-    // Render main gauge with delta
+    /*
+     * The gauge shows the IN-SCOPE score where a service mix is on file.
+     *
+     * The composite counts controls the client never bought as zero, so an
+     * awareness-only client's gauge read 35 while the service they pay for
+     * scored 100. Coverage and the overall figure sit beneath it, named, so
+     * all three are visible and none of them has to carry two meanings.
+     *
+     * The delta is dropped when scoped: history stores composites, and an
+     * arrow comparing an in-scope score against a past overall would be
+     * pointing at a difference in measure rather than in posture.
+     */
+    const scoped = !!(scoreData.scope && scoreData.scope.recorded &&
+                      scoreData.serviceScore != null);
+    const gaugeValue = scoped ? scoreData.serviceScore : scoreData.score;
+
     const gaugeContainer = document.getElementById('secure-score-gauge');
-    renderScoreGauge(gaugeContainer, scoreData.score, delta);
+    renderScoreGauge(gaugeContainer, gaugeValue, scoped ? null : delta);
+
+    renderScopeStrip(document.getElementById('secure-score-scope'), scoreData);
 
     // State the ceiling explicitly when components have no data behind them.
     // Without this the score looks like a verdict on the client's security,
@@ -1344,6 +1437,10 @@ const SecureScoreTab = (() => {
 
   return {
     loadAndRender,
+    // Exposed so the scope strip can be rendered and read back in a test
+    // harness without standing up the whole tab. Pure function of its
+    // arguments; nothing else in the module depends on it being public.
+    renderScopeStrip,
   };
 })();
 
