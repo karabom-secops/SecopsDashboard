@@ -391,15 +391,102 @@ check('the services card is gone from the admin tab',
 check('and their code is gone from tab-admin.js',
   !/handleSaveEstate|loadServices|saveServices/.test(codeOnly(adminJs)));
 
+/*
+ * THE BASE PATH.
+ *
+ * The app is served under /secops/ and nginx strips the prefix. Every request
+ * has to be built from <base href>, and this module originally read a
+ * `window.apiUrl` that does not exist — each module has its own local copy —
+ * so its "fallback" of '/api/' + path was the only branch that ever ran. It
+ * asked nginx for /api/client-profile, got a 404, and the healthy API looked
+ * broken.
+ *
+ * Driven for real: a stub <base> of /secops/, a stub fetch, and the URL read
+ * back off the call. A grep for `document.querySelector('base')` would pass on
+ * a module that then ignored the result.
+ */
 const sandbox = { console, window: null, document: null };
 sandbox.window = sandbox;
-sandbox.document = { getElementById: () => null, querySelectorAll: () => [] };
+sandbox.document = {
+  getElementById: () => null,
+  querySelectorAll: () => [],
+  querySelector: (sel) => (sel === 'base'
+    ? { href: 'https://secops.reflex.co.za/secops/' } : null),
+};
+let fetched = [];
+sandbox.fetch = (url) => {
+  fetched.push(url);
+  return Promise.resolve({
+    ok: true, status: 200,
+    json: () => Promise.resolve({ tenantId: 2, available: {}, catalogue: [], history: [] }),
+  });
+};
 vm.createContext(sandbox);
 vm.runInContext(cpJs, sandbox);
 const CP = sandbox.window.ClientProfileTab;
 
 check('the module loads and exports a renderer',
   !!CP && typeof CP.loadAndRender === 'function');
+
+section('every request keeps the /secops/ base path');
+
+const BASED = 'https://secops.reflex.co.za/secops/api/';
+
+// Synchronous, through the module's own builder. Inferring the URL from a
+// stubbed fetch works but only covers the paths a test happens to drive.
+check('the URL builder keeps the base path',
+  CP._apiUrl('client-profile') === BASED + 'client-profile',
+  CP._apiUrl('client-profile'));
+// The exact shape of the bug: the prefix silently dropped.
+check('and never resolves to the bare /api/ root',
+  !/^\/api\//.test(CP._apiUrl('client-profile')));
+// codeOnly, because the comment recording this bug necessarily names the
+// thing it warns about — the check failed on its own documentation.
+check('no module-local fallback invents a path',
+  !/window\.apiUrl/.test(codeOnly(cpJs)));
+check('the base is derived the way every other module derives it',
+  /document\.querySelector\('base'\)/.test(codeOnly(cpJs)));
+
+/*
+ * And behaviourally, over EVERY request the page makes — not just the load.
+ * The first version of this checked only the initial GET, so hard-coding a
+ * bare '/api/...' into the save or the review went unnoticed.
+ */
+sandbox.document.getElementById = () => ({ innerHTML: '', hidden: false, textContent: '',
+                                           value: '', disabled: false });
+sandbox.document.querySelectorAll = () => [];
+
+let asyncRan = false;
+const urlChecks = (async () => {
+  fetched = [];
+  await CP.loadAndRender();
+  check('GET goes to the based URL', fetched[0] === BASED + 'client-profile', fetched[0]);
+
+  fetched = [];
+  await CP._handleSave();
+  check('PUT goes to the based URL', fetched[0] === BASED + 'client-profile', fetched[0]);
+
+  fetched = [];
+  await CP._handleReview();
+  check('POST review goes to the based URL',
+    fetched[0] === BASED + 'client-profile/review', fetched[0]);
+
+  asyncRan = true;
+})();
+
+/*
+ * done() calls process.exit, so a suite that reaches it before the async block
+ * finishes reports green having never made those assertions. That is a
+ * fabricated pass, and it is invisible: the output simply has fewer lines.
+ *
+ * An exit hook is the only thing that still runs at that point.
+ */
+process.on('exit', () => {
+  if (!asyncRan) {
+    console.log('FAIL  the async URL checks never ran — the suite exited early');
+    process.exitCode = 1;
+  }
+});
 
 section('the Secure Score tab carries the caveat, not a correction');
 
@@ -530,4 +617,13 @@ check('the score movement is shown', /62 → 48/.test(html));
 check('labelled as a snapshot, not a recomputed history',
   /snapshots taken when each change/.test(html));
 
-done();
+/*
+ * The base-path checks are async (they drive a real loadAndRender), so done()
+ * has to wait for them. Calling done() synchronously would exit the process
+ * before they ran and report a green suite that never made the assertions —
+ * a fabricated pass, which is worse than a failure.
+ */
+urlChecks.then(done, (err) => {
+  check('the base-path checks ran to completion', false, err && err.message);
+  done();
+});

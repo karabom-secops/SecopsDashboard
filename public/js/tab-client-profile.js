@@ -53,8 +53,31 @@ window.ClientProfileTab = (function () {
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  function apiUrl(p) {
-    return (typeof window.apiUrl === 'function') ? window.apiUrl(p) : ('/api/' + p);
+  /*
+   * The app is served under /secops/ in production, and nginx strips that
+   * prefix before Node sees it. Every request therefore has to be built from
+   * <base href>, exactly as auth.js and tab-admin.js do.
+   *
+   * THIS WAS WRONG ONCE AND THE WAY IT WAS WRONG IS WORTH KEEPING A NOTE OF.
+   * It read `window.apiUrl` with a fallback of '/api/' + path. There is no
+   * window.apiUrl — each module has its own local copy — so the fallback was
+   * not a fallback, it was the only branch, and it silently produced
+   * /api/client-profile instead of /secops/api/client-profile. The API was
+   * healthy the whole time; nginx returned the 404.
+   *
+   * A guard that substitutes a plausible wrong value on a condition that is
+   * always true is worse than no guard: it turns a missing dependency into a
+   * wrong answer, and a wrong answer that looks like somebody else's fault.
+   * So there is no fallback here now — the base is derived the same way as
+   * everywhere else, or not at all.
+   */
+  var BASE = (function () {
+    var base = document.querySelector('base');
+    return base ? base.href : '/';
+  })();
+
+  function apiUrl(path) {
+    return BASE + 'api/' + path;
   }
 
   /** Superadmins act on the globally selected client; everyone else on their own. */
@@ -483,5 +506,16 @@ window.ClientProfileTab = (function () {
     }
   }
 
-  return { loadAndRender: loadAndRender, _render: render };
+  return {
+    loadAndRender: loadAndRender,
+    _render: render,
+    // Test seams. apiUrl in particular: it was wrong once, in a way that made
+    // a healthy API look broken, and a synchronous handle on it is worth more
+    // than inferring the URL from a stubbed fetch. The two handlers are
+    // exposed so every request the page makes can be driven, not just the
+    // load — a bare path hard-coded into the save would otherwise slip past.
+    _apiUrl: apiUrl,
+    _handleSave: handleSave,
+    _handleReview: handleReview,
+  };
 })();
