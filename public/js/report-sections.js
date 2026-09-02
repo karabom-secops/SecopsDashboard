@@ -418,6 +418,8 @@ window.ReportSections = (function () {
   }
 
   function awarenessBlock(ctx) {
+    // Not shown at all for a client without the training service.
+    if (!componentInScope(ctx, 'awareness')) return null;
     var a = ctx.data.awareness;
     if (!a) return null;
 
@@ -1034,6 +1036,8 @@ window.ReportSections = (function () {
   var VULN_OPEN_STATUSES = { open: 1, 'in-progress': 1 };
 
   function vulnExposureBlock(ctx) {
+    // Not shown at all for a client without vulnerability management.
+    if (!componentInScope(ctx, 'vulnerabilities')) return null;
     var findings = ((ctx.data.vulnFindings || {}).vulns) || [];
     if (!findings.length) return null;
 
@@ -1342,6 +1346,8 @@ window.ReportSections = (function () {
 
   /** The endpoint half, as a standalone `.cc-group`. '' when EDR is absent. */
   function endpointCoverageGroup(ctx) {
+    // Endpoint coverage is a Managed EDR deliverable.
+    if (!serviceInScope(ctx, 'edr')) return '';
     var ep = endpointMetrics(ctx);
     if (!ep) return '';
     return '<div class="cc-group">' +
@@ -1502,6 +1508,9 @@ window.ReportSections = (function () {
   }
 
   function irKpiBlock(ctx) {
+    // Resolution KPIs describe MDR delivery. Without MDR there is nothing to
+    // report, and an empty KPI table reads as a failed service.
+    if (!componentInScope(ctx, 'incidentResponse')) return null;
     var tickets = ((ctx.data.mdr || {}).tickets) || [];
     var period  = ctx.period;
 
@@ -1627,12 +1636,29 @@ window.ReportSections = (function () {
     var prevLabel = periodName(shiftPeriod(ctx.period, -1));
     var thisLabel = periodName(ctx.period);
 
+    /*
+     * Only domains the client actually buys. A row reading
+     * "Vulnerability Management — 0/100, target 80, gap −80" for a client
+     * without vulnerability management is not a finding, it is an invoice
+     * question, and it dominates the slide it appears on.
+     *
+     * The Secure Score row is dropped when the mix is scoped: it carries the
+     * composite, which counts the very controls this table has just stopped
+     * showing, so leaving it would reintroduce the number by the back door.
+     * The scoped score and its coverage have their own section.
+     */
+    var scoped = scopeRecorded(ctx);
     var domains = [
       { label: 'Vulnerability Management', key: 'vulnerabilities',  target: MATURITY_TARGETS.vulnerabilities },
       { label: 'Security Awareness',       key: 'awareness',        target: MATURITY_TARGETS.awareness },
       { label: 'Incident Response',        key: 'incidentResponse', target: MATURITY_TARGETS.incidentResponse },
       { label: 'Secure Score',             key: 'overall',          target: MATURITY_TARGETS.overall },
-    ];
+    ].filter(function (d) {
+      if (d.key === 'overall') return !scoped;
+      return componentInScope(ctx, d.key);
+    });
+
+    if (!domains.length) return null;
 
     var measured = now.measured || {};
     var rows = domains.map(function (d) {
@@ -2627,20 +2653,65 @@ window.ReportSections = (function () {
       if (total) slaPct = pct(met, total);
     }
 
-    var band = now.overall != null ? scoreBand(now.overall) : null;
-    var t2   = trendFor(now.overall, prev.overall);
+    /*
+     * THE HEADLINE IS THE IN-SCOPE SCORE, NOT THE OVERALL.
+     *
+     * The overall counts controls the client never bought as zero, so an
+     * awareness-only client opened their board pack on "Secure Score 35" when
+     * the service they pay for scored 100. The exec summary reports on the
+     * engagement; the overall score and its coverage gaps have their own
+     * section, which can be included or left out.
+     *
+     * Falls back to the overall when no service mix is recorded, which is the
+     * behaviour every existing client keeps.
+     */
+    var ss = ctx.data.secureScore || {};
+    var scoped = scopeRecorded(ctx) && ss.serviceScore != null;
+    var headline = scoped ? ss.serviceScore : now.overall;
+
+    var band = headline != null ? scoreBand(headline) : null;
+    // Trend still compares against the stored history, which holds composites.
+    // Only meaningful on the unscoped number, so it is dropped when scoped
+    // rather than silently comparing two different measures.
+    var t2 = scoped ? { mark: '' } : trendFor(now.overall, prev.overall);
 
     var tiles = [
-      { v: now.overall == null ? null : now.overall + '/100',
-        l: 'Secure Score' + (band ? ' &middot; ' + band.label : '') +
+      { v: headline == null ? null : headline + '/100',
+        l: 'Secure Score' + (scoped ? ' &middot; services in scope' : '') +
+           (band ? ' &middot; ' + band.label : '') +
            (t2.mark ? ' ' + t2.mark : '') },
-      { v: crit == null ? null : String(crit), l: 'Critical &amp; high vulnerabilities open' },
-      { v: String(incidents),                   l: 'Security incidents this period' +
-           (mdrRaised && irIncidents ? ' (' + mdrRaised + ' MDR, ' + irIncidents + ' logged)' : '') },
-      { v: slaPct == null ? null : slaPct + '%', l: 'MDR resolution SLA met (business hrs)' },
-      { v: awPct == null ? null : awPct + '%',   l: 'Awareness completion' },
-      { v: String(above),                        l: 'Open risks above appetite' },
     ];
+
+    // Coverage sits beside the score it qualifies, so the two are never read
+    // apart. Only when a service mix is on file — otherwise there is no
+    // coverage statement to make.
+    if (scopeRecorded(ctx) && ss.coverage != null) {
+      tiles.push({ v: ss.coverage + '%', l: 'Service coverage of posture' });
+    }
+
+    /*
+     * Every remaining tile is gated on the service that produces it. A client
+     * without vulnerability management does not get a vulnerability count —
+     * not even a zero, which on a board pack reads as a clean scan rather than
+     * as a service never purchased.
+     */
+    if (componentInScope(ctx, 'vulnerabilities')) {
+      tiles.push({ v: crit == null ? null : String(crit),
+                   l: 'Critical &amp; high vulnerabilities open' });
+    }
+    if (componentInScope(ctx, 'incidentResponse')) {
+      tiles.push({ v: String(incidents), l: 'Security incidents this period' +
+        (mdrRaised && irIncidents ? ' (' + mdrRaised + ' MDR, ' + irIncidents + ' logged)' : '') });
+      tiles.push({ v: slaPct == null ? null : slaPct + '%',
+                   l: 'Resolution SLA met' });
+    }
+    if (componentInScope(ctx, 'awareness')) {
+      tiles.push({ v: awPct == null ? null : awPct + '%', l: 'Awareness completion' });
+    }
+    // The risk register is a governance deliverable, not a technical feed.
+    if (serviceInScope(ctx, 'vciso')) {
+      tiles.push({ v: String(above), l: 'Open risks above appetite' });
+    }
 
     var prose = String(ctx.execSummary || '').trim();
     if (!prose && !tiles.some(function (t3) { return t3.v != null; })) return null;
@@ -2695,6 +2766,38 @@ window.ReportSections = (function () {
    * file, there is no coverage statement to make and the section skips
    * silently rather than printing an empty frame.
    */
+  /* ── Scope gates ──────────────────────────────────────────────────────────
+   *
+   * A client is not shown a metric for a service they do not buy. Not as a
+   * zero, not as "No data", not at all — an empty tile on a board pack reads
+   * as a control that failed, and defending "you never bought that" in the
+   * room is worse than never printing it.
+   *
+   * Both gates default to TRUE when no service mix is on file, so a client
+   * nobody has configured sees exactly the report they saw before any of this
+   * existed. Unrecorded is not a claim that they buy nothing.
+   */
+
+  /** Is a scored Secure Score component in scope? */
+  function componentInScope(ctx, key) {
+    var scope = ((ctx.data || {}).secureScore || {}).scope;
+    if (!scope || !scope.recorded) return true;
+    return (scope.covered || []).indexOf(key) >= 0;
+  }
+
+  /** Is a service consumed? Keys are those in lib/services.js. */
+  function serviceInScope(ctx, key) {
+    var scope = ((ctx.data || {}).secureScore || {}).scope;
+    if (!scope || !scope.recorded) return true;
+    return (scope.services || []).indexOf(key) >= 0;
+  }
+
+  /** Has a service mix been recorded at all? */
+  function scopeRecorded(ctx) {
+    var scope = ((ctx.data || {}).secureScore || {}).scope;
+    return !!(scope && scope.recorded);
+  }
+
   function serviceCoverageBlock(ctx) {
     var ss = ctx.data.secureScore || {};
     var scope = ss.scope;

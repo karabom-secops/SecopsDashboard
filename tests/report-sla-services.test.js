@@ -504,6 +504,113 @@ check('it says a blind spot is unmeasured, not weak',
 check('and it does not invite the reader to multiply',
   !/serviceScore ×/.test(rendered) && /independent/.test(rendered));
 
+section('the exec summary reports the engagement, not the gaps');
+
+/*
+ * The headline used to be the overall composite, which counts controls the
+ * client never bought as zero. An awareness-only client opened their board
+ * pack on "Secure Score 35" when the service they pay for scored 100.
+ *
+ * Rendered for real, then read back out of the HTML.
+ */
+const execSec = S.filter(x => x.id === 'execSummary')[0];
+
+function execCtx(services) {
+  const sc = SS.calculateSecureScore(
+    { vulns: [{ risk: 'Critical', status: 'open', firstSeenAt: '2026-06-01' }],
+      risks: [{ stage: 'open', risk_score: 20 }], incidents: [] },
+    awarenessData,
+    { tickets: [{ createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' }] },
+    { estate, services });
+
+  return {
+    period: '2026-08', periodLabel: 'August 2026', execSummary: '', comments: {},
+    data: {
+      secureScore: {
+        score: sc.composite, serviceScore: sc.serviceScore,
+        coverage: sc.coverage, overall: sc.overall, scope: sc.scope,
+        components: {
+          vulnerabilities:  { score: sc.vulnScore,      measured: sc.measured.vulnerabilities },
+          awareness:        { score: sc.awarenessScore, measured: sc.measured.awareness },
+          incidentResponse: { score: sc.mdrScore,       measured: sc.measured.incidentResponse },
+        },
+      },
+      vulnFindings: { vulns: [{ risk: 'Critical', status: 'open', firstSeenAt: '2026-06-01' }],
+                      risks: [{ stage: 'open', risk_score: 20 }], incidents: [] },
+      awareness: awarenessData,
+      mdr: { tickets: [{ createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' }] },
+    },
+  };
+}
+
+const tileLabels = (html) =>
+  [...String(html || '').matchAll(/<div class="bi-l">([\s\S]*?)<\/div>/g)]
+    .map(m => m[1].replace(/&middot;/g, '·').replace(/&amp;/g, '&').trim());
+
+const awExec  = execSec.render(execCtx(['awareness']));
+const awTiles = tileLabels(awExec);
+
+check('the headline is the in-scope score, not the overall',
+  /100\/100/.test(awExec) && !/>35\/100</.test(awExec), awTiles[0]);
+check('and it says which score it is',
+  /services in scope/.test(awTiles[0] || ''), awTiles[0]);
+check('coverage sits beside it',
+  awTiles.some(l => /Service coverage/.test(l)), awTiles.join(' | '));
+
+section('a service the client does not buy appears nowhere');
+
+// Not as a zero, not as "No data" — an empty tile on a board pack reads as a
+// control that failed rather than one never purchased.
+check('no vulnerability tile for an awareness-only client',
+  !awTiles.some(l => /vulnerabilit/i.test(l)), awTiles.join(' | '));
+check('no incident tile', !awTiles.some(l => /incident/i.test(l)));
+check('no resolution SLA tile', !awTiles.some(l => /SLA/i.test(l)));
+check('no risk-register tile', !awTiles.some(l => /risks above appetite/i.test(l)));
+check('but the service they DO buy is reported',
+  awTiles.some(l => /Awareness completion/.test(l)), awTiles.join(' | '));
+
+const mdrTiles = tileLabels(execSec.render(execCtx(['mdr'])));
+check('an MDR-only client gets incident tiles',
+  mdrTiles.some(l => /incident/i.test(l)));
+check('and no awareness tile',
+  !mdrTiles.some(l => /Awareness completion/.test(l)), mdrTiles.join(' | '));
+
+const allTiles = tileLabels(execSec.render(execCtx(['vuln', 'mdr', 'awareness', 'edr', 'vciso'])));
+check('a full-service client still gets everything',
+  allTiles.length >= 6, allTiles.join(' | '));
+
+section('an unconfigured client sees the report they always saw');
+
+const plainExec  = execSec.render(execCtx(null));
+const plainTiles = tileLabels(plainExec);
+check('the headline falls back to the overall score',
+  /35\/100/.test(plainExec), plainTiles[0]);
+check('with no in-scope wording', !/services in scope/.test(plainTiles[0] || ''));
+check('no coverage tile is invented',
+  !plainTiles.some(l => /Service coverage/.test(l)), plainTiles.join(' | '));
+check('and every metric is still shown',
+  plainTiles.length >= 6, plainTiles.length);
+
+section('the blocks behind the tiles are gated too');
+
+// Gating the tile but not the block behind it would drop the headline number
+// and keep the whole dashboard it came from.
+const gateCode = codeOnly(src);
+[['awarenessBlock', 'awareness'],
+ ['vulnExposureBlock', 'vulnerabilities'],
+ ['irKpiBlock', 'incidentResponse']].forEach(function (pair) {
+  const fn = gateCode.slice(gateCode.indexOf('function ' + pair[0] + '(ctx)'));
+  check(pair[0] + ' returns nothing when out of scope',
+    new RegExp("componentInScope\\(ctx, '" + pair[1] + "'\\)").test(fn.slice(0, 400)));
+});
+check('endpoint coverage is gated on Managed EDR',
+  /serviceInScope\(ctx, 'edr'\)/.test(gateCode));
+check('the maturity table drops out-of-scope domains',
+  /d\.key === 'overall'\) return !scoped/.test(gateCode) &&
+  /return componentInScope\(ctx, d\.key\)/.test(gateCode));
+check('all three gates default to in-scope when nothing is recorded',
+  /if \(!scope \|\| !scope\.recorded\) return true;/.test(gateCode));
+
 section('the wiring that has no seam');
 
 // The toggles pre-select from the tenant list, so the tenant list has to be
