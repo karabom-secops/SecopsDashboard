@@ -52,20 +52,6 @@ const srcCode = codeOnly(src);
 
 section('security runs 24/7, so the clock does too');
 
-check('the targets are the contracted ones',
-  S.IR_SLA_HOURS.CRITICAL === 24 && S.IR_SLA_HOURS.HIGH === 48 &&
-  S.IR_SLA_HOURS.MEDIUM === 72 && S.IR_SLA_HOURS.LOW === 96,
-  JSON.stringify(S.IR_SLA_HOURS));
-
-// Ordering is a property of the contract, not of these four numbers: a target
-// that does not get looser as severity falls is a typo, and one that grades a
-// Critical against a longer window than a Low would go unnoticed in a table.
-check('and they loosen as severity falls',
-  S.IR_SLA_HOURS.CRITICAL < S.IR_SLA_HOURS.HIGH &&
-  S.IR_SLA_HOURS.HIGH < S.IR_SLA_HOURS.MEDIUM &&
-  S.IR_SLA_HOURS.MEDIUM < S.IR_SLA_HOURS.LOW,
-  JSON.stringify(S.IR_SLA_HOURS));
-
 /*
  * THE CASE THAT WAS WRONG.
  *
@@ -73,18 +59,15 @@ check('and they loosen as severity falls',
  * Friday 17:05 and closed Monday 09:00 accrued about one hour, because nights
  * and weekends did not count. A 24/7 service cannot claim that: the client was
  * exposed for 64 hours and the report said one.
+ *
+ * The deck no longer GRADES durations — the incident SLA was removed from both
+ * the KPI table and the Executive Summary — but it still reports them, so how
+ * they are measured still matters.
  */
 const fri1705 = '2026-03-06T17:05:00+02:00';   // Friday
 const mon0900 = '2026-03-09T09:00:00+02:00';   // Monday
 const weekend = S.elapsedHoursBetween(fri1705, mon0900);
 check('a weekend is counted, not skipped', Math.round(weekend) === 64, weekend);
-// 64 elapsed hours straddles the current targets, so it still discriminates:
-// it breaches High (48) and meets Medium (72). Under the old business-hours
-// model it was about one hour and breached nothing at all.
-check('and that breaches the High target',
-  weekend > S.IR_SLA_HOURS.HIGH, weekend + 'h vs ' + S.IR_SLA_HOURS.HIGH + 'h');
-check('while still meeting the Medium target',
-  weekend <= S.IR_SLA_HOURS.MEDIUM, weekend + 'h vs ' + S.IR_SLA_HOURS.MEDIUM + 'h');
 
 const overnight = S.elapsedHoursBetween('2026-03-03T22:00:00Z', '2026-03-04T06:00:00Z');
 check('an overnight ticket accrues its 8 hours', overnight === 8, overnight);
@@ -102,38 +85,45 @@ check('a resolution before the raise is null',
 check('but zero elapsed is a legitimate answer',
   S.elapsedHoursBetween(fri1705, fri1705) === 0);
 
-section('severities map to their contracted target');
+/*
+ * ── The incident SLA is gone from the deck ────────────────────────────────
+ *
+ * Removed on request from the KPI table first, then from the Executive
+ * Summary. Nothing was left reading IR_SLA_HOURS or slaTargetFor, so both were
+ * deleted rather than kept: a table of contracted SLA targets sitting in the
+ * report module reads as a policy the deck enforces, and the next person to
+ * find it would reasonably assume a client is graded against it somewhere.
+ *
+ * codeOnly throughout — this file documents its own removals, so the comment
+ * explaining each one necessarily names the thing that went.
+ */
+section('the incident SLA is gone, not merely unused');
 
-check('Critical is 24 hours', S.slaTargetFor('CRITICAL') === 24);
-check('case does not matter', S.slaTargetFor('high') === 48);
-check('whitespace does not matter', S.slaTargetFor(' Medium ') === 72);
-check('Low is 96 hours', S.slaTargetFor('LOW') === 96);
-// Read through the lookup rather than restated, so the mapping cannot pass
-// while the table it reads from says something else.
-check('every severity resolves to its own row in the table',
-  ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
-    .every(k => S.slaTargetFor(k) === S.IR_SLA_HOURS[k]));
-// Defaulting an unknown severity to MEDIUM would invent a commitment and then
-// grade the service against it.
-check('an unknown severity has NO target rather than a guessed one',
-  S.slaTargetFor('INFORMATIONAL') === null, S.slaTargetFor('INFORMATIONAL'));
-check('and neither does a missing one', S.slaTargetFor(null) === null);
+const srcNoComments = codeOnly(src);
+
+check('the target table is deleted', !/IR_SLA_HOURS/.test(srcNoComments));
+check('and its lookup with it', !/slaTargetFor/.test(srcNoComments));
+check('and the attainment threshold', !/SLA_TARGET_PCT/.test(srcNoComments));
+check('and the targets label', !/slaTargetLabel/.test(srcNoComments));
+// Exported seams too — a module that still hands these out invites a caller.
+check('nothing is exported for them',
+  !/SECTIONS\.IR_SLA_HOURS/.test(srcNoComments) &&
+  !/SECTIONS\.slaTargetFor/.test(srcNoComments));
+check('and the browser module really has dropped them',
+  S.IR_SLA_HOURS === undefined && S.slaTargetFor === undefined);
+
+// What SURVIVES: duration is still measured and reported. Removing the grading
+// must not take the measurement with it.
+check('elapsed-hours measurement survives',
+  typeof S.elapsedHoursBetween === 'function');
+check('and the KPI table still uses it',
+  (srcNoComments.match(/elapsedHoursBetween\(/g) || []).length >= 2,
+  (srcNoComments.match(/elapsedHoursBetween\(/g) || []).length);
 
 section('the business-hours model is gone, not merely unused');
 
 check('no business-hours measurement remains', !/businessHoursBetween/.test(src));
 check('nor its service-window config', !/BUSINESS_HOURS/.test(src));
-// Two places computed an SLA figure. Leaving one on the old measure put two
-// different numbers for the same month on two slides of the same deck.
-check('every SLA computation uses elapsed hours',
-  (src.match(/elapsedHoursBetween\(/g) || []).length >= 3,
-  (src.match(/elapsedHoursBetween\(/g) || []).length);
-// codeOnly: this count was >= 3 and started passing off a COMMENT that
-// mentions slaTargetFor, after the KPI table's call site was removed. A check
-// that can be satisfied by prose is not checking the code.
-check('and every one reads the target from the same table',
-  (codeOnly(src).match(/slaTargetFor\(/g) || []).length >= 2,
-  (codeOnly(src).match(/slaTargetFor\(/g) || []).length);
 check('the note tells the reader it is 24/7', /24\/7/.test(src));
 
 /* ── The KPI table ─────────────────────────────────────────────────────────
@@ -832,17 +822,14 @@ const allTiles = tileLabels(execSec.render(execCtx(['vuln', 'mdr', 'awareness', 
 check('a full-service client still gets everything',
   allTiles.length >= 6, allTiles.join(' | '));
 
-/* ── A quiet month is not a data gap ──────────────────────────────────────
+/* ── The Executive Summary no longer grades resolution ────────────────────
  *
- * An MDR client with no incidents resolved in the period got
- * "Resolution SLA met — No data" sitting beside "0 Security incidents this
- * period". Both statements were about the same fact, and one of them blamed
- * our reporting for it.
- *
- * The distinction that has to survive: NOTHING TO GRADE is not the same as
- * COULD NOT GRADE IT.
+ * A "Resolution SLA met" tile sat beside the incident count and was removed on
+ * request. It is checked across the same three months that used to distinguish
+ * its empty states — quiet, ungradeable, and graded — because a removal that
+ * only holds for one of them is not a removal.
  */
-section('an empty SLA tile says which kind of empty it is');
+section('no resolution SLA tile in the executive summary');
 
 const tilePairs = (html) =>
   [...String(html || '').matchAll(
@@ -857,36 +844,31 @@ function mdrExecWith(tickets) {
   return execSec.render(c);
 }
 
-const slaTile = (html) => tilePairs(html).filter(t => /Resolution SLA/.test(t.l))[0];
-
-// 1. Nothing resolved at all — the case in the screenshot.
-const quiet = slaTile(mdrExecWith([]));
-check('the tile is still shown (MDR is bought)', !!quiet);
-check('but it does not claim missing data',
-  !!quiet && !/No data/i.test(quiet.v), quiet && quiet.v);
-check('it says nothing was there to resolve',
-  !!quiet && /nothing to resolve this period/i.test(quiet.l), quiet && quiet.l);
-check('and stays visually muted rather than reading as a result',
-  !!quiet && quiet.nd === true && quiet.v === 'n/a', quiet && (quiet.v + '/' + quiet.nd));
-
-// 2. Tickets WERE resolved but carry no gradeable severity. That is a real
-//    gap in what we hold, and the tile must keep saying so.
-const ungraded = slaTile(mdrExecWith([
+const quietHtml = mdrExecWith([]);
+const ungradedHtml = mdrExecWith([
   { createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-03T08:00:00Z', severity: 'WEIRD' },
-]));
-check('a resolved-but-ungradeable month still reports No data',
-  !!ungraded && /No data/i.test(ungraded.v), ungraded && ungraded.v);
-check('and does not claim the month was quiet',
-  !!ungraded && !/nothing to resolve/i.test(ungraded.l), ungraded && ungraded.l);
-
-// 3. A graded month is unaffected.
-const graded = slaTile(mdrExecWith([
+]);
+const gradedHtml = mdrExecWith([
   { createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' },
-]));
-check('a month with resolved tickets still prints a percentage',
-  !!graded && /^\d+(\.\d+)?%$/.test(graded.v), graded && graded.v);
-check('with no empty-state wording attached',
-  !!graded && graded.l === 'Resolution SLA met', graded && graded.l);
+]);
+
+[['a quiet month', quietHtml], ['an ungradeable month', ungradedHtml],
+ ['a fully graded month', gradedHtml]].forEach(([label, html]) => {
+  const tiles = tilePairs(html);
+  check('no SLA tile in ' + label,
+    !tiles.some(t => /SLA/i.test(t.l)), tiles.map(t => t.l).join(' | '));
+});
+
+// The wording that supported it is gone too — an "n/a · nothing to resolve
+// this period" left behind would be a caption with nothing above it.
+check('and none of its empty-state wording survives',
+  !/nothing to resolve this period/.test(codeOnly(src)));
+
+// What MUST survive: the incident count. It reports activity, not attainment,
+// and dropping it with the SLA tile would take the whole MDR statement out.
+check('the incident count is untouched',
+  tilePairs(gradedHtml).some(t => /Security incidents this period/.test(t.l)),
+  tilePairs(gradedHtml).map(t => t.l).join(' | '));
 
 section('an unconfigured client sees the report they always saw');
 
@@ -897,8 +879,17 @@ check('the headline falls back to the overall score',
 check('with no in-scope wording', !/services in scope/.test(plainTiles[0] || ''));
 check('no coverage tile is invented',
   !plainTiles.some(l => /Service coverage/.test(l)), plainTiles.join(' | '));
-check('and every metric is still shown',
-  plainTiles.length >= 6, plainTiles.length);
+// Named rather than counted. A bare `length >= 6` was here and it went stale
+// the moment the SLA tile was removed — a count tells you something changed
+// but not whether the right thing changed, and the obvious repair is to edit
+// the number until it passes.
+const plainSet = plainTiles.join(' | ');
+check('the score is shown', /Secure Score/.test(plainSet), plainSet);
+check('vulnerabilities are shown', /vulnerabilities open/i.test(plainSet));
+check('incidents are shown', /Security incidents this period/.test(plainSet));
+check('awareness is shown', /Awareness completion/.test(plainSet));
+check('risks above appetite are shown', /risks above appetite/i.test(plainSet));
+check('and nothing grades resolution', !/SLA/i.test(plainSet), plainSet);
 
 section('the blocks behind the tiles are gated too');
 

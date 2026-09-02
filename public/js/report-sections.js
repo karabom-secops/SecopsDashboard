@@ -1478,29 +1478,31 @@ window.ReportSections = (function () {
   // flattered the service and did not describe what the client experienced.
   //
   // Elapsed hours are what a board means by "resolved in 24 hours", and what a
-  // 24/7 service should be held to.
+  // 24/7 service should be held to. The deck reports the durations; it no
+  // longer grades them.
   //
-  // THE CONTRACTED TARGETS. The only copy in the browser — the KPI table, the
-  // Executive Summary tile and the prose on the slide all read this object, so
-  // changing a number here changes every place it is stated. It was two
-  // literals once, and they disagreed.
-  var IR_SLA_HOURS = {
-    CRITICAL: 24,
-    HIGH:     48,
-    MEDIUM:   72,
-    LOW:      96,
-  };
   /*
-   * SLA_TARGET_PCT (95%) and slaTargetLabel() USED TO BE HERE.
+   * THE INCIDENT SLA IS GONE FROM THIS FILE ENTIRELY.
    *
-   * Both existed solely for the KPI table's "Resolved within SLA" row and the
-   * sentence under it. With that row removed they were read by nothing, and a
-   * constant named SLA_TARGET_PCT sitting in this file would read as a policy
-   * the deck enforces somewhere — dead code is at its most expensive when it
-   * looks like a rule.
+   * IR_SLA_HOURS (Critical 24 h, High 48, Medium 72, Low 96), slaTargetFor(),
+   * SLA_TARGET_PCT (95%) and slaTargetLabel() all lived here. They fed two
+   * things: the KPI table's "Resolved within SLA" row and the Executive
+   * Summary's "Resolution SLA met" tile. Both were removed on request, and
+   * with them went every reader of these values.
    *
-   * IR_SLA_HOURS above is still live: the Executive Summary's "Resolution SLA
-   * met" tile grades tickets against it through slaTargetFor().
+   * They are deleted rather than left in place, because a table of contracted
+   * SLA targets sitting in the report module reads as a policy the deck
+   * enforces — dead code is at its most expensive when it looks like a rule,
+   * and the next person to find it would reasonably assume a client is being
+   * graded against it somewhere.
+   *
+   * What remains is elapsedHoursBetween(), which measures duration and makes
+   * no claim about whether a duration was acceptable. The KPI table still
+   * reports mean and median time to resolve from it.
+   *
+   * If incident SLA reporting comes back, it starts here, and one definition
+   * serves every place that states it — that was the point of the original
+   * table and is worth keeping if it is ever rebuilt.
    */
 
   /**
@@ -1520,11 +1522,6 @@ window.ReportSections = (function () {
     return (b.getTime() - a.getTime()) / 3600000;
   }
 
-  /** The contracted target for a ticket, or null when its severity is unknown. */
-  function slaTargetFor(severity) {
-    var key = String(severity || '').trim().toUpperCase();
-    return IR_SLA_HOURS[key] != null ? IR_SLA_HOURS[key] : null;
-  }
 
   function irKpiBlock(ctx) {
     // Resolution KPIs describe MDR delivery. Without MDR there is nothing to
@@ -2651,42 +2648,6 @@ window.ReportSections = (function () {
     }
 
     /*
-     * Resolution SLA achievement over tickets resolved in the period.
-     *
-     * THREE DIFFERENT REASONS THIS COMES OUT EMPTY, AND THEY MUST NOT LOOK
-     * ALIKE ON A BOARD PACK:
-     *
-     *   MDR not bought       no tile at all — the service gate below.
-     *   nothing resolved     a quiet month. The service worked and there was
-     *                        simply nothing to grade. Printing "No data" beside
-     *                        "0 Security incidents this period" said the
-     *                        reporting had failed when the month had not.
-     *   resolved but         tickets closed with no recognised severity or no
-     *   ungradeable          usable timestamps. That IS a data gap, and it is
-     *                        the only case that still says so.
-     */
-    var slaPct = null;
-    var tickets = ((ctx.data.mdr || {}).tickets || []).filter(function (t2) {
-      return t2.resolvedAt && monthOf(t2.resolvedAt) === ctx.period;
-    });
-    var nothingToResolve = tickets.length === 0;
-    if (tickets.length) {
-      var met = 0, total = 0;
-      // Same measure as the resolution KPI table, or the assurance
-      // dashboard and the KPI slide would print two different SLA figures for
-      // the same month.
-      tickets.forEach(function (t2) {
-        var target = slaTargetFor(t2.severity);
-        if (target == null) return;
-        var h = elapsedHoursBetween(t2.createdAt, t2.resolvedAt);
-        if (h == null) return;
-        total++;
-        if (h <= target) met++;
-      });
-      if (total) slaPct = pct(met, total);
-    }
-
-    /*
      * THE HEADLINE IS THE IN-SCOPE SCORE, NOT THE OVERALL.
      *
      * The overall counts controls the client never bought as zero, so an
@@ -2752,11 +2713,9 @@ window.ReportSections = (function () {
     if (serviceInScope(ctx, 'mdr')) {
       tiles.push({ v: String(incidents), l: 'Security incidents this period' +
         (mdrRaised && irIncidents ? ' (' + mdrRaised + ' MDR, ' + irIncidents + ' logged)' : '') });
-      tiles.push({ v: slaPct == null ? null : slaPct + '%',
-                   l: 'Resolution SLA met' +
-                      (slaPct == null && nothingToResolve
-                        ? ' &middot; nothing to resolve this period' : ''),
-                   nd: slaPct == null && nothingToResolve ? 'n/a' : null });
+      // A "Resolution SLA met" tile sat here and was removed on request. The
+      // incident count stays: it is a statement of activity, not of attainment
+      // against a target.
     }
     if (serviceInScope(ctx, 'awareness')) {
       tiles.push({ v: awPct == null ? null : awPct + '%', l: 'Awareness completion' });
@@ -3622,8 +3581,6 @@ window.ReportSections = (function () {
 
   // Exported for the SLA test suite.
   SECTIONS.elapsedHoursBetween = elapsedHoursBetween;
-  SECTIONS.IR_SLA_HOURS        = IR_SLA_HOURS;
-  SECTIONS.slaTargetFor        = slaTargetFor;
   SECTIONS.phishingMetrics     = phishingMetrics;
   SECTIONS.servicesForSection  = servicesForSection;
   SECTIONS.defaultSectionsFor  = defaultSectionsFor;
