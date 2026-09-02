@@ -51,6 +51,39 @@ check('confinement comes BEFORE pageGate — pageGate fails open',
 check('the active-account check runs before both gates',
   activeAt > authAt && activeAt < confineAt);
 
+/*
+ * ── Static code assets must revalidate ────────────────────────────────────
+ *
+ * The script tags in index.html are unversioned, so a file's URL never changes
+ * when its contents do. Express's default `public, max-age=0` lets the nginx
+ * in front of this app hold and serve a copy, and a correctly deployed fix
+ * then sits on disk while everyone loads the old build.
+ *
+ * Behavioural checks would need a live server; these prove the header is set
+ * and, more importantly, that it is set for the file types that carry code.
+ */
+section('a deployed front-end fix actually reaches the browser');
+
+check('express.static sets response headers at all',
+  /express\.static\(PUBLIC,\s*\{[\s\S]{0,200}setHeaders/.test(src));
+check('code assets are marked no-cache',
+  /Cache-Control['"],\s*['"]no-cache/.test(src));
+
+// The pattern is the load-bearing part: miss .js and the whole thing is
+// decorative, since JS is where the behaviour lives.
+const revalidate = (src.match(/const REVALIDATE = (\/[^\n]*\/[a-z]*);/) || [])[1];
+check('the pattern exists', !!revalidate, revalidate);
+if (revalidate) {
+  // eslint-disable-next-line no-eval
+  const re = eval(revalidate);
+  ['app.js', 'report-sections.js', 'index.html', 'styles.css']
+    .forEach(f => check(f + ' revalidates', re.test(f)));
+  // Content-addressed assets would pay a needless round trip; they change name
+  // when they change at all.
+  ['logo.png', 'brand.woff2'].forEach(f =>
+    check(f + ' is left cacheable', !re.test(f)));
+}
+
 section('login hardening');
 
 check('lib/portal-gate is required', /require\(['"]\.\/lib\/portal-gate['"]\)/.test(src));
@@ -153,8 +186,20 @@ check('and a bare /secops maps to the root', /req\.url === '\/secops'/.test(src)
 // and pageGate are all bound to '/api'.
 check('the API is NOT re-mounted under a second, ungated prefix',
   !/app\.use\('\/secops\/api'/.test(src));
+/*
+ * Anchored on the mount, not on its exact argument list. This read
+ * `app.use(express.static(PUBLIC))` verbatim and broke the moment options were
+ * added to it — and the failure mode of an indexOf anchor that stops matching
+ * is -1, which quietly satisfies any `<` comparison it appears on the right of.
+ * Both offsets are asserted to exist before they are compared.
+ */
+const stripAt  = src.indexOf("req.url.startsWith('/secops/')");
+const staticAt = src.indexOf('app.use(express.static(PUBLIC');
+check('both the strip and the static mount are present',
+  stripAt > -1 && staticAt > -1, 'strip@' + stripAt + ' static@' + staticAt);
 check('stripping happens before the static mount',
-  src.indexOf("req.url.startsWith('/secops/')") < src.indexOf('app.use(express.static(PUBLIC))'));
+  stripAt > -1 && staticAt > -1 && stripAt < staticAt,
+  'strip@' + stripAt + ' static@' + staticAt);
 check('and before the auth gate',
   src.indexOf("req.url.startsWith('/secops/')") < src.indexOf("app.use('/api', requireAuth)"));
 

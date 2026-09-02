@@ -108,7 +108,29 @@ app.use((req, res, next) => {
 });
 
 // Serve static assets BEFORE session/auth so the login page loads without auth.
-app.use(express.static(PUBLIC));
+//
+// CODE ASSETS MUST REVALIDATE ON EVERY REQUEST.
+//
+// The script tags in index.html are unversioned (js/report-sections.js, not
+// ...?v=7), so the URL of a file never changes when its contents do. Express's
+// default of `public, max-age=0` requires a browser to revalidate, but
+// `public` also permits a SHARED cache — the nginx in front of this app — to
+// hold and serve a copy, and a fix can then sit on disk for hours while
+// everyone keeps loading the old build. That has already cost two rounds of
+// "it's still there" on a change that was correctly deployed.
+//
+// `no-cache` does not mean "do not store"; it means "store, but revalidate
+// before every use". With the ETag express.static already sends, that is a
+// conditional GET answered by a 304 with no body — cheap, and correct.
+//
+// Only for the file types that carry behaviour. Images and fonts change under
+// a new name when they change at all, and pay the full round trip otherwise.
+const REVALIDATE = /\.(html|js|css|map)$/i;
+app.use(express.static(PUBLIC, {
+  setHeaders: (res, filePath) => {
+    if (REVALIDATE.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
