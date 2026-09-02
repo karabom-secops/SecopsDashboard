@@ -28,6 +28,39 @@
   window.canView  = function (pageKey) { return LEVEL_RANK[level(pageKey)] >= 1; };
   window.canWrite = function (pageKey) { return LEVEL_RANK[level(pageKey)] >= 2; };
 
+  /* ── Vulnerability remediation SLA ───────────────────────────────────────
+     THE ONLY COPY IN THE BROWSER.
+
+     lib/vuln-parser.js owns these numbers: it computes the due_date stored on
+     every finding. Four tab modules each kept their own literal, and the board
+     report's had drifted to 7/30/90/180 — so a 20-day-old High was "overdue"
+     on the Vulnerabilities tab and "within SLA" on the slide the client
+     receives, from the same row of the same table.
+
+     Overwritten below from GET /api/auth/me. The literal is only the value
+     before that call returns, and tests pin it to the parser so the fallback
+     cannot drift either. Every consumer reads it through the accessor AT USE
+     TIME — capturing it into a module-level const at load would freeze the
+     fallback in place and undo the whole exercise. */
+  window.VULN_SLA_DAYS = { Critical: 7, High: 14, Medium: 30, Low: 60 };
+
+  /**
+   * Days allowed to remediate a finding of this severity, or null when the
+   * severity carries no SLA (Info, or anything unrecognised).
+   *
+   * Case-insensitive: the tabs hold severities lowercase, the report holds
+   * them capitalised, and the parser stores them capitalised.
+   */
+  window.vulnSlaDays = function (severity) {
+    var s = String(severity == null ? '' : severity).trim().toLowerCase();
+    var map = window.VULN_SLA_DAYS || {};
+    var hit = null;
+    Object.keys(map).forEach(function (k) {
+      if (k.toLowerCase() === s) hit = map[k];
+    });
+    return hit;
+  };
+
   const BASE = (function () {
     // Derive base URL from <base href> so this works under /secops/ prefix.
     const base = document.querySelector('base');
@@ -55,6 +88,13 @@
     window.pageAccess  = user.pageAccess || {};
     window.pageCatalog = user.pages || [];
     window.roleCatalog = user.roles || [];
+
+    // Served from lib/vuln-parser.js, the module that writes the stored due
+    // dates. Guarded: an older server that does not send it leaves the literal
+    // above in place rather than blanking every SLA on the page.
+    if (user.vulnSlaDays && typeof user.vulnSlaDays === 'object') {
+      window.VULN_SLA_DAYS = user.vulnSlaDays;
+    }
 
     // A portal client has no staff pages at all — that is the point of the
     // role — so landing here they would get "you do not have access to any

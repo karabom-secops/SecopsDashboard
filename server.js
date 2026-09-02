@@ -24,6 +24,7 @@ const servicesLib = require('./lib/services');
 const { parseReport } = require('./lib/parser');
 const { computeAllMetrics } = require('./lib/metrics');
 const { parseVulnFile, computeVulnSummary, computeDueDate } = require('./lib/vuln-parser');
+const vulnParserLib = require('./lib/vuln-parser');
 const { parseAwarenessCSV, detectAwarenessFormat, parseSessionHistoryCSV } = require('./lib/awareness-parser');
 const XLSX = require('xlsx');
 const { isSamlEnabled, getSamlLoginUrl, validateSamlResponse, getSamlMetadata } = require('./lib/saml');
@@ -523,6 +524,18 @@ app.get('/api/auth/me', async (req, res) => {
     pageAccess,
     pages:       PAGES,
     roles:       ROLES.map(r => ({ value: r, label: ROLE_LABELS[r] })),
+    /*
+     * The remediation SLA, served rather than duplicated.
+     *
+     * lib/vuln-parser.js is the authority: it computes the due_date actually
+     * stored on every finding. Four browser copies had drifted from it and
+     * from each other — the board report used 7/30/90/180 while the
+     * Vulnerabilities tab and the stored dates used 7/14/30/60, so the same
+     * finding was overdue on one screen and comfortable on the other.
+     * Shipping the numbers from the same module that applies them is the only
+     * version of this that cannot drift again.
+     */
+    vulnSlaDays: vulnParserLib.SLA_DAYS,
   });
 });
 
@@ -808,6 +821,22 @@ const SLUG_RE = /^[a-z0-9_-]{2,30}$/;
  * Cached only on a positive answer, so applying the migration takes effect
  * without a restart. Same idiom as hasUserLifecycleColumns.
  */
+/**
+ * The services a tenant consumes, or null when nobody has recorded them.
+ *
+ * null is load-bearing and is returned for BOTH "no row" and "column not
+ * migrated yet": in neither case has anyone said this client buys nothing, and
+ * the Secure Score treats unrecorded very differently from empty.
+ */
+async function loadTenantServices(tenantId) {
+  if (!await hasTenantServicesColumn()) return null;
+  try {
+    const r = await pool.query('SELECT services FROM tenants WHERE id = $1', [tenantId]);
+    if (!r.rows.length) return null;
+    return Array.isArray(r.rows[0].services) ? r.rows[0].services : null;
+  } catch (_) { return null; }
+}
+
 let _tenantServicesColumn = null;
 async function hasTenantServicesColumn() {
   if (_tenantServicesColumn) return true;
@@ -5732,11 +5761,18 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
     // assessed; an unmeasured component scores 0 and must be labelled as such,
     // or a client reads "Vulnerabilities 0/100" as a failed scan rather than as
     // a scan that was never uploaded.
+    // What the client buys decides which components are in scope. NULL when
+    // nobody has recorded it, which leaves the score behaving exactly as it did
+    // before service scoping existed.
+    const tenantServices = await loadTenantServices(tenantId);
+
     const {
       composite, vulnScore, awarenessScore, mdrScore,
       measured, unmeasured, maxAchievable, vulnDetail, weights,
+      serviceScore, coverage, scope, overall,
     } = calculateSecureScore(vulnData, awarenessData, mdrData,
-                             { estate, edr: edrHealth, incidentRate });
+                             { estate, edr: edrHealth, incidentRate,
+                               services: tenantServices });
     const recommendations = generateRecommendations(
       vulnScore, awarenessScore, mdrScore, measured, vulnDetail, estate);
 
@@ -5747,10 +5783,33 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
     else if (composite >= 50) rating = 'Fair';
     else rating = 'Poor';
 
+    /*
+     * Three numbers, because one cannot answer both questions.
+     *
+     *   score / overall  their whole posture, from all available evidence.
+     *                    Unchanged, and still the `score` field every existing
+     *                    consumer reads.
+     *   serviceScore     how the services they actually buy are performing.
+     *   coverage         how much of their weighted posture those services
+     *                    reach at all.
+     *
+     * All three are null-safe: with no recorded services, serviceScore and
+     * coverage are null and callers fall back to `score`.
+     */
+    const serviceRating = serviceScore == null ? null
+      : serviceScore >= 80 ? 'Excellent'
+      : serviceScore >= 70 ? 'Good'
+      : serviceScore >= 50 ? 'Fair' : 'Poor';
+
     res.json({
       tenantId,
       score: composite,
       rating,
+      overall,
+      serviceScore,
+      serviceRating,
+      coverage,
+      scope,
       // Weights come from `weights`, not the flat WEIGHTS table: they follow the
       // client's exposure. Anything that reports a weight must read the same
       // object the composite was computed from, or the breakdown will not

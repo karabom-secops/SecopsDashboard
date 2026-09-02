@@ -463,8 +463,35 @@ window.ReportSections = (function () {
   // to guess where a RAG rating came from.
   // ══════════════════════════════════════════════════════════════════════════
 
-  /** Days from first_seen_at within which a finding of each severity must be fixed. */
-  var VULN_SLA_DAYS = { Critical: 7, High: 30, Medium: 90, Low: 180 };
+  /**
+   * Days from first_seen_at within which a finding of each severity must be
+   * fixed — NOT a local policy, and deliberately not a literal.
+   *
+   * This block owns the report's board-facing thresholds, and the remediation
+   * SLA used to be one of them: a private 7/30/90/180 that had drifted from
+   * lib/vuln-parser.js's 7/14/30/60. The parser is the module that computes
+   * the due_date stored on each finding, so the deck was contradicting the
+   * dashboard AND the database about the same row — a High at 20 days was
+   * flagged overdue on the Vulnerabilities tab and reported to the board as
+   * comfortably within SLA. The prose two hundred lines below already said
+   * "High 2 weeks", so the file also contradicted itself.
+   *
+   * Read through the accessor, at use time. window.VULN_SLA_DAYS is filled
+   * from GET /api/auth/me; capturing it into a var here would freeze whatever
+   * happened to be set when this file parsed, which is the fallback.
+   */
+  function vulnSlaDays(severity) {
+    if (typeof window !== 'undefined' && typeof window.vulnSlaDays === 'function') {
+      return window.vulnSlaDays(severity);
+    }
+    // Standalone (a headless test harness, a saved deck): mirror the parser.
+    var fallback = { critical: 7, high: 14, medium: 30, low: 60 };
+    var v = fallback[String(severity == null ? '' : severity).trim().toLowerCase()];
+    return v === undefined ? null : v;
+  }
+
+  /** The severities that carry an SLA at all, in order. */
+  var VULN_SLA_SEVERITIES = ['Critical', 'High', 'Medium', 'Low'];
 
   /** Target score per domain. A domain below target is outside appetite. */
   var MATURITY_TARGETS = {
@@ -511,10 +538,10 @@ window.ReportSections = (function () {
     return Math.floor((Date.now() - d.getTime()) / 86400000);
   }
 
-  /** Normalise a vuln severity label to a VULN_SLA_DAYS key. */
+  /** Normalise a vuln severity label to one that carries an SLA, or null. */
   function sevKey(risk) {
     var t = titleCase(risk);
-    return VULN_SLA_DAYS[t] !== undefined ? t : null;
+    return VULN_SLA_SEVERITIES.indexOf(t) >= 0 ? t : null;
   }
 
   // ── Remediation Tracker ───────────────────────────────────────────────────
@@ -525,8 +552,10 @@ window.ReportSections = (function () {
   // (/api/remediation-tracker): vuln findings, pentest findings and risks.
   //
   // All three carry a target date: pentest findings and risks have one entered by
-  // hand, vuln findings get one from the severity SLA (first detected + 1 week for
-  // Critical, 2 weeks High, 1 month Medium, 2 months Low — see lib/vuln-parser.js).
+  // hand, vuln findings get one from the severity SLA measured off first
+  // detection. The numbers live in lib/vuln-parser.js and reach the browser via
+  // GET /api/auth/me — they are deliberately not restated here, because the
+  // version of this comment that did restate them went stale and disagreed.
 
   // Both columns now stack vertically (see .rem-cols), so the two tables share
   // the body height rather than sitting side by side.
@@ -675,8 +704,14 @@ window.ReportSections = (function () {
     var upcoming = collectScheduled(data, next);
     if (!done.length && !upcoming.length) return null;
 
-    var slaNote = 'Scan findings are dated by remediation SLA: Critical 1 week, High 2 weeks, ' +
-                  'Medium 1 month, Low 2 months from first detection.';
+    // Built from the live table rather than written out, so the sentence can
+    // never end up describing a policy the report is no longer applying —
+    // which is exactly what had happened: this said "High 2 weeks" while the
+    // code above it was allowing thirty days.
+    var slaNote = 'Scan findings are dated by remediation SLA: ' +
+      VULN_SLA_SEVERITIES.map(function (s) {
+        return s + ' ' + vulnSlaDays(s) + ' days';
+      }).join(', ') + ' from first detection.';
 
     // Page 1 shares its height with the Remediated table, so it carries the
     // first slice of Scheduled; the remainder spills onto continuation pages.
@@ -1024,7 +1059,7 @@ window.ReportSections = (function () {
       if (age != null) {
         b.ageSum += age; b.ageN++;
         slaTotal++;
-        if (age > VULN_SLA_DAYS[k]) b.overdue++; else withinSla++;
+        if (age > vulnSlaDays(k)) b.overdue++; else withinSla++;
         if (!oldest || age > oldest.age) oldest = { age: age, name: f.name, severity: k };
       }
     });
@@ -1049,7 +1084,7 @@ window.ReportSections = (function () {
           raw: function (r) {
             return '<span class="sev-dot" style="background:' + severityTone(r.severity) + '"></span> ' +
                    esc(r.severity) +
-                   '<span class="sev-sla">' + VULN_SLA_DAYS[r.severity] + 'd SLA</span>';
+                   '<span class="sev-sla">' + vulnSlaDays(r.severity) + 'd SLA</span>';
           } },
         { label: 'Open',          key: 'open',     width: '15%', cls: 'num' },
         { label: 'Overdue',       key: 'overdue',  width: '15%', cls: 'num',
@@ -1416,7 +1451,7 @@ window.ReportSections = (function () {
     return [bars, subHead('MDR tickets raised during ' + periodName(ctx.period)) + tickets];
   }
 
-  // ── Detection & Response KPIs ─────────────────────────────────────────────
+  // ── Resolution KPIs ───────────────────────────────────────────────────────
 
   // ── Resolution SLA: 24/7, measured in elapsed hours ───────────────────────
   //
@@ -1476,13 +1511,14 @@ window.ReportSections = (function () {
       return t.resolvedAt && monthOf(t.resolvedAt) === period;
     });
 
-    // Elapsed hours throughout, so MTTR and the SLA figure in the same table
-    // are measured the same way. Mixing an elapsed-time MTTR with a
+    // Elapsed hours throughout, so the timings and the SLA figure in the same
+    // table are measured the same way. Mixing elapsed-time timings with a
     // business-hours SLA made the two rows contradict each other.
     //
-    // A ticket whose severity we do not recognise is counted in MTTR but NOT
-    // in the SLA figure: it has no contracted target, and defaulting it to
-    // MEDIUM would invent a commitment and then grade the service against it.
+    // A ticket whose severity we do not recognise is counted in the timings
+    // but NOT in the SLA figure: it has no contracted target, and defaulting
+    // it to MEDIUM would invent a commitment and then grade the service
+    // against it.
     var hours = [];
     var slaMet = 0, slaTotal = 0, slaUngraded = 0;
     resolved.forEach(function (t) {
@@ -1500,33 +1536,58 @@ window.ReportSections = (function () {
     var mttr   = hours.length ? hours.reduce(function (s, h) { return s + h; }, 0) / hours.length : null;
     var median = hours.length ? hours[Math.floor(hours.length / 2)] : null;
     var slaPct = slaTotal ? Math.round((slaMet / slaTotal) * 1000) / 10 : null;
-    var resRate = raised.length ? Math.round((resolved.length / raised.length) * 1000) / 10 : null;
-
-    // EDR carries its own mean-time-to-mitigate, which is the closest thing to a
-    // detection-side measure available; the ticket feed has no detection stamp.
-    var edr  = endpointMetrics(ctx) ? ctx.data.edr : null;
-    var mttm = edr && edr.threats && edr.threats.mttmHours != null ? edr.threats.mttmHours : null;
 
     function hrs(v) {
       if (v == null) return '—';
       return v < 1 ? Math.round(v * 60) + ' min' : (Math.round(v * 10) / 10) + ' hrs';
     }
 
+    /*
+     * RESOLUTION ONLY.
+     *
+     * This table used to lead with "Mean time to respond (MTTR)" and "Median
+     * time to respond" — both of which were measuring creation to RESOLUTION.
+     * Nothing here has ever measured time to respond: the ticket feed carries
+     * no acknowledgement stamp, so a response time cannot be computed at all.
+     * The labels were describing a metric the data cannot produce, sitting
+     * directly above a row about resolution, which is what made the block
+     * unreadable.
+     *
+     * "Mean time to mitigate (EDR)" is gone for the same reason plus a worse
+     * one: it came from a different platform on a different clock, so a reader
+     * comparing it with the rows around it was comparing nothing.
+     *
+     * What the client contracted for is resolution inside a window, so that is
+     * what the table reports.
+     */
     var rows = [
-      { kpi: 'Mean time to respond (MTTR)', target: '—',                    actual: hrs(mttr), ok: null },
-      { kpi: 'Mean time to mitigate (EDR)', target: '—',                    actual: hrs(mttm), ok: null },
-      { kpi: 'Median time to respond',      target: '—',                    actual: hrs(median), ok: null },
-      // The commitment is stated on the row it is measured against, so the
-      // board can see what 95% is 95% OF without turning to a contract.
-      { kpi: 'Resolution within SLA',       target: slaTargetLabel(),
-        actual: slaPct == null ? '—' : slaPct + ' %',
+      { kpi: 'Mean time to resolve',   target: '—', actual: hrs(mttr),   ok: null },
+      { kpi: 'Median time to resolve', target: '—', actual: hrs(median), ok: null },
+      { kpi: 'Resolved within SLA',    target: SLA_TARGET_PCT + ' %',
+        actual: slaPct == null ? '—'
+          : slaPct + ' %  (' + slaMet + ' of ' + slaTotal + ')',
         ok: slaPct == null ? null : slaPct >= SLA_TARGET_PCT },
-      { kpi: 'SLA achievement target',      target: SLA_TARGET_PCT + ' %',
-        actual: slaTotal ? slaMet + ' of ' + slaTotal + ' tickets' : '—', ok: null },
-      { kpi: 'Tickets raised',              target: '—',                    actual: String(raised.length), ok: null },
-      { kpi: 'Tickets resolved',            target: '—',                    actual: String(resolved.length), ok: null },
-      { kpi: 'Resolution rate',             target: '—',                    actual: resRate == null ? '—' : resRate + ' %', ok: null },
+      { kpi: 'Tickets raised this period',   target: '—', actual: String(raised.length), ok: null },
+      { kpi: 'Tickets resolved this period', target: '—', actual: String(resolved.length), ok: null },
     ];
+
+    /*
+     * The old "Resolution rate" is gone because it was not a rate.
+     *
+     * It divided tickets RESOLVED in the month by tickets RAISED in the month
+     * — two different cohorts, since a ticket resolved in March may have been
+     * raised in January. Clearing a backlog therefore produced 125%, which a
+     * board reads either as an error or as a boast, and neither is what
+     * happened. The two counts are still shown; the reader can compare them
+     * without a fabricated ratio in between.
+     */
+    if (resolved.length > raised.length) {
+      rows.push({ kpi: 'Backlog change', target: '—',
+        actual: (resolved.length - raised.length) + ' fewer open', ok: true });
+    } else if (raised.length > resolved.length) {
+      rows.push({ kpi: 'Backlog change', target: '—',
+        actual: (raised.length - resolved.length) + ' more open', ok: false });
+    }
 
     // Only shown when it happened. A silent exclusion is how a partial SLA
     // figure gets read as a complete one.
@@ -1548,11 +1609,12 @@ window.ReportSections = (function () {
       rows: rows,
     }) +
     '<div class="rag-note">Security operations run <strong>24/7</strong>, so ' +
-      'response time is measured in elapsed hours from ticket creation to ' +
+      'resolution time is measured in elapsed hours from ticket creation to ' +
       'resolution — nights, weekends and public holidays included. ' +
-      'SLA targets: ' + slaTargetLabel() + '. ' +
-      'Mean time to detect is not reported: the ticket feed carries no detection ' +
-      'timestamp, so mean time to mitigate from the EDR platform is shown instead.</div>';
+      'Resolution targets: ' + slaTargetLabel() + '. ' +
+      'Tickets raised and resolved are counted within this period and are ' +
+      'different sets: a ticket resolved this month may have been raised in an ' +
+      'earlier one.</div>';
   }
 
   // ── Security Maturity Trend ───────────────────────────────────────────────
@@ -2460,7 +2522,7 @@ window.ReportSections = (function () {
       if (!VULN_OPEN_STATUSES[v.status]) return false;
       var k = sevKey(v.risk);
       var age = ageDays(v.firstSeenAt);
-      return k && age != null && age > VULN_SLA_DAYS[k];
+      return k && age != null && age > vulnSlaDays(k);
     });
     if (pastSla.length) {
       out.push({ area: 'Vulnerability remediation window', tone: 'medium', impact: 'Moderate',
@@ -2551,7 +2613,7 @@ window.ReportSections = (function () {
     });
     if (tickets.length) {
       var met = 0, total = 0;
-      // Same measure as the Detection & Response KPI table, or the assurance
+      // Same measure as the resolution KPI table, or the assurance
       // dashboard and the KPI slide would print two different SLA figures for
       // the same month.
       tickets.forEach(function (t2) {
@@ -2611,6 +2673,96 @@ window.ReportSections = (function () {
 
   // ── 2. Cybersecurity Assurance Dashboard ──────────────────────────────────
 
+  /* ── Service coverage ─────────────────────────────────────────────────────
+   *
+   * Three numbers, because one cannot answer both questions a board has:
+   *
+   *   Secure Score (in scope)   how are the services you buy performing?
+   *   Service coverage          how much of your posture do they reach?
+   *   Overall Secure Score      how are you doing, counting everything?
+   *
+   * A client who buys only awareness training was previously shown a single
+   * composite around 35, which reads as failure and is really a statement
+   * about our order book: they were scored 0 for two controls they never
+   * bought. Their awareness result was 100.
+   *
+   * The three are NOT related by a formula. A client running their own
+   * vulnerability programme is measured but not covered, so their overall can
+   * exceed anything coverage would predict. The slide says so rather than
+   * inviting the reader to multiply.
+   *
+   * Self-disabling when no service mix has been recorded: with nothing on
+   * file, there is no coverage statement to make and the section skips
+   * silently rather than printing an empty frame.
+   */
+  function serviceCoverageBlock(ctx) {
+    var ss = ctx.data.secureScore || {};
+    var scope = ss.scope;
+    if (!scope || !scope.recorded) return null;
+
+    var tiles = [
+      { v: ss.serviceScore == null ? 'n/a' : String(ss.serviceScore),
+        l: 'Secure Score — services in scope',
+        ok: ss.serviceScore != null && ss.serviceScore >= 70 },
+      { v: ss.coverage == null ? '—' : ss.coverage + ' %',
+        l: 'Service coverage of posture',
+        ok: ss.coverage != null && ss.coverage >= 80 },
+      { v: ss.overall == null ? '—' : String(ss.overall),
+        l: 'Overall Secure Score',
+        ok: ss.overall != null && ss.overall >= 70 },
+    ];
+
+    var grid = '<div class="bi-grid tight">' +
+      tiles.map(function (t) {
+        return '<div class="bi-cell' + (t.ok ? ' ok' : '') + '">' +
+            '<div class="bi-v">' + esc(t.v) + '</div>' +
+            '<div class="bi-l">' + esc(t.l) + '</div>' +
+          '</div>';
+      }).join('') + '</div>';
+
+    var gaps = '';
+    if ((scope.uncovered || []).length) {
+      gaps = D.dataTable({
+        cols: [
+          { label: 'Control not covered', key: 'label',  width: '34%' },
+          { label: 'Weight',              key: 'wt',     width: '13%', cls: 'num' },
+          { label: 'Evidence',            key: 'ev',     width: '25%' },
+          { label: 'Closed by',           key: 'by',     width: '28%' },
+        ],
+        rows: scope.uncovered.map(function (u) {
+          return {
+            label: u.label,
+            wt:    Math.round((u.weight || 0) * 100) + ' %',
+            // The distinction that stops a security gap being filed as a sales
+            // opportunity, and vice versa.
+            ev:    u.evidence === 'client-supplied'
+                     ? 'Client-run, results supplied'
+                     : 'None — not being measured',
+            by:    (u.closedBy || []).join(' or ') || '—',
+          };
+        }),
+      });
+    }
+
+    var blind = scope.blindSpotPoints || 0;
+    var note = '<div class="rag-note">' +
+      '<strong>Secure Score — services in scope</strong> covers only the controls ' +
+      'delivered under the services contracted with Reflex, and is the fair measure ' +
+      'of that delivery. <strong>Overall Secure Score</strong> counts every control ' +
+      'that applies, whoever runs it. ' +
+      (blind
+        ? '<strong>' + blind + ' of the 100 points sit in controls that neither ' +
+          'Reflex nor any evidence supplied covers</strong> — those are not weak ' +
+          'results, they are unmeasured ones. '
+        : 'Every control outside our services still has evidence behind it. ') +
+      'The two scores are independent: a control the client runs themselves ' +
+      'raises the overall score without changing coverage.</div>';
+
+    return block(grid + (gaps ? subHead('Coverage gaps') + gaps : '') + note);
+  }
+
+  function renderServiceCoverage(ctx) { return serviceCoverageBlock(ctx); }
+
   function renderAssuranceDashboard(ctx) {
     var maturity = maturityBlock(ctx);
     var kpis     = irKpiBlock(ctx);
@@ -2620,7 +2772,7 @@ window.ReportSections = (function () {
     var bodies = [];
     var first  = '';
     if (maturity) first += block(subHead('Maturity against target') + maturity);
-    if (kpis)     first += block(subHead('Detection and response') + kpis);
+    if (kpis)     first += block(subHead('Incident resolution') + kpis);
     if (first)    bodies.push(first);
 
     if (endpoint) {
@@ -3149,62 +3301,78 @@ window.ReportSections = (function () {
       requires: ['secureScore'], optional: ['secureScoreHistory', 'mdr', 'edr'],
       render: renderAssuranceDashboard, commentable: true },
 
-    { n: 3,  id: 'heatMap',            label: 'Cyber Risk Heat Map',                     group: 'Risk',
+    /*
+     * Sits right after the assurance dashboard, where the composite has just
+     * been shown, so the reader meets the coverage caveat on the same spread
+     * as the number it qualifies rather than twelve pages later.
+     *
+     * `services: null` — always OFFERED, whatever the client buys, because a
+     * coverage statement is exactly the thing a narrow-service client needs.
+     * It self-disables when no service mix has been recorded, so it costs
+     * nothing on a client nobody has configured. Toggle it off in the Reports
+     * tab to leave the overall score and the gap table out of the deck.
+     */
+    { n: 3,  id: 'serviceCoverage',     label: 'Service Coverage and Overall Score',      group: 'Executive',
+      services: null,
+      requires: ['secureScore'],
+      render: renderServiceCoverage, commentable: true },
+
+    { n: 4,  id: 'heatMap',            label: 'Cyber Risk Heat Map',                     group: 'Risk',
       services: ['vciso'],
       requires: ['vulnFindings'],                  render: renderRiskHeatMap, commentable: true },
 
-    { n: 4,  id: 'assurance',          label: 'Board Assurance Statement',               group: 'Executive',
+    { n: 5,  id: 'assurance',          label: 'Board Assurance Statement',               group: 'Executive',
       services: null,          // always offered, whatever the client buys
       requires: [],                                render: renderAssurance },
 
-    { n: 5,  id: 'topRisks',           label: 'Top Cyber Risks',                         group: 'Risk',
+    { n: 6,  id: 'topRisks',           label: 'Top Cyber Risks',                         group: 'Risk',
       services: ['vciso'],
       requires: ['vulnFindings'],                  render: renderTopRisks, commentable: true },
 
-    { n: 6,  id: 'execRisk',           label: 'Risk Appetite Dashboard',                 group: 'Risk',
+    { n: 7,  id: 'execRisk',           label: 'Risk Appetite Dashboard',                 group: 'Risk',
       services: ['vciso'],
       requires: ['secureScore'], optional: ['edr', 'o365', 'vulnFindings', 'secureScoreHistory'],
       render: renderRiskAppetite, commentable: true },
 
-    { n: 7,  id: 'businessImpact',     label: 'Business Impact Summary',                 group: 'Risk',
+    { n: 8,  id: 'businessImpact',     label: 'Business Impact Summary',                 group: 'Risk',
       services: ['vciso'],
       requires: ['vulnFindings'],                  render: renderBusinessImpact, commentable: true },
 
-    { n: 8,  id: 'threatLandscape',    label: 'Threat Landscape Overview',               group: 'Dashboards',
+    { n: 9,  id: 'threatLandscape',    label: 'Threat Landscape Overview',               group: 'Dashboards',
       services: ['mdr', 'edr', 'ndr', 'vciso'],
       requires: ['vulnFindings'], optional: ['mdr'],
       render: renderThreatLandscape, commentable: true },
 
-    { n: 9,  id: 'thirdParty',         label: 'Third-Party Risk Dashboard',              group: 'Dashboards',
+    { n: 10,  id: 'thirdParty',         label: 'Third-Party Risk Dashboard',              group: 'Dashboards',
       services: ['vciso'],
       requires: [], optional: ['vendors', 'grcAssessment', 'grcQuestions', 'vulnFindings'],
       render: renderThirdPartyRisk },
 
-    { n: 10, id: 'identityRisk',       label: 'Identity and Access Risk Dashboard',      group: 'Dashboards',
+    { n: 11, id: 'identityRisk',       label: 'Identity and Access Risk Dashboard',      group: 'Dashboards',
       services: ['identity', 'vciso'],
       requires: [], optional: ['o365', 'grcAssessment', 'grcQuestions'],
       render: renderIdentityRisk },
 
-    { n: 11, id: 'vulnDashboard',      label: 'Vulnerability Dashboard',                 group: 'Dashboards',
+    { n: 12, id: 'vulnDashboard',      label: 'Vulnerability Dashboard',                 group: 'Dashboards',
       services: ['vuln'],
       requires: ['vulnFindings'], optional: ['vulnSummary', 'vulnTrends'],
       render: renderVulnDashboard },
 
-    { n: 12, id: 'humanRisk',          label: 'Human Risk Dashboard',                    group: 'Dashboards',
+    { n: 13, id: 'humanRisk',          label: 'Human Risk Dashboard',                    group: 'Dashboards',
       services: ['awareness'],
       requires: ['awareness'], optional: ['grcAssessment', 'grcQuestions'],
       render: renderHumanRisk },
 
-    { n: 13, id: 'resilience',         label: 'Recovery and Resilience Dashboard',       group: 'Dashboards',
+    { n: 14, id: 'resilience',         label: 'Recovery and Resilience Dashboard',       group: 'Dashboards',
       services: ['mdr', 'edr', 'vciso'],
       requires: ['grcAssessment', 'grcQuestions'], optional: ['vulnFindings'],
       render: renderResilience },
 
-    { n: 14, id: 'compliance',         label: 'Compliance Dashboard',                    group: 'Governance',
+    { n: 15, id: 'compliance',         label: 'Compliance Dashboard',                    group: 'Governance',
       services: ['vciso'],
       requires: ['grcAssessment', 'grcQuestions'], render: renderCompliance },
 
-    { n: 15, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',
+    { n: 16, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',
       services: null,          // always offered, whatever the client buys
       requires: ['secureScore'], optional: ['vulnFindings'],
       render: renderDecisions, commentable: true },

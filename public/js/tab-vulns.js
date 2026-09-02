@@ -555,14 +555,17 @@
 
   // ── Age/SLA helpers ────────────────────────────────────────────────────────
 
-  // Remediation SLA, in days. Mirrors SLA_DAYS in lib/vuln-parser.js — used only
-  // as a fallback for scans uploaded before due dates were stored.
-  const SLA_DAYS = { critical: 7, high: 14, medium: 30, low: 60 };
-
-  /** Remediation deadline for a finding, or null when it has no SLA. */
+  /**
+   * Remediation deadline for a finding, or null when it has no SLA.
+   *
+   * Used only as a fallback for scans uploaded before due dates were stored;
+   * a stored dueDate always wins. The SLA itself is not restated here — it is
+   * served from lib/vuln-parser.js via GET /api/auth/me, because the four
+   * private copies this file used to be one of had drifted apart.
+   */
   function _dueDate(f) {
     if (f.dueDate) return new Date(f.dueDate);
-    const days = SLA_DAYS[(f.risk || '').toLowerCase()];
+    const days = window.vulnSlaDays ? window.vulnSlaDays(f.risk) : null;
     if (!days || !f.firstSeenAt) return null;
     return new Date(new Date(f.firstSeenAt).getTime() + days * 86400000);
   }

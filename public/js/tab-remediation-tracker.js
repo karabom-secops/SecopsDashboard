@@ -13,10 +13,19 @@ const RemediationTrackerTab = (() => {
   const DEFAULT_DURATION_DAYS = 14;
 
   // Vulnerability remediation SLA, in days from first detection.
-  // Mirrors SLA_DAYS in lib/vuln-parser.js — the server stores the resulting
-  // due_date on each finding; this is only a fallback for scans uploaded before
-  // due dates were persisted.
-  const VULN_SLA_DAYS = { critical: 7, high: 14, medium: 30, low: 60 };
+  //
+  // Served from lib/vuln-parser.js via GET /api/auth/me rather than restated
+  // here: that module computes the due_date stored on each finding, and the
+  // four private copies this file used to be one of had drifted apart — the
+  // board report was allowing a High thirty days while this tab allowed
+  // fourteen. Read at call time; a module-level capture would freeze the
+  // fallback before the session response arrives.
+  //
+  // Only a fallback for scans uploaded before due dates were persisted; a
+  // stored due_date always wins.
+  function vulnSlaDays(severity) {
+    return window.vulnSlaDays ? window.vulnSlaDays(severity) : null;
+  }
 
   const STATUS_OPTIONS = {
     vuln:     [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted']],
@@ -98,7 +107,7 @@ const RemediationTrackerTab = (() => {
       const start = toDateOnly(v.firstSeenAt) || today;
       const severity = (v.risk || '').toLowerCase() || 'informational';
       // Prefer the stored due date; fall back to the severity SLA off first detection.
-      const sla = VULN_SLA_DAYS[severity];
+      const sla = vulnSlaDays(severity);
       const due = toDateOnly(v.dueDate) || (sla ? addDays(start, sla) : null);
       return {
         source: 'vuln',
