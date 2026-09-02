@@ -1479,11 +1479,16 @@ window.ReportSections = (function () {
   //
   // Elapsed hours are what a board means by "resolved in 24 hours", and what a
   // 24/7 service should be held to.
+  //
+  // THE CONTRACTED TARGETS. The only copy in the browser — the KPI table, the
+  // Executive Summary tile and the prose on the slide all read this object, so
+  // changing a number here changes every place it is stated. It was two
+  // literals once, and they disagreed.
   var IR_SLA_HOURS = {
-    CRITICAL: 8,
-    HIGH:     24,
-    MEDIUM:   48,
-    LOW:      72,
+    CRITICAL: 24,
+    HIGH:     48,
+    MEDIUM:   72,
+    LOW:      96,
   };
   var SLA_TARGET_PCT = 95;
 

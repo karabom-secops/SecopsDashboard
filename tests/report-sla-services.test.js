@@ -53,8 +53,17 @@ const srcCode = codeOnly(src);
 section('security runs 24/7, so the clock does too');
 
 check('the targets are the contracted ones',
-  S.IR_SLA_HOURS.CRITICAL === 8 && S.IR_SLA_HOURS.HIGH === 24 &&
-  S.IR_SLA_HOURS.MEDIUM === 48 && S.IR_SLA_HOURS.LOW === 72,
+  S.IR_SLA_HOURS.CRITICAL === 24 && S.IR_SLA_HOURS.HIGH === 48 &&
+  S.IR_SLA_HOURS.MEDIUM === 72 && S.IR_SLA_HOURS.LOW === 96,
+  JSON.stringify(S.IR_SLA_HOURS));
+
+// Ordering is a property of the contract, not of these four numbers: a target
+// that does not get looser as severity falls is a typo, and one that grades a
+// Critical against a longer window than a Low would go unnoticed in a table.
+check('and they loosen as severity falls',
+  S.IR_SLA_HOURS.CRITICAL < S.IR_SLA_HOURS.HIGH &&
+  S.IR_SLA_HOURS.HIGH < S.IR_SLA_HOURS.MEDIUM &&
+  S.IR_SLA_HOURS.MEDIUM < S.IR_SLA_HOURS.LOW,
   JSON.stringify(S.IR_SLA_HOURS));
 
 /*
@@ -69,10 +78,13 @@ const fri1705 = '2026-03-06T17:05:00+02:00';   // Friday
 const mon0900 = '2026-03-09T09:00:00+02:00';   // Monday
 const weekend = S.elapsedHoursBetween(fri1705, mon0900);
 check('a weekend is counted, not skipped', Math.round(weekend) === 64, weekend);
-check('and that fails the 48-hour Medium target',
-  weekend > S.IR_SLA_HOURS.MEDIUM, weekend + 'h vs ' + S.IR_SLA_HOURS.MEDIUM + 'h');
-check('while still meeting the 72-hour Low target',
-  weekend <= S.IR_SLA_HOURS.LOW, weekend + 'h vs ' + S.IR_SLA_HOURS.LOW + 'h');
+// 64 elapsed hours straddles the current targets, so it still discriminates:
+// it breaches High (48) and meets Medium (72). Under the old business-hours
+// model it was about one hour and breached nothing at all.
+check('and that breaches the High target',
+  weekend > S.IR_SLA_HOURS.HIGH, weekend + 'h vs ' + S.IR_SLA_HOURS.HIGH + 'h');
+check('while still meeting the Medium target',
+  weekend <= S.IR_SLA_HOURS.MEDIUM, weekend + 'h vs ' + S.IR_SLA_HOURS.MEDIUM + 'h');
 
 const overnight = S.elapsedHoursBetween('2026-03-03T22:00:00Z', '2026-03-04T06:00:00Z');
 check('an overnight ticket accrues its 8 hours', overnight === 8, overnight);
@@ -92,10 +104,15 @@ check('but zero elapsed is a legitimate answer',
 
 section('severities map to their contracted target');
 
-check('Critical is 8 hours', S.slaTargetFor('CRITICAL') === 8);
-check('case does not matter', S.slaTargetFor('high') === 24);
-check('whitespace does not matter', S.slaTargetFor(' Medium ') === 48);
-check('Low is 72 hours', S.slaTargetFor('LOW') === 72);
+check('Critical is 24 hours', S.slaTargetFor('CRITICAL') === 24);
+check('case does not matter', S.slaTargetFor('high') === 48);
+check('whitespace does not matter', S.slaTargetFor(' Medium ') === 72);
+check('Low is 96 hours', S.slaTargetFor('LOW') === 96);
+// Read through the lookup rather than restated, so the mapping cannot pass
+// while the table it reads from says something else.
+check('every severity resolves to its own row in the table',
+  ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
+    .every(k => S.slaTargetFor(k) === S.IR_SLA_HOURS[k]));
 // Defaulting an unknown severity to MEDIUM would invent a commitment and then
 // grade the service against it.
 check('an unknown severity has NO target rather than a guessed one',
