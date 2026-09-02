@@ -158,8 +158,8 @@ const SecureScoreTab = (() => {
       (gaps.length
         ? '<ul class="ss-scope-gaps">' + gaps.map(u =>
             `<li><strong>${escHtml(u.label)}</strong> — ${escHtml(String(u.pointsForfeited))} points, ` +
-            (u.evidence === 'client-supplied'
-              ? 'client-run and evidenced'
+            (u.evidence === 'measured'
+              ? 'measured, outside this engagement'
               : '<span class="ss-scope-blind">not measured</span>') +
             (u.closedBy && u.closedBy.length
               ? '. Covered by ' + escHtml(u.closedBy.join(' or ')) + '.' : '.') +
@@ -1171,15 +1171,25 @@ const SecureScoreTab = (() => {
     const awarScore = Math.round((comp.awareness          || {}).score || 0);
     const mdrScore  = Math.round((comp.incidentResponse   || {}).score || 0);
 
-    // The printable report must name the same yardstick the tab does — an
-    // endpoint-only client is not being assessed on scan findings.
+    /*
+     * This is a CLIENT-FACING report, so it shows only the components the
+     * client's services cover.
+     *
+     * It previously captioned the vulnerability card "Endpoint Hygiene —
+     * endpoint patch currency and agent health" for an endpoint-only estate.
+     * That is the right name for the internal tab, which is an analyst's view
+     * of how the score was arrived at, and the wrong thing entirely on a
+     * document that goes to a client: it names a measure no contracted service
+     * delivers. The card is omitted rather than renamed.
+     */
+    const a4Scope = scoreData.scope;
+    const a4Covered = (key) => !a4Scope || !a4Scope.recorded
+      || (a4Scope.covered || []).indexOf(key) >= 0;
+
     const vulnBasisA4 = (comp.vulnerabilities || {}).basis || 'infrastructure';
-    const vulnLabel = vulnBasisA4 === 'endpoint' ? 'Endpoint Hygiene' : 'Vulnerabilities';
-    const vulnDesc  = vulnBasisA4 === 'endpoint'
-      ? 'Endpoint patch currency and agent health'
-      : (vulnBasisA4 === 'unknown'
-          ? 'Estate not recorded — measure cannot be selected'
-          : 'Finding density across the assets in scope');
+    const vulnDesc  = vulnBasisA4 === 'unknown'
+      ? 'Estate not recorded — measure cannot be selected'
+      : 'Finding density across the assets in scope';
 
     const hist = Array.isArray(history) ? history : (history && history.history ? history.history : []);
     let delta = null;
@@ -1401,9 +1411,9 @@ const SecureScoreTab = (() => {
 
   <h2 class="section-heading">2. Security Posture Breakdown</h2>
   <div class="comp-grid">
-    ${buildCompCard(vulnLabel, pctOf(comp.vulnerabilities, '40%'), vulnScore, vulnDesc)}
-    ${buildCompCard('Security Awareness', pctOf(comp.awareness, '35%'), awarScore, 'Training completion rate across all sessions')}
-    ${buildCompCard('Incident Response', pctOf(comp.incidentResponse, '25%'), mdrScore, 'Ticket resolution rate and response speed')}
+    ${a4Covered('vulnerabilities') ? buildCompCard('Vulnerabilities', pctOf(comp.vulnerabilities, '40%'), vulnScore, vulnDesc) : ''}
+    ${a4Covered('awareness') ? buildCompCard('Security Awareness', pctOf(comp.awareness, '35%'), awarScore, 'Training completion rate across all sessions') : ''}
+    ${a4Covered('incidentResponse') ? buildCompCard('Incident Response', pctOf(comp.incidentResponse, '25%'), mdrScore, 'Ticket resolution rate and response speed') : ''}
   </div>
 
   <h2 class="section-heading">3. 6-Month Score Trend</h2>

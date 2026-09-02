@@ -360,10 +360,20 @@ check('and an implied service is identifiable as implied',
   svcLib0.isImplied(['edr'], 'edr') === false);
 
 // Coverage: MDR supplies the endpoint yardstick but not an external scan.
-check('an MDR client covers the endpoint vulnerability basis',
-  svcLib0.coversComponent(['mdr'], 'vulnerabilities', 'endpoint') === true);
-check('but MDR does not cover an infrastructure scan it cannot see',
+/*
+ * Coverage is the three core services and nothing else. Managed EDR used to
+ * cover the vulnerabilities component whenever the engine scored an
+ * endpoint-only estate on patch currency — defensible arithmetic, wrong answer
+ * commercially: it credited an MDR client with vulnerability coverage they had
+ * not bought, and put "Endpoint Patch Currency" in their board report.
+ */
+check('MDR does not cover vulnerabilities on any estate',
+  svcLib0.coversComponent(['mdr'], 'vulnerabilities', 'endpoint') === false &&
   svcLib0.coversComponent(['mdr'], 'vulnerabilities', 'infrastructure') === false);
+check('only Vulnerability Management does',
+  svcLib0.coversComponent(['vuln'], 'vulnerabilities', 'endpoint') === true);
+check('and Managed EDR covers no scored component at all',
+  JSON.stringify(svcLib0.SERVICE_COVERS.edr) === '[]');
 
 // Report sections follow the same expansion.
 const mdrSections = on(svcLib0.effectiveServices(['mdr']));
@@ -524,8 +534,10 @@ section('a commercial gap is distinguished from a blind spot');
 const mdrOnly = score(['mdr']);
 const awGap   = mdrOnly.scope.uncovered.filter(u => u.key === 'awareness')[0];
 const vulnGap = mdrOnly.scope.uncovered.filter(u => u.key === 'vulnerabilities')[0];
-check('the client-run control is flagged as evidenced',
-  awGap && awGap.evidence === 'client-supplied', awGap && awGap.evidence);
+// 'measured', not 'client-supplied': the evidence is not always the client's
+// — an MDR client's endpoint data comes from our own EDR feed.
+check('a measured-but-uncovered control is flagged as measured',
+  awGap && awGap.evidence === 'measured', awGap && awGap.evidence);
 check('the unmeasured one is flagged as a blind spot',
   vulnGap && vulnGap.evidence === 'none', vulnGap && vulnGap.evidence);
 check('and only the blind spot counts toward blindSpotPoints',
@@ -790,8 +802,8 @@ check('and what would close them',
 
 // A control the client runs themselves is a commercial gap, not a blind spot.
 const stripMdr = strip(['mdr']);
-check('a client-run control is not called a blind spot',
-  /client-run and evidenced/.test(stripMdr.innerHTML));
+check('a measured-but-uncovered control is not called a blind spot',
+  /measured, outside this engagement/.test(stripMdr.innerHTML));
 check('while an unmeasured one is',
   /ss-scope-blind/.test(stripMdr.innerHTML));
 
@@ -1018,6 +1030,62 @@ check('an MDR client on an endpoint estate is scored on endpoints',
     { estate: endpointEstate, services: ['mdr'] }).vulnDetail.basis === 'endpoint');
 check('and sees no scan-derived tile anywhere',
   endpointMdr.leaks.length === 0, endpointMdr.leaks.join(', '));
+
+/*
+ * Endpoint patch currency is a real measurement of something no contracted
+ * service covers. It reached the deck three ways — a maturity row, a component
+ * card captioned "Endpoint Hygiene", and a coverage gap labelled "Endpoint
+ * patch currency" — and none of them belongs in a client report.
+ */
+const endpointHtml = (function () {
+  const sc = SS.calculateSecureScore(null, { upload: { total_users: 242 } }, null,
+    { estate: endpointEstate, services: ['mdr'] });
+  const ctx = { period: '2026-08', periodLabel: 'August 2026', clientName: 'Acme',
+    execSummary: '', comments: {},
+    data: { secureScore: {
+      score: sc.composite, overall: sc.overall, serviceScore: sc.serviceScore,
+      coverage: sc.coverage, scope: sc.scope, recommendations: [],
+      components: {
+        vulnerabilities:  { score: sc.vulnScore, measured: sc.measured.vulnerabilities,
+                            basis: sc.vulnDetail.basis, detail: sc.vulnDetail },
+        awareness:        { score: sc.awarenessScore, measured: sc.measured.awareness },
+        incidentResponse: { score: sc.mdrScore, measured: sc.measured.incidentResponse },
+      },
+    } } };
+  return S.filter(x => ['execSummary', 'assuranceDashboard', 'serviceCoverage'].indexOf(x.id) >= 0)
+    .map(x => { try { return x.render(ctx) || ''; } catch (e) { return ''; } }).join('\n');
+})();
+
+check('the phrase "Endpoint Patch Currency" is not in the deck',
+  !/endpoint patch currency/i.test(endpointHtml));
+check('nor "Endpoint Hygiene"', !/endpoint hygiene/i.test(endpointHtml), );
+check('nor any endpoint caption at all',
+  !/endpoints patched/i.test(endpointHtml));
+// The coverage gap is named for the service, not the yardstick.
+check('the coverage gap is named "Vulnerability management"',
+  /Vulnerability management/.test(endpointHtml));
+
+/*
+ * The Secure Score tab's printable Executive Report is ALSO client-facing, and
+ * had its own copy of the endpoint caption. Grepping only the deck would have
+ * missed it — it lives in tab-secure-score.js, not report-sections.js.
+ */
+const tabJs2 = fs.readFileSync(path.join(ROOT, 'public', 'js', 'tab-secure-score.js'), 'utf8');
+const a4 = tabJs2.slice(tabJs2.indexOf('Security Posture Breakdown') - 3000,
+                        tabJs2.indexOf('Security Posture Breakdown') + 1200);
+check('the printable report drops the endpoint caption',
+  !/Endpoint Hygiene/.test(a4) && !/vulnLabel/.test(a4), 'endpoint caption still in the A4 report');
+check('and shows a component card only when the service covers it',
+  /a4Covered\('vulnerabilities'\) \?/.test(a4) &&
+  /a4Covered\('awareness'\) \?/.test(a4) &&
+  /a4Covered\('incidentResponse'\) \?/.test(a4));
+// Both halves of the gate, asserted separately. A check that matched only the
+// "unrecorded" clause passed while the clause that actually decides coverage
+// was replaced with `true`.
+check('the A4 gate consults the covered list',
+  /\(a4Scope\.covered \|\| \[\]\)\.indexOf\(key\) >= 0/.test(tabJs2));
+check('and defaults to in-scope when unrecorded',
+  /!a4Scope \|\| !a4Scope\.recorded/.test(tabJs2));
 
 [['awareness', ['awareness']], ['vISO', ['viso']], ['none', []]].forEach(function (p) {
   const r = auditDeck(p[1], { estate: endpointEstate });

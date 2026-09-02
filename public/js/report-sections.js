@@ -246,8 +246,15 @@ window.ReportSections = (function () {
     var comps = sc.components;
     if (!comps) return '';
 
+    /*
+     * Only components the client buys. Without this an MDR client got a
+     * "Endpoint Hygiene — 82% of 240 endpoints patched and reporting" card,
+     * which is a genuine measurement of something no contracted service
+     * covers, sitting in a board pack as though it were a deliverable.
+     */
     var cards = COMPONENTS
       .filter(function (c) { return comps[c.key] && comps[c.key].score != null; })
+      .filter(function (c) { return componentInScope(ctx, c.key); })
       .map(function (c) { return componentCard(c, comps[c.key], sc); });
 
     if (!cards.length) return '';
@@ -1652,18 +1659,17 @@ window.ReportSections = (function () {
     var scoped = scopeRecorded(ctx);
 
     /*
-     * The vulnerability row is named for the yardstick actually applied. An
-     * MDR client is scored on endpoint patch currency, not on a scan they do
-     * not buy, and a row headed "Vulnerability Management" would invite them
-     * to ask about scanning that was never in the engagement.
+     * The vulnerability row appears only for a client who buys Vulnerability
+     * Management — componentInScope() below now resolves to exactly that.
+     *
+     * It briefly carried a second label, "Endpoint Patch Currency", for the
+     * case where the engine scores an endpoint-only estate on patch currency
+     * instead of a scan. That measure is real but it is not a deliverable of
+     * any contracted service, so it does not belong in a client report at all;
+     * the row is dropped rather than renamed.
      */
-    var vulnBasis = (((ctx.data.secureScore || {}).components || {})
-      .vulnerabilities || {}).basis;
-    var vulnLabel = vulnBasis === 'endpoint'
-      ? 'Endpoint Patch Currency' : 'Vulnerability Management';
-
     var domains = [
-      { label: vulnLabel, key: 'vulnerabilities',  target: MATURITY_TARGETS.vulnerabilities },
+      { label: 'Vulnerability Management', key: 'vulnerabilities',  target: MATURITY_TARGETS.vulnerabilities },
       { label: 'Security Awareness',       key: 'awareness',        target: MATURITY_TARGETS.awareness },
       { label: 'Incident Response',        key: 'incidentResponse', target: MATURITY_TARGETS.incidentResponse },
       { label: 'Secure Score',             key: 'overall',          target: MATURITY_TARGETS.overall },
@@ -2873,8 +2879,8 @@ window.ReportSections = (function () {
             wt:    Math.round((u.weight || 0) * 100) + ' %',
             // The distinction that stops a security gap being filed as a sales
             // opportunity, and vice versa.
-            ev:    u.evidence === 'client-supplied'
-                     ? 'Client-run, results supplied'
+            ev:    u.evidence === 'measured'
+                     ? 'Measured, outside this engagement'
                      : 'None — not being measured',
             by:    (u.closedBy || []).join(' or ') || '—',
           };
@@ -2893,8 +2899,8 @@ window.ReportSections = (function () {
           'Reflex nor any evidence supplied covers</strong> — those are not weak ' +
           'results, they are unmeasured ones. '
         : 'Every control outside our services still has evidence behind it. ') +
-      'The two scores are independent: a control the client runs themselves ' +
-      'raises the overall score without changing coverage.</div>';
+      'The two scores are independent: a control measured outside these ' +
+      'services still raises the overall score without changing coverage.</div>';
 
     return block(grid + (gaps ? subHead('Coverage gaps') + gaps : '') + note);
   }
