@@ -2701,8 +2701,12 @@ window.ReportSections = (function () {
      * behaviour every existing client keeps.
      */
     var ss = ctx.data.secureScore || {};
-    var scoped = scopeRecorded(ctx) && ss.serviceScore != null;
-    var headline = scoped ? ss.serviceScore : now.overall;
+    // headlineScore() is the rule; this section does not get its own copy of
+    // it. `now.overall` stays the fallback for a payload with neither
+    // `overall` nor `score` — componentScores() recomputes it from components.
+    var head = headlineScore(ss);
+    var scoped = head.scoped;
+    var headline = head.score != null ? head.score : now.overall;
 
     var band = headline != null ? scoreBand(headline) : null;
     // Trend still compares against the stored history, which holds composites.
@@ -2859,6 +2863,34 @@ window.ReportSections = (function () {
   function scopeRecorded(ctx) {
     var scope = ((ctx.data || {}).secureScore || {}).scope;
     return !!(scope && scope.recorded);
+  }
+
+  /**
+   * WHICH SECURE SCORE THE CLIENT IS SHOWN. The only copy of this rule.
+   *
+   * The in-scope score when a service mix is on file, the overall composite
+   * when nobody has recorded one. The overall counts controls the client never
+   * bought as zero, so an awareness-only client opened their board pack on
+   * "Secure Score 35" for a service that scored 100.
+   *
+   * Exported because the Reports tab's Overview tile needs the same answer and
+   * was computing its own — off `secureScore.score`, the overall. That put a
+   * different Secure Score on the Overview slide from the one on the Executive
+   * Summary of the same deck, which is the failure this repo has already had
+   * once with the vulnerability SLA. One rule, served, not copied.
+   *
+   * @param {Object} payload  a /api/secure-score response
+   * @returns {{ score: number|null, scoped: boolean, rating: string|null }}
+   */
+  function headlineScore(payload) {
+    var p = payload || {};
+    var scoped = !!(p.scope && p.scope.recorded) && p.serviceScore != null;
+    var raw = scoped ? p.serviceScore : (p.overall != null ? p.overall : p.score);
+    return {
+      score:  raw == null ? null : Math.round(Number(raw)),
+      scoped: scoped,
+      rating: (scoped ? p.serviceRating : p.rating) || null,
+    };
   }
 
   function serviceCoverageBlock(ctx) {
@@ -3602,6 +3634,7 @@ window.ReportSections = (function () {
   SECTIONS.draftExecSummary  = draftExecSummary;
   SECTIONS.scoreBand         = scoreBand;
   SECTIONS.tileValue         = tileValue;
+  SECTIONS.headlineScore     = headlineScore;
   // Every deck figure is derived from a tab's own data; nothing is attested by
   // hand, so the Reports tab has no manual-entry form to render.
   SECTIONS.MANUAL_METRICS    = [];

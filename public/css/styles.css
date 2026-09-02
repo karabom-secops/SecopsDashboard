@@ -3943,6 +3943,13 @@ body.login-page {
   color: var(--muted);
   margin-bottom: 0.45rem;
 }
+/* Names WHICH figure was derived, where more than one is defensible — the
+   Secure Score is reported in scope of the services a client buys, and a
+   number shown without that qualifier invites a hand-typed "correction". */
+.rpt-tile-qual {
+  opacity: 0.8;
+  font-style: italic;
+}
 .rpt-tile-override {
   width: 100%;
   padding: 0.4rem 0.55rem;

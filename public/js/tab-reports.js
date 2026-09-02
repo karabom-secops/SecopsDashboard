@@ -66,11 +66,30 @@ window.ReportsTab = (function () {
     if (!metrics || !metrics.tiles) return metrics;
     var t = metrics.tiles.secureScore;
     if (!t) return metrics;
-    var s = secureScore && secureScore.score != null ? Math.round(secureScore.score) : null;
-    if (s == null) return metrics;
-    t.derived = s;
+
+    /*
+     * THE IN-SCOPE SCORE, NOT THE OVERALL.
+     *
+     * This read `secureScore.score` — the overall composite, which counts
+     * controls the client never bought as zero. The Executive Summary of the
+     * same deck reports the in-scope score, so the two disagreed: 55 here and
+     * 47 there, from one payload, with nothing on either to say why. An
+     * analyst's only recourse was to type the right number into the override
+     * box, which is a fix that lasts until the next person forgets.
+     *
+     * ReportSections.headlineScore owns the rule. Deriving it again here is
+     * how they drifted apart in the first place.
+     */
+    var R = window.ReportSections;
+    var head = R && R.headlineScore
+      ? R.headlineScore(secureScore)
+      : null;
+    if (!head || head.score == null) return metrics;
+
+    t.derived = head.score;
     t.source  = 'secure-score';
-    if (secureScore.rating) t.rating = secureScore.rating;
+    t.scoped  = head.scoped;
+    if (head.rating) t.rating = head.rating;
     return metrics;
   }
 
@@ -376,7 +395,13 @@ window.ReportsTab = (function () {
             '<span class="rpt-tile-label">' + S.esc(t.label) + '</span>' +
             '<span class="rpt-source-badge' + (derived == null ? ' warn' : '') + '">' + S.esc(src) + '</span>' +
           '</div>' +
-          '<div class="rpt-tile-derived">Derived: <b>' + S.esc(derived == null ? 'no data' : derived) + '</b></div>' +
+          // Which score this is, when it is the scoped one. Without it, a
+          // Secure Score tile reading 47 beside a Secure Score tab reading 55
+          // looks like a bug, and the analyst "corrects" it by hand.
+          '<div class="rpt-tile-derived">Derived: <b>' +
+            S.esc(derived == null ? 'no data' : derived) + '</b>' +
+            (info.scoped ? '<span class="rpt-tile-qual"> &middot; services in scope</span>' : '') +
+          '</div>' +
           '<input type="text" class="rpt-tile-override" id="rpt-ov-' + t.id + '" ' +
                  'value="' + S.esc(value) + '" placeholder="' + S.esc(t.hint) + '">' +
         '</div>';

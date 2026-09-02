@@ -629,6 +629,75 @@ function execCtx(services) {
   };
 }
 
+/* ── One Secure Score per deck ─────────────────────────────────────────────
+ *
+ * The Overview tile derived from `secureScore.score` — the overall composite —
+ * while the Executive Summary reported the in-scope score. One payload, two
+ * different Secure Scores in the same deck (55 and 47), with nothing on either
+ * saying which was which. The analyst's only recourse was to retype it.
+ *
+ * headlineScore() is now the single copy of the rule, and both read it.
+ */
+section('the Overview tile and the Executive Summary agree');
+
+const scopedPayload = {
+  score: 55, overall: 55, rating: 'Fair',
+  serviceScore: 47, serviceRating: 'Poor',
+  scope: { recorded: true, services: ['mdr'] },
+};
+const unscopedPayload = { score: 55, overall: 55, rating: 'Fair',
+                          serviceScore: null, scope: { recorded: false } };
+
+check('headlineScore is exported', typeof S.headlineScore === 'function');
+
+const scopedHead = S.headlineScore(scopedPayload);
+check('a scoped client gets the in-scope score, not the overall',
+  scopedHead.score === 47, scopedHead.score);
+check('and it is flagged as scoped', scopedHead.scoped === true);
+check('with the matching rating', scopedHead.rating === 'Poor', scopedHead.rating);
+
+const plainHead = S.headlineScore(unscopedPayload);
+check('an unrecorded client falls back to the overall',
+  plainHead.score === 55, plainHead.score);
+check('and is not flagged as scoped', plainHead.scoped === false);
+check('with the overall rating', plainHead.rating === 'Fair', plainHead.rating);
+
+// A recorded service mix that produced no in-scope score must not silently
+// report null — the overall is still the honest answer there.
+const noServiceScore = S.headlineScore(
+  { score: 55, overall: 55, serviceScore: null, scope: { recorded: true } });
+check('a recorded mix with no in-scope score still reports the overall',
+  noServiceScore.score === 55 && noServiceScore.scoped === false, noServiceScore.score);
+
+check('the reports tab asks for the rule rather than deriving its own',
+  /R\.headlineScore\(secureScore\)/.test(rptJs));
+check('and no longer reads the overall composite for the tile',
+  !/secureScore\.score != null/.test(codeOnly(rptJs)));
+
+/*
+ * THE INVARIANT, end to end: the number the tile derives and the number the
+ * Executive Summary prints, from ONE payload, must be the same. Asserting each
+ * against a literal would let both drift together; this compares them.
+ */
+const agreeCtx = execCtx(['mdr']);
+agreeCtx.data.secureScore = Object.assign({}, agreeCtx.data.secureScore, scopedPayload);
+const agreeHtml = execSec.render(agreeCtx);
+const printed = (agreeHtml.match(/(\d+)\/100/) || [])[1];
+check('the Executive Summary prints the same score the tile derives',
+  printed === String(S.headlineScore(scopedPayload).score),
+  'summary=' + printed + ' tile=' + S.headlineScore(scopedPayload).score);
+check('and it is the in-scope one, not the overall',
+  printed === '47', printed);
+
+// The tile must SAY it is the scoped figure. Without that, 47 in the report
+// editor beside 55 on the Secure Score tab reads as a fault, and the fix an
+// analyst reaches for is the override box — which is how a hand-typed number
+// ends up in a board pack.
+check('the tile carries the scoped flag through to the view',
+  /t\.scoped\s*=\s*head\.scoped/.test(rptJs));
+check('and the view renders a qualifier when it is set',
+  /info\.scoped\s*\?[\s\S]{0,120}services in scope/.test(rptJs));
+
 const tileLabels = (html) =>
   [...String(html || '').matchAll(/<div class="bi-l">([\s\S]*?)<\/div>/g)]
     .map(m => m[1].replace(/&middot;/g, '·').replace(/&amp;/g, '&').trim());
