@@ -837,6 +837,37 @@ async function loadTenantServices(tenantId) {
   } catch (_) { return null; }
 }
 
+/*
+ * Column and table probes for db/migrate-client-profile.sql.
+ *
+ * Cached only on a POSITIVE answer, like _tenantServicesColumn below: a "no"
+ * from a database that is mid-migration must not be remembered for the life of
+ * the process.
+ */
+let _estateReviewedColumn = null;
+async function hasEstateReviewedColumn() {
+  if (_estateReviewedColumn) return true;
+  try {
+    const r = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tenant_estate' AND column_name = 'reviewed_at' LIMIT 1`);
+    if (r.rows.length) _estateReviewedColumn = true;
+    return r.rows.length > 0;
+  } catch (_) { return false; }
+}
+
+let _profileEventsTable = null;
+async function hasProfileEventsTable() {
+  if (_profileEventsTable) return true;
+  try {
+    const r = await pool.query(
+      `SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'tenant_profile_events' LIMIT 1`);
+    if (r.rows.length) _profileEventsTable = true;
+    return r.rows.length > 0;
+  } catch (_) { return false; }
+}
+
 let _tenantServicesColumn = null;
 async function hasTenantServicesColumn() {
   if (_tenantServicesColumn) return true;
@@ -912,43 +943,19 @@ app.get('/api/tenants/:id/services', requireAuth, async (req, res) => {
   }
 });
 
-/**
- * PUT /api/tenants/:id/services — record what this client buys.
+/*
+ * PUT /api/tenants/:id/services IS GONE. Writes go through PUT /api/client-profile.
  *
- * `services: null` clears the record back to "not configured", which is a
- * different state from an empty array and has to be reachable: an analyst who
- * ticked the wrong client needs a way back to "we have not said".
+ * It wrote the same column with no history, no score snapshot and a different
+ * page gate (`admin`, where the profile is `client-profile`). Two write paths
+ * to one piece of data where only one is audited is not a convenience — it is
+ * an audit trail with a hole in it, and the hole is the path nobody remembers
+ * exists. Whichever route a change came through, the history has to show it.
+ *
+ * GET /api/tenants/:id/services above STAYS, as does the `services` field on
+ * GET /api/tenants: public/js/tab-reports.js reads the latter to default its
+ * section toggles, and neither is a write.
  */
-app.put('/api/tenants/:id/services', requireAuth, async (req, res) => {
-  try {
-    const tenantId = parseInt(req.params.id, 10);
-    if (isNaN(tenantId)) return res.status(400).json({ error: 'Invalid tenant id.' });
-
-    if (req.session.role !== 'superadmin' && req.session.tenantId !== tenantId) {
-      return res.status(403).json({ error: 'You can only edit your own organisation.' });
-    }
-    // Write access is enforced by pageGate: `tenants` maps to the admin page,
-    // and reads short-circuit before that map is consulted.
-
-    if (!await hasTenantServicesColumn()) {
-      return res.status(503).json({
-        error: 'Service selection is not available yet. Run db/migrate-tenant-services.sql.',
-      });
-    }
-
-    const services = servicesLib.normaliseServices(req.body.services);
-
-    const r = await pool.query(
-      'UPDATE tenants SET services = $1 WHERE id = $2 RETURNING id, name, services',
-      [services, tenantId]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Tenant not found.' });
-
-    return res.json({ ok: true, tenant: r.rows[0] });
-  } catch (err) {
-    return serverError(res, err);
-  }
-});
 
 app.post('/api/tenants', requireSuperAdmin, async (req, res) => {
   try {
@@ -5412,66 +5419,198 @@ async function snapshotSecureScore(tenantId, score) {
   }
 }
 
-/**
- * GET /api/secure-score/estate — the estate profile, declared and derived.
+/* ─────────────────────────────────────────────────────────────────────────────
+ * CLIENT PROFILE — the estate and the service mix, as one thing.
  *
- * Sits under the secure-score prefix so it inherits that page's access gate;
- * the estate is only meaningful as an input to the score.
- */
-app.get('/api/secure-score/estate', requireAuth, async (req, res) => {
-  try {
-    const tenantId = resolveScoreTenant(req);
-    if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
+ * These used to be two cards on the Admin tab behind two routes on two
+ * different page gates (/api/secure-score/estate on `secure-score`,
+ * /api/tenants/:id/services on `admin`), with two save buttons, answering the
+ * same question: who is this client? They are now one page, one gate, one
+ * audited write path.
+ *
+ * NOTE THE GATE MOVED. Editing the estate used to require write on the
+ * secure-score page; it now requires write on `client-profile`. That is the
+ * right home — this is client configuration, not score analysis — but it is a
+ * live permission change, not a refactor.
+ * ───────────────────────────────────────────────────────────────────────────── */
 
-    let declared = null;
-    try {
-      const r = await pool.query(
-        `SELECT servers, public_assets, endpoints, cloud_tenancies, users,
-                servers_patched, endpoints_patched, awareness_program,
-                notes, updated_at
-         FROM tenant_estate WHERE tenant_id = $1`, [tenantId]);
-      if (r.rows.length) declared = r.rows[0];
-    } catch (err) {
+/** Tenant scoping is identical to the score's, and deliberately shares its code. */
+const resolveProfileTenant = resolveScoreTenant;
+
+/** The last few profile changes, newest first. Empty on an un-migrated database. */
+async function loadProfileHistory(tenantId, limit) {
+  if (!await hasProfileEventsTable()) return [];
+  try {
+    const r = await pool.query(
+      `SELECT e.id, e.changed_at, e.kind, e.diff, e.score_before, e.score_after,
+              u.username AS changed_by
+         FROM tenant_profile_events e
+         LEFT JOIN users u ON u.id = e.changed_by
+        WHERE e.tenant_id = $1
+        ORDER BY e.changed_at DESC
+        LIMIT $2`,
+      [tenantId, limit || 10]
+    );
+    return r.rows.map(row => ({
+      id: row.id,
+      changedAt: row.changed_at,
+      changedBy: row.changed_by || null,
+      kind: row.kind,
+      diff: row.diff || {},
+      scoreBefore: row.score_before,
+      scoreAfter: row.score_after,
+    }));
+  } catch (_) { return []; }
+}
+
+/**
+ * The whole profile, in the one shape every response uses.
+ *
+ * GET returns it, and so does a successful PUT — so the page can never end up
+ * rendering a save response that is subtly different from a fresh load, which
+ * is how "it looked right until I refreshed" bugs are made.
+ */
+async function buildClientProfile(tenantId) {
+  // What was TYPED, kept separate from what is in effect. The form has to
+  // round-trip the declaration exactly, blanks included: a blank that comes
+  // back as the derived figure would turn "not recorded" into a declaration
+  // the moment anyone pressed Save.
+  let declared = null;
+  let estateAvailable = true;
+  try {
+    const reviewedCol = await hasEstateReviewedColumn()
+      ? 'reviewed_at' : 'NULL::timestamptz AS reviewed_at';
+    const r = await pool.query(
+      `SELECT servers, public_assets, endpoints, cloud_tenancies, users,
+              servers_patched, awareness_program, notes, updated_at, ${reviewedCol}
+       FROM tenant_estate WHERE tenant_id = $1`, [tenantId]);
+    if (r.rows.length) declared = r.rows[0];
+  } catch (_) { estateAvailable = false; }
+
+  // The same inputs the Secure Score runs on, so the gaps and conflicts shown
+  // here describe the score the client is actually given.
+  const inputs = await loadScoreInputs(tenantId);
+  const estate = inputs.estate;
+
+  const hasEdr = !!(inputs.edrHealth && inputs.edrHealth.agents &&
+                    (Number(inputs.edrHealth.agents.total) || 0) > 0);
+
+  return {
+    tenantId,
+    available: {
+      estate:   estateAvailable,
+      services: await hasTenantServicesColumn(),
+      history:  await hasProfileEventsTable(),
+    },
+
+    declared: declared ? {
+      servers:          declared.servers,
+      publicAssets:     declared.public_assets,
+      endpoints:        declared.endpoints,
+      cloudTenancies:   declared.cloud_tenancies,
+      users:            declared.users,
+      serversPatched:   declared.servers_patched,
+      awarenessProgram: declared.awareness_program,
+      notes:            declared.notes || '',
+      updatedAt:        declared.updated_at,
+      reviewedAt:       declared.reviewed_at,
+    } : null,
+
+    effective: estate,
+    summary:   estateLib.describeEstate(estate),
+
+    // Advisory, all three. None of them moves a score — see lib/estate.js.
+    conflicts: estateLib.reconcile(estate),
+    gaps:      estateLib.profileGaps(estate, {
+      hasScan: secureScore.isVulnMeasured(inputs.vulnData),
+      hasEdr,
+      awarenessMeasured: secureScore.isAwarenessMeasured(inputs.awarenessData),
+    }),
+    age: estateLib.estateAge(estate),
+
+    services:          inputs.tenantServices,
+    effectiveServices: servicesLib.effectiveServices(inputs.tenantServices),
+    catalogue:         servicesLib.SERVICES,
+    includes:          servicesLib.SERVICE_INCLUDES,
+
+    history: await loadProfileHistory(tenantId, 10),
+  };
+}
+
+/** GET /api/client-profile — estate, services, conflicts, gaps and history. */
+app.get('/api/client-profile', requireAuth, async (req, res) => {
+  try {
+    const tenantId = resolveProfileTenant(req);
+    if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
+    return res.json(await buildClientProfile(tenantId));
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/client-profile/history — the full audit trail, newest first. */
+app.get('/api/client-profile/history', requireAuth, async (req, res) => {
+  try {
+    const tenantId = resolveProfileTenant(req);
+    if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
+    if (!await hasProfileEventsTable()) {
       return res.status(503).json({
-        error: 'Estate table not available. Run db/migrate-tenant-estate.sql.',
+        error: 'Profile history is not available yet. Run db/migrate-client-profile.sql.',
       });
     }
-
-    const estate = await loadEstate(tenantId, null);
-    return res.json({
-      tenantId,
-      declared: declared ? {
-        servers:          declared.servers,
-        publicAssets:     declared.public_assets,
-        endpoints:        declared.endpoints,
-        cloudTenancies:   declared.cloud_tenancies,
-        users:            declared.users,
-        serversPatched:   declared.servers_patched,
-        endpointsPatched: declared.endpoints_patched,
-        awarenessProgram: declared.awareness_program,
-        notes:            declared.notes || '',
-        updatedAt:        declared.updated_at,
-      } : null,
-      effective: estate,
-      summary: estateLib.describeEstate(estate),
-    });
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    return res.json({ tenantId, history: await loadProfileHistory(tenantId, limit) });
   } catch (err) { return serverError(res, err); }
 });
 
 /**
- * PUT /api/secure-score/estate — record the estate.
+ * What actually changed between the stored profile and the incoming one.
+ *
+ * Returns { field: { from, to } } over the declared estate fields, the
+ * awareness programme and the service list. Only genuine differences appear:
+ * a save that alters nothing produces {} and, per the mdr_ticket_events rule,
+ * writes no history row at all. A table of button presses would bury the three
+ * edits that mattered under three hundred that did not.
+ *
+ * Services compare by VALUE, not identity, and null (not recorded) is kept
+ * distinct from [] (recorded as none) — clearing a record back to "we have not
+ * said" is a real change and has to show up as one.
+ */
+function diffProfile(before, after) {
+  const diff = {};
+
+  estateLib.DECLARED_FIELDS.concat(['awarenessProgram', 'notes']).forEach((f) => {
+    const from = before[f] === undefined ? null : before[f];
+    const to   = after[f]  === undefined ? null : after[f];
+    if (from !== to) diff[f] = { from, to };
+  });
+
+  const svcKey = (v) => (Array.isArray(v) ? v.slice().sort().join(',') : null);
+  if (svcKey(before.services) !== svcKey(after.services)) {
+    diff.services = { from: before.services, to: after.services };
+  }
+
+  return diff;
+}
+
+/**
+ * PUT /api/client-profile — record the estate AND the service mix, together.
  *
  * null clears a field back to "not recorded"; 0 is a positive claim of "none"
  * and is what moves a client onto the endpoint yardstick. The two must stay
- * distinguishable all the way down, so empty strings become null, not 0.
+ * distinguishable all the way down, so empty strings become null, not 0. The
+ * same distinction governs services: null is "nobody has said", [] is "none".
+ *
+ * ONE TRANSACTION, ONE HISTORY ROW. The estate and the services used to be
+ * saved by two routes on two gates, so a change to both was two events with no
+ * relationship, and neither recorded what it did to the score.
+ *
+ * No explicit role guard: app.use('/api', pageGate) already requires WRITE on
+ * the client-profile page for any PUT (see lib/auth-middleware.js). Using that
+ * rather than a hardcoded role check keeps the per-user access overrides in
+ * lib/pages.js authoritative instead of quietly bypassing them.
  */
-// No explicit role guard: app.use('/api', pageGate) already requires WRITE on
-// the secure-score page for any PUT (see lib/auth-middleware.js). Using that
-// rather than a hardcoded role check keeps the per-user access overrides in
-// lib/pages.js authoritative instead of quietly bypassing them.
-app.put('/api/secure-score/estate', requireAuth, async (req, res) => {
+app.put('/api/client-profile', requireAuth, async (req, res) => {
   try {
-    const tenantId = resolveScoreTenant(req);
+    const tenantId = resolveProfileTenant(req);
     if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
 
     const body = req.body || {};
@@ -5504,13 +5643,47 @@ app.put('/api/secure-score/estate', requireAuth, async (req, res) => {
 
     const notes = typeof body.notes === 'string' ? body.notes.slice(0, 2000) : null;
 
+    // `services` is optional in the body. ABSENT means "leave alone"; an
+    // explicit null means "clear the record". Collapsing the two would let a
+    // page that only edits the estate silently wipe the service mix.
+    const servicesGiven = Object.prototype.hasOwnProperty.call(body, 'services');
+    const services = servicesGiven ? servicesLib.normaliseServices(body.services) : undefined;
+    const servicesColumn = await hasTenantServicesColumn();
+    if (servicesGiven && !servicesColumn) {
+      return res.status(503).json({
+        error: 'Service selection is not available yet. Run db/migrate-tenant-services.sql.',
+      });
+    }
+
+    // ── What is on file now, for the diff and the before-score ──────────────
+    const before = await buildClientProfile(tenantId);
+    const after = Object.assign({}, vals, {
+      awarenessProgram: program,
+      notes: notes || '',
+      services: servicesGiven ? services : before.services,
+    });
+    const diff = diffProfile(
+      Object.assign({ notes: '' }, before.declared, { services: before.services }),
+      after);
+
+    // Nothing changed. Say so and write nothing — including no updated_at bump,
+    // which would otherwise reset the staleness clock without anybody having
+    // confirmed anything. Use the review endpoint for that; it is what it is for.
+    if (!Object.keys(diff).length) {
+      return res.json({ ok: true, changed: false, profile: before });
+    }
+
+    const scoreBefore = await compositeScoreFor(tenantId);
+
+    const client = await pool.connect();
     try {
-      await pool.query(
+      await client.query('BEGIN');
+
+      await client.query(
         `INSERT INTO tenant_estate
            (tenant_id, servers, public_assets, endpoints, cloud_tenancies, users,
-            servers_patched, endpoints_patched, awareness_program,
-            notes, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+            servers_patched, awareness_program, notes, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
          ON CONFLICT (tenant_id) DO UPDATE SET
            servers           = EXCLUDED.servers,
            public_assets     = EXCLUDED.public_assets,
@@ -5518,23 +5691,107 @@ app.put('/api/secure-score/estate', requireAuth, async (req, res) => {
            cloud_tenancies   = EXCLUDED.cloud_tenancies,
            users             = EXCLUDED.users,
            servers_patched   = EXCLUDED.servers_patched,
-           endpoints_patched = EXCLUDED.endpoints_patched,
            awareness_program = EXCLUDED.awareness_program,
            notes             = EXCLUDED.notes,
            updated_by        = EXCLUDED.updated_by,
            updated_at        = NOW()`,
         [tenantId, vals.servers, vals.publicAssets, vals.endpoints,
-         vals.cloudTenancies, vals.users, vals.serversPatched, vals.endpointsPatched,
+         vals.cloudTenancies, vals.users, vals.serversPatched,
          program, notes, req.session.userId || null]
       );
+
+      if (servicesGiven) {
+        await client.query('UPDATE tenants SET services = $1 WHERE id = $2',
+          [services, tenantId]);
+      }
+
+      await client.query('COMMIT');
     } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
       return res.status(503).json({
-        error: 'Estate table not available. Run db/migrate-tenant-estate.sql.',
+        error: 'Could not save the profile. The estate table may not be migrated ' +
+               '— run db/migrate-tenant-estate.sql and db/migrate-client-profile.sql.',
+      });
+    }
+    client.release();
+
+    /*
+     * The history row is written AFTER the commit, on purpose.
+     *
+     * score_after cannot be computed until the new values are readable, and
+     * holding a transaction open across a dozen scoring queries to buy a
+     * perfectly atomic audit row is a bad trade. The consequence is honest and
+     * small: a crash in this window loses the record of a change that did
+     * happen. The alternative — a change that did not happen with a record
+     * saying it did — is the one that would actually mislead somebody.
+     */
+    const scoreAfter = await compositeScoreFor(tenantId);
+    if (await hasProfileEventsTable()) {
+      try {
+        await pool.query(
+          `INSERT INTO tenant_profile_events
+             (tenant_id, changed_by, kind, diff, score_before, score_after)
+           VALUES ($1, $2, 'change', $3::jsonb, $4, $5)`,
+          [tenantId, req.session.userId || null, JSON.stringify(diff),
+           scoreBefore, scoreAfter]);
+      } catch (err) {
+        console.warn('[client-profile] history not recorded —', err.message);
+      }
+    }
+
+    return res.json({
+      ok: true, changed: true, diff,
+      scoreBefore, scoreAfter,
+      profile: await buildClientProfile(tenantId),
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * POST /api/client-profile/review — "I checked, this is still correct."
+ *
+ * Bumps reviewed_at without touching a value, which is the whole point: before
+ * this, the only way to clear a staleness flag was to re-save the form, and a
+ * re-save is indistinguishable from an edit in the history. Confirming and
+ * changing are different acts and the record now says which one happened.
+ */
+app.post('/api/client-profile/review', requireAuth, async (req, res) => {
+  try {
+    const tenantId = resolveProfileTenant(req);
+    if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
+
+    if (!await hasEstateReviewedColumn()) {
+      return res.status(503).json({
+        error: 'Profile review is not available yet. Run db/migrate-client-profile.sql.',
       });
     }
 
-    const estate = await loadEstate(tenantId, null);
-    return res.json({ ok: true, effective: estate, summary: estateLib.describeEstate(estate) });
+    const r = await pool.query(
+      `UPDATE tenant_estate SET reviewed_at = NOW(), updated_by = $2
+        WHERE tenant_id = $1 RETURNING tenant_id`,
+      [tenantId, req.session.userId || null]);
+
+    // Nothing to confirm. An absent estate is not a stale one, and inserting a
+    // blank row here would create a record asserting a client has nothing.
+    if (!r.rows.length) {
+      return res.status(400).json({
+        error: 'There is no recorded estate for this client to confirm.',
+      });
+    }
+
+    if (await hasProfileEventsTable()) {
+      try {
+        await pool.query(
+          `INSERT INTO tenant_profile_events (tenant_id, changed_by, kind, diff)
+           VALUES ($1, $2, 'review', '{}'::jsonb)`,
+          [tenantId, req.session.userId || null]);
+      } catch (err) {
+        console.warn('[client-profile] review not recorded —', err.message);
+      }
+    }
+
+    return res.json({ ok: true, profile: await buildClientProfile(tenantId) });
   } catch (err) { return serverError(res, err); }
 });
 
@@ -5548,9 +5805,22 @@ app.put('/api/secure-score/estate', requireAuth, async (req, res) => {
 async function loadEstate(tenantId, scanId, trainedUsers) {
   let declared = null;
   try {
+    /*
+     * reviewed_at is selected only when it EXISTS.
+     *
+     * Naming a missing column here would fail the whole SELECT, and the catch
+     * below turns any failure into "no estate declared" — which zeroes the
+     * vulnerability component for every client on the deployment. Degrading
+     * open is right for a table that may not be migrated; it is emphatically
+     * wrong as the consequence of adding one optional column, so the probe
+     * (the hasTenantServicesColumn pattern) keeps the two apart.
+     */
+    const reviewedCol = await hasEstateReviewedColumn()
+      ? 'reviewed_at' : 'NULL::timestamptz AS reviewed_at';
+
     const r = await pool.query(
       `SELECT servers, public_assets, endpoints, cloud_tenancies, users,
-              servers_patched, endpoints_patched, awareness_program
+              servers_patched, awareness_program, updated_at, ${reviewedCol}
        FROM tenant_estate WHERE tenant_id = $1`,
       [tenantId]
     );
@@ -5564,7 +5834,9 @@ async function loadEstate(tenantId, scanId, trainedUsers) {
         cloudTenancies:   row.cloud_tenancies,
         users:            row.users,
         serversPatched:   row.servers_patched,
-        endpointsPatched: row.endpoints_patched,
+        // Drive the staleness flag only — never a score. See lib/estate.js.
+        updatedAt:        row.updated_at,
+        reviewedAt:       row.reviewed_at,
       };
     }
   } catch (_) { /* table not migrated yet */ }
@@ -5666,13 +5938,19 @@ async function loadEdrHealth(tenantId) {
   } catch (_) { return null; }
 }
 
-app.get('/api/secure-score', requireAuth, async (req, res) => {
-  try {
-    const tenantId = resolveScoreTenant(req);
-    if (!tenantId) {
-      return res.status(400).json({ error: 'No tenant context.' });
-    }
-
+/**
+ * Everything the Secure Score is computed FROM, for one tenant.
+ *
+ * Extracted from the /api/secure-score handler so that the client profile can
+ * record what an edit did to the score WITHOUT a second, drifting copy of the
+ * loading logic. Two functions that both claim to assemble the score's inputs
+ * is how the before/after ends up disagreeing with the score on the page.
+ *
+ * Every query is individually guarded, as it was in the route: a missing table
+ * degrades one input to null rather than taking the whole score with it.
+ */
+async function loadScoreInputs(tenantId) {
+  {
     // Fetch latest vulnerability scan
     let vulnData = null;
     let scanId = null;
@@ -5776,6 +6054,47 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
     // before service scoping existed.
     const tenantServices = await loadTenantServices(tenantId);
 
+    return {
+      vulnData, scanId, edrHealth, awarenessData, mdrData, mdrUploadId,
+      incidentRate, trainedUsers, estate, tenantServices,
+    };
+  }
+}
+
+/**
+ * The composite alone, for recording what a profile edit did to it.
+ *
+ * Returns null rather than throwing on any failure. A score that cannot be
+ * computed must never stop somebody saving a client's estate — the history row
+ * simply records the change with no movement attached, which is honest, and a
+ * save that failed because of a bookkeeping side effect would not be.
+ */
+async function compositeScoreFor(tenantId) {
+  try {
+    const i = await loadScoreInputs(tenantId);
+    const r = calculateSecureScore(i.vulnData, i.awarenessData, i.mdrData, {
+      estate: i.estate, edr: i.edrHealth, incidentRate: i.incidentRate,
+      services: i.tenantServices,
+    });
+    return typeof r.composite === 'number' ? r.composite : null;
+  } catch (err) {
+    console.warn('[client-profile] score snapshot skipped —', err.message);
+    return null;
+  }
+}
+
+app.get('/api/secure-score', requireAuth, async (req, res) => {
+  try {
+    const tenantId = resolveScoreTenant(req);
+    if (!tenantId) {
+      return res.status(400).json({ error: 'No tenant context.' });
+    }
+
+    const {
+      vulnData, edrHealth, awarenessData, mdrData,
+      incidentRate, estate, tenantServices,
+    } = await loadScoreInputs(tenantId);
+
     const {
       composite, vulnScore, awarenessScore, mdrScore,
       measured, unmeasured, maxAchievable, vulnDetail, weights,
@@ -5846,7 +6165,6 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
         cloudTenancies:   estate.cloudTenancies,
         users:            estate.users,
         serversPatched:   estate.serversPatched,
-        endpointsPatched: estate.endpointsPatched,
         scannedHosts:     estate.scannedHosts,
         trainedUsers:     estate.trainedUsers,
         awarenessProgram: estate.awarenessProgram,
@@ -5858,6 +6176,13 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
         sources:          estate.sources,
         recorded:         estate.anyDeclared,
         summary:          estateLib.describeEstate(estate),
+        // How old the declaration is. ADVISORY ONLY — the score above was
+        // computed from it exactly as recorded, with nothing discounted for
+        // age. The Secure Score tab says so when it shows this.
+        age:              estateLib.estateAge(estate),
+        // What the declaration and the telemetry disagree about. Also
+        // advisory: the declared figure is the one the score used.
+        conflicts:        estateLib.reconcile(estate),
       },
       // Which components have no data behind them, what each is worth, and the
       // ceiling the score cannot pass until they are supplied.

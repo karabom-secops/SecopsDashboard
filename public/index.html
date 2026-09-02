@@ -7,6 +7,7 @@
   <base href="/secops/" />
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="stylesheet" href="css/secure-score.css" />
+  <link rel="stylesheet" href="css/client-profile.css" />
   <script>
     /* Applies the stored sidebar state to <html> BEFORE first paint. Without
        this, rail users watch the sidebar render at 280px and snap to 64px on
@@ -213,6 +214,10 @@
       </div>
     </nav>
     <div class="side-nav-footer">
+      <button class="side-nav-item" type="button" data-tab="client-profile" title="Client Profile" hidden>
+        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span class="side-nav-text">Client Profile</span>
+      </button>
       <button class="side-nav-item" type="button" data-tab="admin" title="Admin" id="sideAdminBtn" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         <span class="side-nav-text">Admin</span>
@@ -2041,6 +2046,9 @@
   </section>
 
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
+  <!-- Client Profile — estate + services. Rendered entirely by tab-client-profile.js. -->
+  <section id="tab-client-profile" class="tab-panel" role="tabpanel" hidden></section>
+
   <section id="tab-admin" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
       <h2 class="section-title">Administration</h2>
@@ -2139,124 +2147,6 @@
           </tbody>
         </table>
       </div>
-    </div>
-
-    <!-- Estate profile — sizes the Secure Score's vulnerability component -->
-    <div id="estateSection" class="admin-card">
-      <h3 class="admin-card-title">Client Estate</h3>
-      <p class="admin-card-hint">
-        Sizes the Secure Score's vulnerability measure. A client with
-        <strong>0 servers, 0 public-facing assets and 0 cloud tenancies</strong> is scored
-        on endpoint patch currency instead of an infrastructure scan, so they are not
-        penalised for not running a scan they do not need.
-        Leave a field <em>blank</em> for "not recorded" — that is not the same as entering
-        <em>0</em>, which is a positive statement that they have none.
-      </p>
-
-      <form id="estateForm" class="admin-add-form" novalidate>
-        <div class="admin-form-row">
-          <div class="form-group">
-            <label class="modal-label" for="estateServers">Servers</label>
-            <input id="estateServers" type="number" min="0" step="1"
-                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
-          </div>
-          <div class="form-group">
-            <label class="modal-label" for="estatePublicAssets">Public-facing assets / apps</label>
-            <input id="estatePublicAssets" type="number" min="0" step="1"
-                   class="modal-status-select" placeholder="auto — from scan" autocomplete="off" />
-            <!-- Left blank this follows the scan. A typed value is a CHALLENGE to
-                 the scan: say 10 when it reached 6 and the score is held at 60
-                 until the missing four are brought into scope. -->
-            <small class="admin-field-hint">Leave blank to follow the vulnerability
-              scan. Enter a number only to assert assets the scan is missing — that
-              caps the score until they are scanned.</small>
-          </div>
-          <div class="form-group">
-            <label class="modal-label" for="estateEndpoints">Endpoints</label>
-            <input id="estateEndpoints" type="number" min="0" step="1"
-                   class="modal-status-select" placeholder="auto from EDR" autocomplete="off" />
-          </div>
-          <div class="form-group">
-            <label class="modal-label" for="estateCloud">Cloud tenancies</label>
-            <input id="estateCloud" type="number" min="0" step="1"
-                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
-          </div>
-          <div class="form-group">
-            <label class="modal-label" for="estateUsers">Users</label>
-            <input id="estateUsers" type="number" min="0" step="1"
-                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
-          </div>
-        </div>
-
-        <p class="admin-card-hint" style="margin:0.75rem 0 0.5rem">
-          Managed patching is a compensating control against exactly the risk this score
-          measures, so covered servers carry less weight. Enter how many of the above are
-          under managed patching (N-Able, Intune, WSUS or similar).
-        </p>
-        <div class="admin-form-row">
-          <div class="form-group">
-            <label class="modal-label" for="estateServersPatched">Servers under managed patching</label>
-            <input id="estateServersPatched" type="number" min="0" step="1"
-                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
-          </div>
-          <div class="form-group">
-            <label class="modal-label" for="estateEndpointsPatched">Endpoints under managed patching</label>
-            <input id="estateEndpointsPatched" type="number" min="0" step="1"
-                   class="modal-status-select" placeholder="not recorded" autocomplete="off" />
-          </div>
-          <div class="form-group" style="grid-column: span 2">
-            <label class="modal-label" for="estateAwarenessProgram">Security awareness programme</label>
-            <select id="estateAwarenessProgram" class="modal-status-select">
-              <option value="">Not recorded</option>
-              <option value="platform">Run through this platform</option>
-              <option value="internal">Client runs their own programme</option>
-              <option value="none">No programme in place</option>
-            </select>
-          </div>
-          <div class="form-group" style="grid-column: span 2">
-            <label class="modal-label" for="estateNotes">Notes</label>
-            <input id="estateNotes" type="text" class="modal-status-select"
-                   placeholder="e.g. two unmanaged legacy servers excluded from scanning"
-                   autocomplete="off" maxlength="2000" />
-          </div>
-          <div class="form-group admin-form-submit">
-            <label class="modal-label">&nbsp;</label>
-            <button id="estateSaveBtn" type="submit" class="btn btn-primary">Save Estate</button>
-          </div>
-        </div>
-      </form>
-
-      <p id="estateEffective" class="admin-card-hint" hidden></p>
-      <p id="estateMsg" class="admin-form-msg" hidden></p>
-    </div>
-
-    <!-- Services consumed — drives which report sections are pre-selected. -->
-    <div id="servicesSection" class="admin-card">
-      <h3 class="admin-card-title">Services Consumed</h3>
-      <p class="admin-card-hint">
-        What this client actually buys from us. The board report uses this to
-        pre-select the sections that apply, so a client who only buys awareness
-        training does not receive a "Vulnerability Dashboard — no data" slide
-        that reads to their board as a failing control.
-        <strong>Recording nothing is not the same as recording none:</strong>
-        until you save here, every section stays on offer.
-        An analyst can always tick a section back on in the report.
-      </p>
-
-      <form id="servicesForm" class="admin-add-form" novalidate>
-        <div id="servicesList" class="rpt-section-list"></div>
-        <div class="admin-form-row">
-          <div class="form-group admin-form-submit">
-            <button id="servicesSaveBtn" type="submit" class="btn btn-primary">Save Services</button>
-          </div>
-          <div class="form-group admin-form-submit">
-            <button id="servicesClearBtn" type="button" class="btn btn-secondary"
-              title="Go back to &quot;not recorded&quot;, where every report section is offered">Clear</button>
-          </div>
-        </div>
-      </form>
-
-      <p id="servicesMsg" class="admin-form-msg" hidden></p>
     </div>
 
     <!-- Add User Form -->
@@ -2445,6 +2335,7 @@
   <script src="js/report-deck.js"></script>
   <script src="js/report-sections.js"></script>
   <script src="js/tab-reports.js"></script>
+  <script src="js/tab-client-profile.js"></script>
   <script src="js/tab-admin.js"></script>
 </body>
 </html>

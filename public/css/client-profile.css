@@ -1,0 +1,123 @@
+/* client-profile.css — the Client Profile tab.
+ *
+ * Reuses the admin card, form-row and rpt-section-row classes from styles.css;
+ * everything here is the parts that page has no precedent for — the panels
+ * that explain what is missing, what disagrees, and what changed.
+ *
+ * The severity colours match the RAG palette already used on the report deck
+ * and the Secure Score tab, so "amber means look at this" means the same thing
+ * across the dashboard rather than being re-invented per page.
+ */
+
+/* Telemetry shown beside the box you are typing in. Deliberately quiet: it is
+   evidence to weigh, not an instruction, and it must never be mistaken for the
+   field's own value. */
+.cp-ghost {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: #8C8C8C;
+  font-style: italic;
+}
+
+/* Staleness, and un-migrated warnings. Advisory only — nothing behind this
+   banner has changed a score. */
+.cp-stale {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.9rem;
+  border-left: 3px solid #f39c12;
+  background: rgba(243, 156, 18, 0.08);
+  border-radius: 3px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.cp-panel {
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  background: rgba(127, 127, 127, 0.05);
+  border-radius: 4px;
+}
+
+.cp-panel.cp-ok {
+  border-left: 3px solid #2E9E5B;
+  font-size: 0.85rem;
+}
+
+.cp-panel-h {
+  margin: 0 0 0.6rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8C8C8C;
+}
+
+.cp-item {
+  padding: 0.55rem 0 0.55rem 0.75rem;
+  border-left: 3px solid #8C8C8C;
+  margin-bottom: 0.6rem;
+}
+
+.cp-item.cp-high   { border-left-color: #e74c3c; }
+.cp-item.cp-medium { border-left-color: #f39c12; }
+.cp-item.cp-low    { border-left-color: #8C8C8C; }
+.cp-item.cp-info   { border-left-color: #3498db; }
+
+.cp-item-t { font-weight: 600; font-size: 0.85rem; }
+.cp-item-b { font-size: 0.82rem; line-height: 1.45; margin-top: 0.15rem; }
+
+/* The fix, set apart from the diagnosis. An analyst reading this panel wants
+   to know what to do, and burying it in the same paragraph as the explanation
+   is how a panel becomes wallpaper. */
+.cp-item-a {
+  font-size: 0.8rem;
+  margin-top: 0.3rem;
+  color: #2E7DD1;
+}
+
+.cp-note {
+  font-size: 0.78rem;
+  color: #8C8C8C;
+  line-height: 1.45;
+  margin: 0.6rem 0 0;
+}
+
+/* ── History ─────────────────────────────────────────────────────────────── */
+
+.cp-h-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.15);
+  font-size: 0.8rem;
+}
+
+.cp-h-row:last-of-type { border-bottom: 0; }
+
+.cp-h-when {
+  flex: 0 0 auto;
+  color: #8C8C8C;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cp-h-what { flex: 1 1 auto; word-break: break-word; }
+
+/* The score movement an edit caused. Coloured by direction, not by good/bad:
+   a score going down because somebody recorded the truth is a correction, not
+   a failure, and the colour should not editorialise about which it was. */
+.cp-h-move {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cp-h-move.up   { color: #2E9E5B; }
+.cp-h-move.down { color: #e74c3c; }
+
+@media (max-width: 700px) {
+  .cp-h-row { flex-wrap: wrap; gap: 0.25rem 0.6rem; }
+  .cp-h-when { flex-basis: 100%; }
+}

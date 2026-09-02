@@ -420,10 +420,36 @@ const SecureScoreTab = (() => {
         '</strong>' + relief + '.' + scale;
     }
 
+    /*
+     * How old the estate is, and where it disagrees with the telemetry.
+     *
+     * BOTH ARE CAVEATS ON THE NUMBER ABOVE, NOT ADJUSTMENTS TO IT. The score
+     * was computed from the declaration exactly as recorded — an old figure is
+     * not discounted and a disputed one is not overridden — so the wording has
+     * to say that plainly. An analyst who reads this as "the score has been
+     * reduced for staleness" would be wrong, and would explain it wrongly in
+     * front of a client.
+     */
+    const age = e.age || {};
+    const stale = age.stale
+      ? ' <span class="score-estate-stale">This estate was last confirmed ' +
+        age.days + ' days ago and has been used exactly as recorded — ' +
+        'nothing was discounted for age. Review it on the Client Profile tab.</span>'
+      : '';
+
+    const conflicts = (e.conflicts || []).filter(c => c.severity === 'high');
+    const disputed = conflicts.length
+      ? ' <span class="score-estate-stale">' + conflicts.length +
+        ' recorded figure' + (conflicts.length === 1 ? '' : 's') +
+        ' disagree' + (conflicts.length === 1 ? 's' : '') +
+        ' with what we can see. The recorded figures were used. ' +
+        'See the Client Profile tab.</span>'
+      : '';
+
     el.hidden = false;
     el.className = 'score-estate-note';
     el.innerHTML = 'Scored against an estate of ' + parts.join(', ') + '.' + extra +
-      weighting + awareness;
+      weighting + awareness + stale + disputed;
   }
 
   /**
@@ -1451,6 +1477,11 @@ const SecureScoreTab = (() => {
     // harness without standing up the whole tab. Pure function of its
     // arguments; nothing else in the module depends on it being public.
     renderScopeStrip,
+    // Likewise. The estate note carries the staleness and conflict caveats,
+    // and a source-level grep for its wording cannot tell whether the branch
+    // that emits it still runs — deleting the condition left the string in the
+    // file and the check green. This is the seam that makes it testable.
+    renderEstateNote,
   };
 })();
 

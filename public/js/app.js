@@ -23,6 +23,7 @@
     o365:         document.getElementById('tab-o365'),
     'mdr-pricing': document.getElementById('tab-mdr-pricing'),
     reports:      document.getElementById('tab-reports'),
+    'client-profile': document.getElementById('tab-client-profile'),
     admin:        document.getElementById('tab-admin'),
   };
 
@@ -48,6 +49,7 @@
     o365:       'Managed Identity',
     'mdr-pricing': 'MDR Pricing',
     reports:    'Reports',
+    'client-profile': 'Client Profile',
     admin:      'Admin',
   };
 
@@ -111,6 +113,12 @@
     }
     if (target === 'secure-score' && typeof window.SecureScoreTab !== 'undefined') {
       window.SecureScoreTab.loadAndRender();
+    }
+    // Re-reads on every switch, including a superadmin changing organisation —
+    // a profile left on screen labelled as the wrong client would be worse here
+    // than anywhere else on the dashboard, because it is editable.
+    if (target === 'client-profile' && typeof window.ClientProfileTab !== 'undefined') {
+      window.ClientProfileTab.loadAndRender();
     }
     if (target === 'grc' && typeof window.GrcTab !== 'undefined') {
       window.GrcTab.loadAndRender();
