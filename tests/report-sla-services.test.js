@@ -128,12 +128,93 @@ check('nor its service-window config', !/BUSINESS_HOURS/.test(src));
 check('every SLA computation uses elapsed hours',
   (src.match(/elapsedHoursBetween\(/g) || []).length >= 3,
   (src.match(/elapsedHoursBetween\(/g) || []).length);
+// codeOnly: this count was >= 3 and started passing off a COMMENT that
+// mentions slaTargetFor, after the KPI table's call site was removed. A check
+// that can be satisfied by prose is not checking the code.
 check('and every one reads the target from the same table',
-  (src.match(/slaTargetFor\(/g) || []).length >= 3,
-  (src.match(/slaTargetFor\(/g) || []).length);
+  (codeOnly(src).match(/slaTargetFor\(/g) || []).length >= 2,
+  (codeOnly(src).match(/slaTargetFor\(/g) || []).length);
 check('the note tells the reader it is 24/7', /24\/7/.test(src));
-check('and states the targets rather than hard-coding prose',
-  /slaTargetLabel\(\)/.test(src));
+
+/* ── The KPI table ─────────────────────────────────────────────────────────
+ *
+ * "Resolved within SLA" was removed from this table on request. Nothing here
+ * tested the table's contents at all — a row AND a whole column could be
+ * deleted with all 243 checks still green, which is how a section quietly
+ * stops saying what everyone assumes it says.
+ *
+ * Rendered for real and read back.
+ */
+section('the resolution KPI table');
+
+const kpiSec = S.filter(x => x.id === 'assuranceDashboard')[0];
+
+function kpiHtml(tickets) {
+  return kpiSec.render({
+    period: '2026-08', periodLabel: 'August 2026', comments: {},
+    data: { mdr: { tickets: tickets }, secureScore: {} },
+  }) || '';
+}
+
+const kpi = kpiHtml([
+  // 12h HIGH — inside every target. 96h CRITICAL — outside all of them.
+  { createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' },
+  { createdAt: '2026-08-05T08:00:00Z', resolvedAt: '2026-08-09T08:00:00Z', severity: 'CRITICAL' },
+  { createdAt: '2026-08-06T08:00:00Z', resolvedAt: '2026-08-06T12:00:00Z', severity: 'WEIRD' },
+]);
+const kpiText = kpi.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+check('the table renders', /Incident resolution/.test(kpi));
+check('and still reports what it measures',
+  /Mean time to resolve/.test(kpiText) && /Median time to resolve/.test(kpiText) &&
+  /Tickets raised this period/.test(kpiText) && /Tickets resolved this period/.test(kpiText));
+
+// The removal, asserted on the rendered output rather than the source — the
+// source still discusses the SLA in comments and in the exec-summary tile.
+check('no SLA row', !/Resolved within SLA/.test(kpiText), kpiText.slice(0, 90));
+check('no SLA attainment target', !/95\s*%/.test(kpiText));
+// The column went with the row: every remaining KPI is a measurement with no
+// contracted target, and a "Target" column of em-dashes reads as missed
+// commitments.
+check('no Target column', !/\bTarget\b/.test(kpiText), kpiText.slice(0, 120));
+// This row existed only to qualify a partial SLA figure.
+check('no ungraded-severity row', !/Not graded/.test(kpiText));
+// The targets sentence stated a commitment the table no longer reports on.
+check('the note no longer recites the targets',
+  !/Resolution targets/.test(kpiText) && !/Critical 24 h/.test(kpiText));
+check('but still explains the 24/7 clock', /24\/7/.test(kpiText));
+
+/*
+ * The measurements themselves must survive the removal — pinned to exact
+ * values, because "contains hrs" would pass on any number at all.
+ *
+ * Elapsed hours: 12, 96 and 4. Mean 112/3 = 37.3; median of [4,12,96] = 12.
+ * The unrecognised severity is counted in both, as it always was: it has no
+ * contracted target, but it does have a duration.
+ */
+check('the mean is computed over every resolved ticket',
+  /37\.3 hrs/.test(kpiText), kpiText.slice(0, 110));
+check('and the median is the middle duration',
+  /Median time to resolve 12 hrs/.test(kpiText), kpiText.slice(0, 140));
+check('a ticket with an unrecognised severity is still timed',
+  /Tickets resolved this period 3/.test(kpiText));
+
+// Backlog change appears only when the two counts differ — the fixture above
+// has three of each, so its absence there is correct, not a regression.
+check('no backlog row when raised and resolved match',
+  !/Backlog change/.test(kpiText));
+const backlogText = kpiHtml([
+  { createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' },
+  { createdAt: '2026-08-04T08:00:00Z', severity: 'HIGH' },
+  { createdAt: '2026-08-05T08:00:00Z', severity: 'LOW' },
+]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+check('and it reports the growth when they differ',
+  /Backlog change 2 more open/.test(backlogText), backlogText.slice(0, 200));
+
+// The helpers that existed only for the removed row are gone from the code —
+// a constant named SLA_TARGET_PCT left behind reads as a policy in force.
+check('SLA_TARGET_PCT is gone', !/SLA_TARGET_PCT/.test(codeOnly(src)));
+check('slaTargetLabel is gone', !/slaTargetLabel/.test(codeOnly(src)));
 
 section('the table reports resolution, and nothing it cannot measure');
 

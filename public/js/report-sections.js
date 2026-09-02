@@ -1490,13 +1490,18 @@ window.ReportSections = (function () {
     MEDIUM:   72,
     LOW:      96,
   };
-  var SLA_TARGET_PCT = 95;
-
-  /** How the target is phrased when the board asks what we committed to. */
-  function slaTargetLabel() {
-    return 'Critical ' + IR_SLA_HOURS.CRITICAL + ' h · High ' + IR_SLA_HOURS.HIGH +
-           ' h · Medium ' + IR_SLA_HOURS.MEDIUM + ' h · Low ' + IR_SLA_HOURS.LOW + ' h';
-  }
+  /*
+   * SLA_TARGET_PCT (95%) and slaTargetLabel() USED TO BE HERE.
+   *
+   * Both existed solely for the KPI table's "Resolved within SLA" row and the
+   * sentence under it. With that row removed they were read by nothing, and a
+   * constant named SLA_TARGET_PCT sitting in this file would read as a policy
+   * the deck enforces somewhere — dead code is at its most expensive when it
+   * looks like a rule.
+   *
+   * IR_SLA_HOURS above is still live: the Executive Summary's "Resolution SLA
+   * met" tile grades tickets against it through slaTargetFor().
+   */
 
   /**
    * Wall-clock hours between two timestamps.
@@ -1534,23 +1539,13 @@ window.ReportSections = (function () {
       return t.resolvedAt && monthOf(t.resolvedAt) === period;
     });
 
-    // Elapsed hours throughout, so the timings and the SLA figure in the same
-    // table are measured the same way. Mixing elapsed-time timings with a
-    // business-hours SLA made the two rows contradict each other.
-    //
-    // A ticket whose severity we do not recognise is counted in the timings
-    // but NOT in the SLA figure: it has no contracted target, and defaulting
-    // it to MEDIUM would invent a commitment and then grade the service
-    // against it.
+    // Elapsed hours, measured from creation to resolution — nights and
+    // weekends included, because the service runs through them.
     var hours = [];
-    var slaMet = 0, slaTotal = 0, slaUngraded = 0;
     resolved.forEach(function (t) {
       var h = elapsedHoursBetween(t.createdAt, t.resolvedAt);
       if (h == null) return;
       hours.push(h);
-      var target = slaTargetFor(t.severity);
-      if (target != null) { slaTotal++; if (h <= target) slaMet++; }
-      else slaUngraded++;
     });
 
     if (!raised.length && !resolved.length) return null;
@@ -1558,7 +1553,6 @@ window.ReportSections = (function () {
     hours.sort(function (a, b) { return a - b; });
     var mttr   = hours.length ? hours.reduce(function (s, h) { return s + h; }, 0) / hours.length : null;
     var median = hours.length ? hours[Math.floor(hours.length / 2)] : null;
-    var slaPct = slaTotal ? Math.round((slaMet / slaTotal) * 1000) / 10 : null;
 
     function hrs(v) {
       if (v == null) return '—';
@@ -1582,16 +1576,24 @@ window.ReportSections = (function () {
      *
      * What the client contracted for is resolution inside a window, so that is
      * what the table reports.
+     *
+     * NO SLA ROW, AND NO TARGET COLUMN.
+     *
+     * "Resolved within SLA" was removed from this table on request. The Target
+     * column went with it rather than being left behind: every remaining row
+     * is a measurement with no contracted target, so the column held nothing
+     * but em-dashes — and a column headed "Target" with no targets in it reads
+     * on a board pack as a set of commitments nobody met.
+     *
+     * The "Not graded (severity unrecognised)" row is gone for the same
+     * reason. It existed only to stop a partial SLA figure being read as a
+     * complete one; with no SLA figure it qualifies nothing.
      */
     var rows = [
-      { kpi: 'Mean time to resolve',   target: '—', actual: hrs(mttr),   ok: null },
-      { kpi: 'Median time to resolve', target: '—', actual: hrs(median), ok: null },
-      { kpi: 'Resolved within SLA',    target: SLA_TARGET_PCT + ' %',
-        actual: slaPct == null ? '—'
-          : slaPct + ' %  (' + slaMet + ' of ' + slaTotal + ')',
-        ok: slaPct == null ? null : slaPct >= SLA_TARGET_PCT },
-      { kpi: 'Tickets raised this period',   target: '—', actual: String(raised.length), ok: null },
-      { kpi: 'Tickets resolved this period', target: '—', actual: String(resolved.length), ok: null },
+      { kpi: 'Mean time to resolve',   actual: hrs(mttr),   ok: null },
+      { kpi: 'Median time to resolve', actual: hrs(median), ok: null },
+      { kpi: 'Tickets raised this period',   actual: String(raised.length), ok: null },
+      { kpi: 'Tickets resolved this period', actual: String(resolved.length), ok: null },
     ];
 
     /*
@@ -1605,25 +1607,17 @@ window.ReportSections = (function () {
      * without a fabricated ratio in between.
      */
     if (resolved.length > raised.length) {
-      rows.push({ kpi: 'Backlog change', target: '—',
+      rows.push({ kpi: 'Backlog change',
         actual: (resolved.length - raised.length) + ' fewer open', ok: true });
     } else if (raised.length > resolved.length) {
-      rows.push({ kpi: 'Backlog change', target: '—',
+      rows.push({ kpi: 'Backlog change',
         actual: (raised.length - resolved.length) + ' more open', ok: false });
-    }
-
-    // Only shown when it happened. A silent exclusion is how a partial SLA
-    // figure gets read as a complete one.
-    if (slaUngraded) {
-      rows.push({ kpi: 'Not graded (severity unrecognised)', target: '—',
-        actual: String(slaUngraded) + ' ticket' + (slaUngraded === 1 ? '' : 's'), ok: null });
     }
 
     return D.dataTable({
       cols: [
-        { label: 'KPI',    key: 'kpi',    width: '46%' },
-        { label: 'Target', key: 'target', width: '18%', cls: 'num' },
-        { label: 'Actual', key: 'actual', width: '36%', cls: 'num',
+        { label: 'KPI',    key: 'kpi',    width: '58%' },
+        { label: 'Actual', key: 'actual', width: '42%', cls: 'num',
           raw: function (r) {
             if (r.ok === null) return esc(r.actual);
             return '<span class="' + (r.ok ? 'rag-yes' : 'rag-no') + '">' + esc(r.actual) + '</span>';
@@ -1634,7 +1628,6 @@ window.ReportSections = (function () {
     '<div class="rag-note">Security operations run <strong>24/7</strong>, so ' +
       'resolution time is measured in elapsed hours from ticket creation to ' +
       'resolution — nights, weekends and public holidays included. ' +
-      'Resolution targets: ' + slaTargetLabel() + '. ' +
       'Tickets raised and resolved are counted within this period and are ' +
       'different sets: a ticket resolved this month may have been raised in an ' +
       'earlier one.</div>';
