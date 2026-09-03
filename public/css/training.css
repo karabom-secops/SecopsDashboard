@@ -1,0 +1,284 @@
+/* training.css — the SOC analyst training portal.
+ *
+ * Reading-first. Lesson bodies get a measure and a line height chosen for prose
+ * rather than for dashboard density: an analyst is here to read a page, not to
+ * scan a table, and the rest of this application's type is tuned for the
+ * opposite job.
+ */
+
+.tr-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0 0 1.2rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+}
+
+.tr-tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 0.55rem 0.9rem;
+  font: inherit;
+  font-size: 0.88rem;
+  color: #8C8C8C;
+  cursor: pointer;
+}
+
+.tr-tab.is-on { color: inherit; border-bottom-color: #2E7DD1; font-weight: 600; }
+.tr-tab:hover { color: inherit; }
+
+.tr-intro { max-width: 68ch; margin-bottom: 1.2rem; font-size: 0.9rem; line-height: 1.6; }
+
+/* ── Module cards ─────────────────────────────────────────────────────────── */
+
+.tr-level-h {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8C8C8C;
+  margin: 1.6rem 0 0.7rem;
+}
+
+.tr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.9rem;
+}
+
+.tr-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(127, 127, 127, 0.22);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+
+.tr-card:hover { border-color: #2E7DD1; transform: translateY(-1px); }
+
+.tr-card-top { display: flex; justify-content: space-between; align-items: center; }
+.tr-card-title { font-weight: 650; margin: 0.5rem 0 0.3rem; }
+.tr-card-sum { font-size: 0.84rem; line-height: 1.5; color: #8C8C8C; }
+.tr-card-foot {
+  margin-top: 0.7rem;
+  font-size: 0.76rem;
+  color: #8C8C8C;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.tr-level {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.12rem 0.45rem;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+/* Bands read as a progression, not as good/bad — an "advanced" module is not
+   a warning and a "foundation" one is not a pass. */
+.tr-lv-foundation   { background: rgba(46, 125, 209, 0.12); color: #2E7DD1; }
+.tr-lv-practitioner { background: rgba(126, 87, 194, 0.12); color: #7E57C2; }
+.tr-lv-advanced     { background: rgba(38, 128, 108, 0.12); color: #26806C; }
+
+.tr-mins { font-size: 0.76rem; color: #8C8C8C; }
+
+.tr-state {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.tr-state.tr-done    { background: rgba(46, 158, 91, 0.12); color: #2E9E5B; }
+.tr-state.tr-started { background: rgba(243, 156, 18, 0.12); color: #f39c12; }
+.tr-state.tr-pass    { background: rgba(46, 158, 91, 0.12); color: #2E9E5B; }
+/* Not red: a failed attempt is a step in learning, not an error state. */
+.tr-state.tr-fail    { background: rgba(127, 127, 127, 0.14); color: #8C8C8C; }
+
+/* ── Lesson prose ─────────────────────────────────────────────────────────── */
+
+.tr-mod-head { max-width: 68ch; margin: 0.8rem 0 1.6rem; }
+.tr-mod-head h2 { margin: 0.5rem 0 0.4rem; }
+
+.tr-back { margin-bottom: 0.8rem; }
+
+.tr-lesson { max-width: 68ch; margin-bottom: 2rem; }
+
+.tr-lesson-h {
+  font-size: 1.02rem;
+  margin: 0 0 0.8rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.18);
+}
+
+.tr-h { font-size: 0.92rem; margin: 1.3rem 0 0.5rem; }
+.tr-p { line-height: 1.65; margin: 0 0 0.9rem; }
+.tr-list, .tr-steps { line-height: 1.6; margin: 0 0 1rem; padding-left: 1.3rem; }
+.tr-list li, .tr-steps li { margin-bottom: 0.35rem; }
+
+.tr-code {
+  background: rgba(127, 127, 127, 0.09);
+  padding: 0.75rem 0.9rem;
+  border-radius: 5px;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  overflow-x: auto;      /* long lines scroll here, never the page */
+  white-space: pre;
+  margin: 0 0 1rem;
+}
+
+.tr-callout {
+  padding: 0.7rem 0.9rem;
+  border-left: 3px solid;
+  border-radius: 3px;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  margin: 0 0 1rem;
+}
+
+.tr-callout.tr-info { border-color: #2E7DD1; background: rgba(46, 125, 209, 0.07); }
+.tr-callout.tr-warn { border-color: #f39c12; background: rgba(243, 156, 18, 0.08); }
+.tr-callout.tr-good { border-color: #2E9E5B; background: rgba(46, 158, 91, 0.07); }
+
+/* ── Playbooks ────────────────────────────────────────────────────────────── */
+
+.tr-playbook {
+  border: 1px solid rgba(127, 127, 127, 0.22);
+  border-radius: 8px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1.1rem;
+}
+
+/* Embedded in a lesson: visibly the same object as the standalone reference,
+   because that is the entire claim being made about it. */
+.tr-playbook.tr-embedded { background: rgba(127, 127, 127, 0.04); }
+
+.tr-pb-head {
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.tr-pb-tag {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: rgba(46, 125, 209, 0.12);
+  color: #2E7DD1;
+  font-weight: 600;
+}
+
+.tr-phase { margin-bottom: 0.9rem; }
+
+.tr-phase-h {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8C8C8C;
+  margin-bottom: 0.3rem;
+}
+
+.tr-note { font-size: 0.78rem; color: #8C8C8C; line-height: 1.5; margin: 0.6rem 0 0; }
+
+/* ── Knowledge check ──────────────────────────────────────────────────────── */
+
+.tr-quiz {
+  max-width: 68ch;
+  margin: 2rem 0;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid rgba(127, 127, 127, 0.22);
+  border-radius: 8px;
+}
+
+.tr-q { margin-bottom: 1.3rem; }
+.tr-q-t { font-weight: 600; margin-bottom: 0.55rem; line-height: 1.5; }
+
+.tr-opt {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  padding: 0.35rem 0;
+  cursor: pointer;
+  line-height: 1.5;
+  font-size: 0.88rem;
+}
+
+.tr-opt input { margin-top: 0.28rem; }
+
+.tr-result {
+  padding: 0.6rem 0.9rem;
+  border-radius: 5px;
+  font-weight: 600;
+  margin-bottom: 1.2rem;
+}
+
+.tr-result.tr-pass { background: rgba(46, 158, 91, 0.12); color: #2E9E5B; }
+.tr-result.tr-fail { background: rgba(243, 156, 18, 0.1); color: #f39c12; }
+
+.tr-q.tr-ok { border-left: 3px solid #2E9E5B; padding-left: 0.7rem; }
+.tr-q.tr-no { border-left: 3px solid #f39c12; padding-left: 0.7rem; }
+
+.tr-q-a, .tr-q-c { font-size: 0.84rem; margin-top: 0.2rem; }
+.tr-q-c { color: #2E9E5B; }
+
+/* The explanation, which is the part that teaches — given room accordingly
+   rather than tucked away as a footnote. */
+.tr-q-w {
+  font-size: 0.84rem;
+  line-height: 1.55;
+  margin-top: 0.45rem;
+  padding: 0.5rem 0.7rem;
+  background: rgba(127, 127, 127, 0.07);
+  border-radius: 4px;
+}
+
+/* ── My record ────────────────────────────────────────────────────────────── */
+
+.tr-panel {
+  margin-bottom: 1.2rem;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid rgba(127, 127, 127, 0.2);
+  border-radius: 8px;
+}
+
+.tr-panel-h {
+  margin: 0 0 0.7rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8C8C8C;
+}
+
+.tr-h-row {
+  display: flex;
+  gap: 0.8rem;
+  align-items: baseline;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.14);
+  font-size: 0.85rem;
+}
+
+.tr-h-row:last-child { border-bottom: 0; }
+.tr-h-when { flex: 0 0 auto; color: #8C8C8C; font-variant-numeric: tabular-nums; }
+.tr-h-what { flex: 1 1 auto; }
+
+.tr-mod-foot { max-width: 68ch; margin: 2rem 0 3rem; }
+
+@media (max-width: 700px) {
+  .tr-grid { grid-template-columns: 1fr; }
+  .tr-h-row { flex-wrap: wrap; gap: 0.2rem 0.6rem; }
+  .tr-h-when { flex-basis: 100%; }
+}

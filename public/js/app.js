@@ -23,6 +23,7 @@
     o365:         document.getElementById('tab-o365'),
     'mdr-pricing': document.getElementById('tab-mdr-pricing'),
     reports:      document.getElementById('tab-reports'),
+    training:     document.getElementById('tab-training'),
     'client-profile': document.getElementById('tab-client-profile'),
     admin:        document.getElementById('tab-admin'),
   };
@@ -49,6 +50,7 @@
     o365:       'Managed Identity',
     'mdr-pricing': 'MDR Pricing',
     reports:    'Reports',
+    training:   'Training',
     'client-profile': 'Client Profile',
     admin:      'Admin',
   };
@@ -119,6 +121,12 @@
     // than anywhere else on the dashboard, because it is editable.
     if (target === 'client-profile' && typeof window.ClientProfileTab !== 'undefined') {
       window.ClientProfileTab.loadAndRender();
+    }
+    // Training is per-USER, not per-tenant, so unlike every other tab here it
+    // does not need re-rendering when a superadmin switches organisation. It is
+    // dispatched on open like the others and simply ignores the tenant.
+    if (target === 'training' && typeof window.TrainingTab !== 'undefined') {
+      window.TrainingTab.loadAndRender();
     }
     if (target === 'grc' && typeof window.GrcTab !== 'undefined') {
       window.GrcTab.loadAndRender();

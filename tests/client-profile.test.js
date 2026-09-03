@@ -307,9 +307,26 @@ check('superadmins may write it', P.ROLE_DEFAULTS.superadmin['client-profile'] =
 // VIEWER_TABS is an allowlist by exclusion, so a new key is granted to these
 // two silently unless somebody remembers. This is the check for "somebody
 // remembered".
-check('sales gets nothing', P.ROLE_DEFAULTS.sales['client-profile'] === 'none');
-check('readonly gets nothing', P.ROLE_DEFAULTS.readonly['client-profile'] === 'none');
-check('a portal client gets nothing', P.ROLE_DEFAULTS.client['client-profile'] === 'none');
+/*
+ * EVERY non-admin role, derived from the catalogue rather than listed.
+ *
+ * These were three hand-written checks naming sales, readonly and client. When
+ * the `analyst` role was added later, nothing here noticed — and a mutation
+ * aimed at readonly silently landed on analyst instead and escaped, because no
+ * assertion covered it. A list of roles written by hand goes stale the moment
+ * somebody adds one; ROLES does not.
+ */
+P.ROLES.filter(r => r !== 'superadmin' && r !== 'admin').forEach((r) => {
+  check(r + ' gets nothing', P.ROLE_DEFAULTS[r]['client-profile'] === 'none',
+    P.ROLE_DEFAULTS[r]['client-profile']);
+});
+
+// An undefined level is not the same as 'none' — it resolves through a
+// different path and is easy to leave behind when a role is added.
+P.ROLES.forEach((r) => {
+  const missing = P.PAGE_KEYS.filter(k => P.ROLE_DEFAULTS[r][k] === undefined);
+  check(r + ' has a level for every page', missing.length === 0, missing.join(','));
+});
 
 /* ══ Route wiring ═══════════════════════════════════════════════════════════ */
 

@@ -14,7 +14,7 @@ const speakeasy = require('speakeasy');
 const QRCode    = require('qrcode');
 
 const pool = require('./lib/db');
-const { requireAuth, requireSuperAdmin, pageGate, loadPageAccess } = require('./lib/auth-middleware');
+const { requireAuth, requireSuperAdmin, requirePage, pageGate, loadPageAccess } = require('./lib/auth-middleware');
 const portalGate = require('./lib/portal-gate');
 const reportArchive = require('./lib/report-archive');
 const portalRoutes = require('./lib/portal-routes');
@@ -49,6 +49,7 @@ const wazuhMetrics = require('./lib/wazuh-metrics');
 const { buildPentestReport, imageDimensions, DEFAULT_OWASP } = require('./lib/report-docx');
 const pptxRoute = require('./lib/report-pptx-route');
 const estateLib = require('./lib/estate');
+const trainingLib = require('./lib/training');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -5558,6 +5559,324 @@ async function buildClientProfile(tenantId) {
     history: await loadProfileHistory(tenantId, 10),
   };
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * TRAINING — SOC analyst upskilling.
+ *
+ * THE ONE RULE ON THIS SURFACE: a record belongs to the person who made it.
+ *
+ * Every other feature in this application is tenant-scoped through one of the
+ * resolve*Tenant helpers. This one is scoped to a PERSON, and an analyst must
+ * never be able to read or write a colleague's record. resolveTrainingUser
+ * below reads the session and nothing else — no parameter, no admin branch,
+ * no override — exactly as resolvePortalTenant does in lib/portal-gate.js, and
+ * for the same reason: an escape hatch that does not exist cannot be forgotten
+ * about.
+ *
+ * The curriculum is NOT in the database. It lives in lib/training/ and is
+ * versioned with the code, so there is no authoring route here and no way for
+ * any request to change what is taught. The only thing a request can write is
+ * the sender's own progress.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Whose training record this is.
+ *
+ * Deliberately has no superadmin branch. A superadmin who needs to see how the
+ * team is doing uses GET /api/training/team, which returns aggregates; there is
+ * no route anywhere that reads or writes one named analyst's answers.
+ */
+function resolveTrainingUser(req) {
+  return (req.session && req.session.userId) || null;
+}
+
+/** Table probe, cached only on a positive answer — the hasTenantServicesColumn idiom. */
+let _trainingTables = null;
+async function hasTrainingTables() {
+  if (_trainingTables) return true;
+  try {
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM information_schema.tables
+        WHERE table_name IN ('training_progress', 'training_attempts')`);
+    if (r.rows[0].n === 2) _trainingTables = true;
+    return r.rows[0].n === 2;
+  } catch (_) { return false; }
+}
+
+/**
+ * One person's progress, as { itemKey: {status, completedAt} }.
+ *
+ * Degrades to an empty object on an un-migrated database: the portal is still
+ * fully readable without it, which is the right failure — a missing table
+ * should cost you your bookmarks, not the curriculum.
+ */
+async function loadTrainingProgress(userId) {
+  if (!await hasTrainingTables()) return {};
+  try {
+    const r = await pool.query(
+      `SELECT item_key, status, completed_at
+         FROM training_progress
+        WHERE user_id = $1`, [userId]);
+    const out = {};
+    r.rows.forEach((row) => {
+      out[row.item_key] = { status: row.status, completedAt: row.completed_at };
+    });
+    return out;
+  } catch (_) { return {}; }
+}
+
+/** The best and latest attempt per module, for this person only. */
+async function loadTrainingAttempts(userId, moduleId) {
+  if (!await hasTrainingTables()) return [];
+  try {
+    const params = [userId];
+    let where = 'user_id = $1';
+    if (moduleId) { params.push(moduleId); where += ' AND module_id = $2'; }
+    const r = await pool.query(
+      `SELECT id, module_id, attempted_at, score, total, passed
+         FROM training_attempts
+        WHERE ${where}
+        ORDER BY attempted_at DESC
+        LIMIT 100`, params);
+    return r.rows.map(row => ({
+      id: row.id, moduleId: row.module_id, attemptedAt: row.attempted_at,
+      score: row.score, total: row.total, passed: row.passed,
+    }));
+  } catch (_) { return []; }
+}
+
+/**
+ * GET /api/training/modules — the catalogue, with my progress against it.
+ *
+ * Lesson bodies and the question bank are not in this response; the list view
+ * has no use for them. getModule() supplies those one module at a time, and
+ * neither ever carries an answer key.
+ */
+app.get('/api/training/modules', requireAuth, async (req, res) => {
+  try {
+    const userId = resolveTrainingUser(req);
+    if (!userId) return res.status(401).json({ error: 'No session.' });
+
+    const [progress, attempts] = await Promise.all([
+      loadTrainingProgress(userId),
+      loadTrainingAttempts(userId, null),
+    ]);
+
+    // Best attempt per module, so a card can say "passed" without the client
+    // sifting the history. Computed here rather than in SQL so it behaves
+    // identically on an un-migrated database, where attempts is [].
+    const best = {};
+    attempts.forEach((a) => {
+      const cur = best[a.moduleId];
+      if (!cur || a.score / a.total > cur.score / cur.total) best[a.moduleId] = a;
+    });
+
+    return res.json({
+      modules: trainingLib.listModules(),
+      levels: trainingLib.LEVELS,
+      levelLabels: trainingLib.LEVEL_LABELS,
+      passMark: trainingLib.PASS_MARK,
+      progress,
+      best,
+      available: await hasTrainingTables(),
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/training/modules/:id — one module, answer key stripped. */
+app.get('/api/training/modules/:id', requireAuth, async (req, res) => {
+  try {
+    const userId = resolveTrainingUser(req);
+    if (!userId) return res.status(401).json({ error: 'No session.' });
+
+    // getModule() returns the browser-safe shape: no `answer`, no `why`.
+    const mod = trainingLib.getModule(String(req.params.id || ''));
+    if (!mod) return res.status(404).json({ error: 'No such module.' });
+
+    // Playbook blocks carry a key, not a copy of the steps. Resolve them here
+    // from the live IR playbooks so a lesson can never show stale tasks.
+    const playbooks = {};
+    mod.lessons.forEach((l) => {
+      l.body.forEach((b) => {
+        if (b.playbook && !playbooks[b.playbook]) {
+          const pb = trainingLib.playbookFor(b.playbook);
+          if (pb) playbooks[b.playbook] = pb;
+        }
+      });
+    });
+
+    return res.json({
+      module: mod,
+      playbooks,
+      progress: await loadTrainingProgress(userId),
+      attempts: await loadTrainingAttempts(userId, mod.id),
+      passMark: trainingLib.PASS_MARK,
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * GET /api/training/playbooks — the live incident playbooks, read-only.
+ *
+ * Served from the same object server.js uses to seed ir_activities when an
+ * incident is opened. There is no write route: if this feature ever changes
+ * what a real incident's task board contains, something has gone wrong.
+ */
+app.get('/api/training/playbooks', requireAuth, async (req, res) => {
+  try {
+    return res.json({
+      playbooks: trainingLib.listPlaybooks(),
+      phases: trainingLib.PHASES,
+      phaseLabels: trainingLib.PHASE_LABELS,
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * POST /api/training/progress — mark something started or completed.
+ *
+ * The user id comes from the session. There is no field in this body that can
+ * name a different person, which is the point: cross-user writes are not
+ * refused here, they are unrepresentable.
+ */
+app.post('/api/training/progress', requireAuth, async (req, res) => {
+  try {
+    const userId = resolveTrainingUser(req);
+    if (!userId) return res.status(401).json({ error: 'No session.' });
+
+    const body = req.body || {};
+    const itemKey = String(body.itemKey || '');
+    // Validated against the real catalogue, so this column cannot become a
+    // dumping ground for whatever a browser felt like sending.
+    if (!trainingLib.isValidProgressKey(itemKey)) {
+      return res.status(400).json({ error: 'Unknown training item.' });
+    }
+    const status = String(body.status || '');
+    if (trainingLib.PROGRESS_STATUSES.indexOf(status) < 0) {
+      return res.status(400).json({ error: 'Status must be started or completed.' });
+    }
+
+    if (!await hasTrainingTables()) {
+      return res.status(503).json({
+        error: 'Training progress is not available yet. Run db/migrate-training.sql.',
+      });
+    }
+
+    await pool.query(
+      `INSERT INTO training_progress (user_id, item_key, status, completed_at)
+       VALUES ($1, $2, $3, CASE WHEN $3 = 'completed' THEN NOW() ELSE NULL END)
+       ON CONFLICT (user_id, item_key) DO UPDATE SET
+         status = EXCLUDED.status,
+         -- Keep the FIRST completion. Re-reading a lesson does not move the
+         -- date on which somebody learned it.
+         completed_at = COALESCE(training_progress.completed_at, EXCLUDED.completed_at)`,
+      [userId, itemKey, status]);
+
+    return res.json({ ok: true, progress: await loadTrainingProgress(userId) });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * POST /api/training/quiz/:moduleId — grade an attempt.
+ *
+ * GRADED HERE, NOT IN THE BROWSER. The answer key is in lib/training/questions.js
+ * and never leaves the server before submission, so a score describes what
+ * somebody knew rather than what they could read out of a downloaded script.
+ *
+ * The attempt is appended whether it passed or failed. A record that keeps only
+ * successes cannot answer the question it exists to answer.
+ */
+app.post('/api/training/quiz/:moduleId', requireAuth, async (req, res) => {
+  try {
+    const userId = resolveTrainingUser(req);
+    if (!userId) return res.status(401).json({ error: 'No session.' });
+
+    const moduleId = String(req.params.moduleId || '');
+    const graded = trainingLib.gradeAttempt(moduleId, (req.body || {}).answers);
+    if (!graded) return res.status(404).json({ error: 'No such module, or it has no quiz.' });
+
+    // The result is returned even when it cannot be stored: an un-migrated
+    // database should cost an analyst their history, not their feedback.
+    let recorded = false;
+    if (await hasTrainingTables()) {
+      try {
+        await pool.query(
+          `INSERT INTO training_attempts
+             (user_id, module_id, score, total, passed, answers)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+          [userId, moduleId, graded.score, graded.total, graded.passed,
+           JSON.stringify((req.body || {}).answers || {})]);
+        recorded = true;
+      } catch (err) {
+        console.warn('[training] attempt not recorded —', err.message);
+      }
+    }
+
+    return res.json({ result: graded, recorded });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/training/attempts — my own history, newest first. */
+app.get('/api/training/attempts', requireAuth, async (req, res) => {
+  try {
+    const userId = resolveTrainingUser(req);
+    if (!userId) return res.status(401).json({ error: 'No session.' });
+    return res.json({ attempts: await loadTrainingAttempts(userId, null) });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * GET /api/training/team — how the team is doing, in aggregate.
+ *
+ * For a SOC lead. Returns counts per module and per person — who has completed
+ * what, and how many attempts it took — and deliberately NOT which questions
+ * anyone got wrong. The point is to spot who needs support and which module is
+ * not landing, neither of which requires reading somebody's answers.
+ *
+ * Gated on WRITE for the training page, which by ROLE_DEFAULTS means admin and
+ * superadmin. pageGate enforces that; this route does not re-implement it.
+ */
+app.get('/api/training/team', requireAuth, requirePage('training', { write: true }),
+  async (req, res) => {
+    try {
+      if (!await hasTrainingTables()) {
+        return res.status(503).json({
+          error: 'Training records are not available yet. Run db/migrate-training.sql.',
+        });
+      }
+
+      const done = await pool.query(
+        `SELECT u.id, u.username, p.item_key, p.completed_at
+           FROM training_progress p
+           JOIN users u ON u.id = p.user_id
+          WHERE p.status = 'completed'
+          ORDER BY u.username, p.item_key`);
+
+      const attempts = await pool.query(
+        `SELECT u.id, u.username, a.module_id,
+                COUNT(*)::int AS attempts,
+                MAX(a.score::float / a.total) AS best,
+                BOOL_OR(a.passed) AS passed
+           FROM training_attempts a
+           JOIN users u ON u.id = a.user_id
+          GROUP BY u.id, u.username, a.module_id
+          ORDER BY u.username, a.module_id`);
+
+      return res.json({
+        modules: trainingLib.listModules(),
+        completed: done.rows.map(r => ({
+          userId: r.id, username: r.username,
+          itemKey: r.item_key, completedAt: r.completed_at,
+        })),
+        attempts: attempts.rows.map(r => ({
+          userId: r.id, username: r.username, moduleId: r.module_id,
+          attempts: r.attempts,
+          best: r.best == null ? null : Math.round(r.best * 100),
+          passed: r.passed,
+        })),
+      });
+    } catch (err) { return serverError(res, err); }
+  });
 
 /** GET /api/client-profile — estate, services, conflicts, gaps and history. */
 app.get('/api/client-profile', requireAuth, async (req, res) => {

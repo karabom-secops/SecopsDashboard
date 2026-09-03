@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="stylesheet" href="css/secure-score.css" />
   <link rel="stylesheet" href="css/client-profile.css" />
+  <link rel="stylesheet" href="css/training.css" />
   <script>
     /* Applies the stored sidebar state to <html> BEFORE first paint. Without
        this, rail users watch the sidebar render at 280px and snap to 64px on
@@ -214,6 +215,10 @@
       </div>
     </nav>
     <div class="side-nav-footer">
+      <button class="side-nav-item" type="button" data-tab="training" title="Training" hidden>
+        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+        <span class="side-nav-text">Training</span>
+      </button>
       <button class="side-nav-item" type="button" data-tab="client-profile" title="Client Profile" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         <span class="side-nav-text">Client Profile</span>
@@ -2046,6 +2051,9 @@
   </section>
 
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
+  <!-- Training — rendered entirely by tab-training.js. -->
+  <section id="tab-training" class="tab-panel" role="tabpanel" hidden></section>
+
   <!-- Client Profile — estate + services. Rendered entirely by tab-client-profile.js. -->
   <section id="tab-client-profile" class="tab-panel" role="tabpanel" hidden></section>
 
@@ -2335,6 +2343,7 @@
   <script src="js/report-deck.js"></script>
   <script src="js/report-sections.js"></script>
   <script src="js/tab-reports.js"></script>
+  <script src="js/tab-training.js"></script>
   <script src="js/tab-client-profile.js"></script>
   <script src="js/tab-admin.js"></script>
 </body>
