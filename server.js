@@ -1808,14 +1808,44 @@ app.get('/api/firewall/audits/:id', async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
-/** DELETE /api/firewall/audits/:id — superadmin only. */
+/**
+ * DELETE /api/firewall/audits/:id — superadmin only.
+ *
+ * Tenant is in the WHERE clause, exactly as it is on the GETs. Being a
+ * superadmin means you may delete any tenant's audit; it does not mean you
+ * should be able to delete a tenant you are not looking at by mistyping an id.
+ * The scoping makes the id you pass mean something in the context you are in.
+ *
+ * The findings go with it by ON DELETE CASCADE (db/migrate-firewall-audit.sql),
+ * so there is no orphan row and no second statement that could half-succeed.
+ * Nothing else references an audit — the config was never stored, so there is
+ * no file to clean up.
+ */
 app.delete('/api/firewall/audits/:id', requireSuperAdmin, async (req, res) => {
   try {
+    const { tenantId, error } = resolveVulnTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid audit id.' });
-    const r = await pool.query('DELETE FROM firewall_audits WHERE id = $1 RETURNING id', [id]);
+    if (!await hasFirewallTables()) return res.status(404).json({ error: 'Audit not found.' });
+
+    // RETURNING the identity so the caller can say WHAT it deleted rather than
+    // "deleted." A destructive confirmation that cannot name its subject is not
+    // a confirmation.
+    const r = await pool.query(
+      `DELETE FROM firewall_audits
+        WHERE id = $1 AND tenant_id = $2
+        RETURNING id, device_name, uploaded_at`, [id, tenantId]);
     if (!r.rows.length) return res.status(404).json({ error: 'Audit not found.' });
-    return res.json({ ok: true });
+
+    return res.json({
+      ok: true,
+      deleted: {
+        id: r.rows[0].id,
+        device: r.rows[0].device_name || null,
+        uploadedAt: r.rows[0].uploaded_at,
+      },
+    });
   } catch (err) { return serverError(res, err); }
 });
 

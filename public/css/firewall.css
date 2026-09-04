@@ -129,6 +129,28 @@
 }
 .fw-h-row:hover { border-color: #2E7DD1; }
 
+/* Row + its delete button as siblings, so neither is nested inside the other. */
+.fw-h-item { display: flex; align-items: stretch; gap: 0.4rem; }
+.fw-h-item .fw-h-row { flex: 1 1 auto; width: auto; }
+
+/*
+ * Destructive, so it is quiet until you go near it — findable without competing
+ * with the row it would delete.
+ */
+.fw-h-del, .fw-actions .fw-h-del {
+  flex: 0 0 auto; font: inherit; font-size: 0.8rem; cursor: pointer;
+  padding: 0 0.75rem; color: #8C8C8C; background: transparent;
+  border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 5px;
+}
+.fw-h-del:hover { color: #fff; background: #C0392B; border-color: #C0392B; }
+
+.fw-actions {
+  display: flex; justify-content: flex-end;
+  margin-top: 1.2rem; padding-top: 0.9rem;
+  border-top: 1px solid rgba(127, 127, 127, 0.2);
+}
+.fw-actions .fw-h-del { padding: 0.4rem 0.9rem; }
+
 .fw-h-when  { flex: 0 0 auto; color: #8C8C8C; font-variant-numeric: tabular-nums; }
 .fw-h-dev   { flex: 1 1 auto; font-weight: 600; }
 .fw-h-score { flex: 0 0 auto; font-weight: 700; font-variant-numeric: tabular-nums; }

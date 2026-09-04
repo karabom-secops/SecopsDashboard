@@ -786,6 +786,102 @@ check('masked is stated calmly',
 check('unknown says it could not be determined',
   /could not be determined/i.test(FT._maskNotice({ appearedMasked: null })));
 
+/* ══ Deleting an audit ══════════════════════════════════════════════════════ */
+
+section('deletion is scoped, complete, and asked about first');
+
+const delRoute = (() => {
+  const at = srvCode.indexOf("app.delete('/api/firewall/audits/:id'");
+  const rest = srvCode.slice(at);
+  return rest.slice(0, rest.indexOf('\n});') + 4);
+})();
+
+check('the delete route was found in server.js', delRoute.length > 100, delRoute.length);
+/*
+ * Superadmin may delete any tenant's audit; that is not a reason to let a
+ * mistyped id delete a tenant they are not looking at. Same rule as the GETs.
+ */
+check('the delete is scoped by tenant in the WHERE clause',
+  /WHERE id = \$1 AND tenant_id = \$2/.test(delRoute));
+check('the tenant comes from resolveVulnTenant, not from the id alone',
+  /resolveVulnTenant\(req, 'query'\)/.test(delRoute));
+check('an unknown id and another tenant\'s id both 404',
+  (delRoute.match(/status\(404\)/g) || []).length >= 1 &&
+  !/status\(403\)/.test(delRoute));
+check('it names what it deleted rather than just saying "deleted"',
+  /RETURNING id, device_name, uploaded_at/.test(delRoute) &&
+  /deleted:\s*\{/.test(delRoute));
+
+/*
+ * The findings go with the audit by ON DELETE CASCADE. A second DELETE in the
+ * route would be a second statement that could half-succeed, leaving findings
+ * pointing at an audit that no longer exists — and those findings are the only
+ * thing this feature stores.
+ */
+check('findings cascade from the audit in the schema',
+  /audit_id\s+INT NOT NULL REFERENCES firewall_audits\(id\) ON DELETE CASCADE/
+    .test(sqlOnly(migration)));
+check('so the route issues exactly one DELETE',
+  (delRoute.match(/DELETE FROM/g) || []).length === 1,
+  (delRoute.match(/DELETE FROM/g) || []).length);
+check('and does not delete findings by hand',
+  !/firewall_findings/.test(delRoute));
+
+section('the tab only offers deletion to someone the server would allow');
+
+check('the button is gated on superadmin, matching requireSuperAdmin',
+  /role === 'superadmin'/.test(codeOnly(
+    tabJs.match(/function canDelete\(\)[\s\S]*?\n  \}/)[0])));
+/*
+ * Analysts have WRITE on this page so they can run audits. Producing a record
+ * and erasing one are not the same right, and canWrite() would conflate them.
+ */
+check('and not on canWrite, which analysts also have',
+  !/canWrite/.test(tabJs.match(/function canDelete\(\)[\s\S]*?\n  \}/)[0]));
+check('deletion goes through confirm() first',
+  /function doDelete[\s\S]{0,600}confirm\(/.test(tabCode));
+check('and the prompt says the audit cannot be recreated',
+  /cannot be undone[\s\S]{0,200}never stored/.test(tabJs));
+check('the request uses the DELETE method',
+  /method: 'DELETE'/.test(tabCode));
+check('and carries the tenant, or a superadmin delete 400s',
+  /firewall\/audits\/' \+ encodeURIComponent\(id\) \+ tenantParam\('\?'\)[\s\S]{0,120}method: 'DELETE'/
+    .test(tabCode));
+/*
+ * Deleting the newest audit promotes the one before it. Blanking the view would
+ * read as "this client has no firewall review" when one still stands.
+ */
+check('deleting the audit on screen re-fetches rather than blanking',
+  /_audit = null[\s\S]{0,400}audits\/latest/.test(tabCode));
+
+section('the delete control is real markup, not a nested button');
+
+sandbox.currentUser = { role: 'superadmin' };
+const DEV_XSS = 'Edge"><img src=x onerror=alert(1)>';
+FT._setHistory([{
+  id: 7, uploadedAt: '2026-01-02T00:00:00Z', score: 61,
+  failed: 3, coverage: 80, device: { name: DEV_XSS },
+}]);
+const hist = FT._historyBlock();
+
+check('a superadmin gets a delete control', /class="fw-h-del"/.test(hist));
+check('it carries the audit id', /data-del="7"/.test(hist));
+// A <button> inside a <button> is invalid HTML; browsers drop one of them.
+const firstRow = hist.slice(hist.indexOf('fw-h-row'));
+check('the delete button is a sibling of the row, not nested inside it',
+  firstRow.slice(0, firstRow.indexOf('</button>')).indexOf('fw-h-del') < 0);
+// The device name comes from an uploaded config and lands in an attribute.
+check('the device name is escaped in the confirmation label',
+  hist.indexOf(DEV_XSS) < 0 && /data-label="[^"]*&quot;/.test(hist), hist.slice(0, 200));
+check('and nothing unescaped survives anywhere in the row',
+  hist.indexOf('<img') < 0);
+
+sandbox.currentUser = { role: 'analyst' };
+check('an analyst gets no delete control', !/fw-h-del/.test(FT._historyBlock()));
+sandbox.currentUser = undefined;
+check('and neither does a caller with no session',
+  !/fw-h-del/.test(FT._historyBlock()));
+
 section('every request keeps the /secops/ base path');
 
 check('the URL builder keeps the base',

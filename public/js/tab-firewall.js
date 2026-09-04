@@ -37,6 +37,20 @@ window.FirewallTab = (function () {
     return typeof window.canWrite === 'function' ? window.canWrite('firewall') : false;
   }
 
+  /*
+   * Deletion is superadmin-only on the server (requireSuperAdmin), so the button
+   * is superadmin-only here. Hiding a control the server would refuse is not the
+   * security boundary — the route is — but showing one it would refuse teaches
+   * analysts that this page lies to them.
+   *
+   * Deliberately NOT canWrite('firewall'): analysts have write on this page so
+   * they can run audits. Being able to produce a record is not the same right as
+   * being able to erase one.
+   */
+  function canDelete() {
+    return !!(window.currentUser && window.currentUser.role === 'superadmin');
+  }
+
   function tenantParam(sep) {
     var isSA = window.currentUser && window.currentUser.role === 'superadmin';
     if (!isSA || !window.globalTenantId) return '';
@@ -207,15 +221,40 @@ window.FirewallTab = (function () {
             '<button id="fw-upload" type="button" class="btn btn-primary">Audit configuration</button>' +
           '</div>' +
         '</div>' +
-        (_msg ? '<p class="fw-note ' + (_msg.bad ? 'fw-bad' : 'fw-good') + '">' +
-          esc(_msg.text) + '</p>' : '') +
       '</div>';
+  }
+
+  /*
+   * Rendered once by render(), not inside the upload card — a delete confirmation
+   * has to be visible to someone who cannot upload, and a message that only
+   * appears when another control happens to be on screen is a message that will
+   * one day not appear at all.
+   */
+  function msgBlock() {
+    if (!_msg) return '';
+    return '<p class="fw-note ' + (_msg.bad ? 'fw-bad' : 'fw-good') + '">' +
+      esc(_msg.text) + '</p>';
+  }
+
+  /* How an audit is named in a confirmation prompt and in the message after. */
+  function auditLabel(a) {
+    var when = a.uploadedAt ? new Date(a.uploadedAt).toLocaleDateString() : 'unknown date';
+    return ((a.device && a.device.name) || 'Unnamed device') + ' (' + when + ')';
+  }
+
+  function deleteButton(a) {
+    if (!canDelete()) return '';
+    return '<button type="button" class="fw-h-del" data-del="' + esc(a.id) +
+      '" data-label="' + esc(auditLabel(a)) + '" title="Delete this audit">Delete</button>';
   }
 
   function historyBlock() {
     if (!_history.length) return '<p class="fw-note">No previous audits.</p>';
     return '<div class="fw-hist">' + _history.map(function (a) {
-      return '<button type="button" class="fw-h-row" data-audit="' + esc(a.id) + '">' +
+      // Sibling buttons, not nested: a <button> inside a <button> is invalid
+      // HTML, and browsers resolve it by dropping one — usually the delete.
+      return '<div class="fw-h-item">' +
+        '<button type="button" class="fw-h-row" data-audit="' + esc(a.id) + '">' +
           '<span class="fw-h-when">' +
             esc(a.uploadedAt ? new Date(a.uploadedAt).toLocaleDateString() : '') + '</span>' +
           '<span class="fw-h-dev">' + esc((a.device && a.device.name) || 'Unnamed') + '</span>' +
@@ -223,7 +262,9 @@ window.FirewallTab = (function () {
             (a.score == null ? 'n/a' : esc(a.score)) + '</span>' +
           '<span class="fw-h-sub">' + esc(a.failed) + ' findings &middot; ' +
             esc(a.coverage) + '% coverage</span>' +
-        '</button>';
+        '</button>' +
+        deleteButton(a) +
+      '</div>';
     }).join('') + '</div>';
   }
 
@@ -235,7 +276,8 @@ window.FirewallTab = (function () {
     if (_view === 'history') {
       body = historyBlock();
     } else if (_audit) {
-      body = scoreBlock(_audit) + findingsBlock(_audit);
+      body = scoreBlock(_audit) + findingsBlock(_audit) +
+        (canDelete() ? '<div class="fw-actions">' + deleteButton(_audit) + '</div>' : '');
     } else {
       body = '<div class="fw-note">No configuration has been audited for this ' +
         'client yet.' + (canUpload() ? ' Upload one above.' : '') + '</div>';
@@ -246,6 +288,7 @@ window.FirewallTab = (function () {
         '<p class="page-sub">A FortiGate backup audited against the CIS FortiGate ' +
         'Benchmark and Reflex\'s own checks.</p></div>' +
       uploadBlock() +
+      msgBlock() +
       '<div class="fw-tabs">' +
         '<button type="button" class="fw-tab' + (_view === 'current' ? ' is-on' : '') +
           '" data-view="current">Latest audit</button>' +
@@ -264,6 +307,9 @@ window.FirewallTab = (function () {
     document.querySelectorAll('#tab-firewall .fw-h-row').forEach(function (b) {
       b.onclick = function () { openAudit(b.dataset.audit); };
     });
+    document.querySelectorAll('#tab-firewall .fw-h-del').forEach(function (b) {
+      b.onclick = function () { doDelete(b.dataset.del, b.dataset.label); };
+    });
     var up = document.getElementById('fw-upload');
     if (up) up.onclick = doUpload;
   }
@@ -273,9 +319,66 @@ window.FirewallTab = (function () {
       var j = await get('firewall/audits/' + encodeURIComponent(id) + tenantParam('?'));
       _audit = j.audit;
       _view = 'current';
+      // The parse note describes the file that was just uploaded, not this
+      // audit. Carrying it across would attribute a quoting repair to a
+      // configuration it never touched.
+      _parseNote = null;
       render();
     } catch (err) {
       _msg = { text: 'Could not load that audit: ' + err.message, bad: true };
+      render();
+    }
+  }
+
+  /**
+   * Delete one audit.
+   *
+   * Irreversible and it says so: the configuration was never stored, so a
+   * deleted audit cannot be regenerated from anything we hold. Re-auditing means
+   * asking the client for a fresh backup — and it would be a fresh backup, not
+   * this one, so the historical record of what the firewall looked like on that
+   * date is gone for good.
+   */
+  async function doDelete(id, label) {
+    if (!id) return;
+    if (!confirm('Delete the audit for ' + (label || 'this device') + '?\n\n' +
+      'This deletes the findings and cannot be undone. The configuration itself ' +
+      'was never stored, so this audit cannot be recreated — only replaced by a ' +
+      'new backup from the client.')) return;
+
+    try {
+      var res = await fetch(
+        apiUrl('firewall/audits/' + encodeURIComponent(id) + tenantParam('?')),
+        { method: 'DELETE', credentials: 'same-origin' });
+      var j = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        _msg = { text: j.error || ('Delete failed (HTTP ' + res.status + ').'), bad: true };
+        render();
+        return;
+      }
+
+      _msg = { text: 'Deleted the audit for ' + (label || 'that device') + '.', bad: false };
+
+      /*
+       * If the audit on screen is the one that just went, do not keep rendering
+       * it. Re-fetch rather than blanking: deleting the latest audit promotes
+       * the one before it, and the page should show the posture that now
+       * stands — not an empty state that reads as "this client has no firewall
+       * review".
+       */
+      if (_audit && String(_audit.id) === String(id)) {
+        _audit = null;
+        _parseNote = null;
+        try {
+          var latest = await get('firewall/audits/latest' + tenantParam('?'));
+          _audit = latest.audit;
+        } catch (err) { /* the message above still stands; the view falls back */ }
+      }
+
+      await loadHistory();
+      render();
+    } catch (err) {
+      _msg = { text: 'Delete failed: ' + err.message, bad: true };
       render();
     }
   }
@@ -345,6 +448,9 @@ window.FirewallTab = (function () {
     _apiUrl: apiUrl,
     _findingRow: findingRow,
     _maskNotice: maskNotice,
+    _historyBlock: historyBlock,
+    _canDelete: canDelete,
     _setAudit: function (a) { _audit = a; },
+    _setHistory: function (h) { _history = h; },
   };
 })();
