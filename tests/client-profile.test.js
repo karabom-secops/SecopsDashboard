@@ -396,9 +396,92 @@ check('a score that cannot be computed does not fail the save',
 section('the tab');
 
 check('it is loaded by index.html', /js\/tab-client-profile\.js/.test(indexHtml));
-check('its panel exists', /id="tab-client-profile"/.test(indexHtml));
-check('it has a nav entry', /data-tab="client-profile"/.test(indexHtml));
+check('its host element exists', /id="tab-client-profile"/.test(indexHtml));
 check('its stylesheet is linked', /css\/client-profile\.css/.test(indexHtml));
+
+/* ══ Reached through the Admin tab ══════════════════════════════════════════
+ *
+ * The client profile is a sub-tab of Admin rather than a top-level nav entry.
+ * That is a change to WHERE THE LINK IS and nothing else: it remains its own
+ * page key with its own access level, and the checks below exist because the
+ * obvious way to implement this — gate the sub-tab on `admin` — would silently
+ * hand every client's estate and service mix to anyone who can open that tab.
+ */
+section('it lives inside the Admin tab, without inheriting its access');
+
+const appJs2 = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
+// Comments sit between a sub-tab's key and its guard, so the spans below are
+// measured over code with the comments stripped — otherwise the check is really
+// asserting how long a comment is.
+const adminCode = codeOnly(adminJs);
+
+check('the standalone nav entry is gone',
+  !/data-tab="client-profile"/.test(indexHtml));
+check('its host sits inside the admin panel',
+  (() => {
+    const a = indexHtml.indexOf('<section id="tab-admin"');
+    const b = indexHtml.indexOf('</section>', a);
+    return indexHtml.slice(a, b).indexOf('id="tab-client-profile"') >= 0;
+  })());
+check('inside the client-profile pane specifically',
+  /id="adminPane-client-profile"[\s\S]{0,600}id="tab-client-profile"/.test(indexHtml));
+
+/*
+ * A per-page override can grant client-profile and withhold admin. Without
+ * data-tab-also that user holds a page with no route to it — access granted on
+ * paper and unreachable in the product.
+ */
+check('the Admin nav entry stays visible for a client-profile-only user',
+  /data-tab="admin" data-tab-also="client-profile"/.test(indexHtml));
+check('and auth.js honours that attribute',
+  /dataset\.tabAlso/.test(codeOnly(fs.readFileSync(path.join(ROOT, 'public', 'js', 'auth.js'), 'utf8'))));
+check('by showing the item when ANY listed key is viewable',
+  /keys\.some\(k => window\.canView\(k\)\)/.test(
+    fs.readFileSync(path.join(ROOT, 'public', 'js', 'auth.js'), 'utf8')));
+
+// THE ONE THAT MATTERS: the sub-tab is gated on its own key, not on 'admin'.
+check('the sub-tab is gated on canView(\'client-profile\')',
+  /key: 'client-profile'[\s\S]{0,160}window\.canView\('client-profile'\)/.test(adminCode),
+  (adminCode.match(/key: 'client-profile'[\s\S]{0,160}/) || [''])[0].slice(0, 160));
+check('and NOT on the admin page key',
+  !/key: 'client-profile'[\s\S]{0,160}canView\('admin'\)/.test(adminCode) &&
+  !/key: 'client-profile'[\s\S]{0,160}canWrite\('admin'\)/.test(adminCode));
+/*
+ * showSubtab re-checks allowed() rather than trusting its argument: the key can
+ * arrive from a stale button or a remembered value, and a pane is only as
+ * closed as the last thing that opened it.
+ */
+check('opening a sub-tab re-checks permission rather than trusting the caller',
+  /function showSubtab[\s\S]{0,300}availableSubtabs\(\)/.test(adminJs));
+check('and an unavailable key falls back to one the user has',
+  /\|\| available\[0\]/.test(adminJs));
+
+check('app.js no longer treats it as a top-level panel',
+  !/'client-profile':\s*document\.getElementById/.test(codeOnly(appJs2)));
+check('so renderTab cannot hide the admin panel to show a div inside it',
+  !/target === 'client-profile'/.test(codeOnly(appJs2)));
+/*
+ * A superadmin switching organisation must re-read the profile. That path now
+ * runs through renderAdmin, and this is editable data — the worst thing on this
+ * dashboard to leave on screen labelled as the wrong client.
+ */
+check('renderAdmin re-renders the visible sub-tab',
+  /window\.renderAdmin = function \(\) \{[\s\S]{0,160}showSubtab\(activeSubtab\)/.test(adminJs));
+check('and opening the client-profile pane loads it',
+  /key === 'client-profile'[\s\S]{0,120}ClientProfileTab\.loadAndRender\(\)/.test(adminJs));
+
+section('the three sub-tabs the Admin tab offers');
+
+['integrations', 'users', 'client-profile'].forEach((k) => {
+  check("there is a '" + k + "' sub-tab", new RegExp("key: '" + k + "'").test(adminJs));
+  check('and a pane for it', indexHtml.indexOf('id="adminPane-' + k + '"') >= 0);
+});
+// Every pane starts hidden, or first paint flashes sections the user may not have.
+check('every pane starts hidden',
+  (indexHtml.match(/id="adminPane-[a-z-]+" role="tabpanel"[\s\S]{0,120}?hidden>/g) || []).length === 3,
+  (indexHtml.match(/id="adminPane-[a-z-]+" role="tabpanel"[\s\S]{0,120}?hidden>/g) || []).length);
+check('integrations asks for write, not merely view',
+  /key: 'integrations'[\s\S]{0,120}window\.canWrite\('admin'\)/.test(adminCode));
 
 // Moved, not duplicated. Two editors for one value is how they drift apart.
 check('the estate card is gone from the admin tab',

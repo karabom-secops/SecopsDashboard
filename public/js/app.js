@@ -26,7 +26,13 @@
     reports:      document.getElementById('tab-reports'),
     training:     document.getElementById('tab-training'),
     firewall:     document.getElementById('tab-firewall'),
-    'client-profile': document.getElementById('tab-client-profile'),
+    /*
+     * 'client-profile' is deliberately NOT here. It is a sub-tab of Admin now,
+     * living inside #tab-admin — listing it would make renderTab hide the admin
+     * panel and then show a div nested inside it, which paints nothing. It is
+     * still its own PAGE KEY with its own access level; only its route changed.
+     * tab-admin.js opens it, gated on canView('client-profile').
+     */
     admin:        document.getElementById('tab-admin'),
   };
 
@@ -55,7 +61,6 @@
     reports:    'Reports',
     training:   'Training',
     firewall:   'Firewall Audit',
-    'client-profile': 'Client Profile',
     admin:      'Admin',
   };
 
@@ -120,12 +125,13 @@
     if (target === 'secure-score' && typeof window.SecureScoreTab !== 'undefined') {
       window.SecureScoreTab.loadAndRender();
     }
-    // Re-reads on every switch, including a superadmin changing organisation —
-    // a profile left on screen labelled as the wrong client would be worse here
-    // than anywhere else on the dashboard, because it is editable.
-    if (target === 'client-profile' && typeof window.ClientProfileTab !== 'undefined') {
-      window.ClientProfileTab.loadAndRender();
-    }
+    /*
+     * The client profile is reached through the Admin tab now, so renderAdmin()
+     * below is what re-reads it — including when a superadmin changes
+     * organisation. That re-read is not optional: a profile left on screen
+     * labelled as the wrong client is worse here than anywhere else on the
+     * dashboard, because it is editable.
+     */
     // Training is per-USER, not per-tenant, so unlike every other tab here it
     // does not need re-rendering when a superadmin switches organisation. It is
     // dispatched on open like the others and simply ignores the tenant.

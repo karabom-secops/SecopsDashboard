@@ -845,11 +845,125 @@
     }
   }
 
+  // ── Sub-tabs ──────────────────────────────────────────────────────────────
+
+  /*
+   * The Admin tab is three sections behind one nav entry: Integrations, User
+   * Management and Client Profile.
+   *
+   * ══ EACH ONE IS GATED ON ITS OWN PAGE KEY ══
+   *
+   * Client Profile is NOT part of the admin page. It is a separate page key
+   * with its own access level, and it stays that way — `client-profile` still
+   * appears in lib/pages.js, still owns the /api/client-profile prefix, and is
+   * still refused to sales, readonly and analysts by ROLE_DEFAULTS. Folding it
+   * into the Admin tab is a change to where the link lives, not to who may use
+   * it. Gating the sub-tab on `admin` would silently widen access to every
+   * client's estate and service mix to anyone who could reach this tab.
+   *
+   * The reverse matters too: an admin with a client-profile override of `none`
+   * must not see the sub-tab, even though they own the tab it sits in.
+   */
+  var SUBTABS = [
+    { key: 'integrations',   label: 'Integrations',
+      // Integrations are a write surface — there is nothing to read here that
+      // is not a credential form, which is why this asks for write and the
+      // others ask for view.
+      allowed: function () { return window.canWrite('admin'); } },
+    { key: 'users',          label: 'User Management',
+      allowed: function () { return window.canView('admin'); } },
+    { key: 'client-profile', label: 'Client Profile',
+      allowed: function () { return window.canView('client-profile'); } },
+  ];
+
+  var activeSubtab = null;
+
+  function availableSubtabs() {
+    return SUBTABS.filter(function (t) { return t.allowed(); });
+  }
+
+  function buildSubtabs() {
+    var bar = document.getElementById('adminSubtabs');
+    if (!bar) return;
+
+    var available = availableSubtabs();
+
+    // One section and no choice to make is not a tab bar. Hiding it avoids a
+    // lone tab that looks like the other two failed to load.
+    bar.hidden = available.length < 2;
+
+    bar.innerHTML = available.map(function (t) {
+      return '<button type="button" class="admin-subtab" role="tab"' +
+        ' id="adminSubtab-' + t.key + '" data-subtab="' + t.key + '"' +
+        ' aria-controls="adminPane-' + t.key + '"' +
+        ' aria-selected="' + (t.key === activeSubtab) + '">' +
+        escapeHtml(t.label) + '</button>';
+    }).join('');
+
+    bar.querySelectorAll('.admin-subtab').forEach(function (b) {
+      b.addEventListener('click', function () { showSubtab(b.dataset.subtab); });
+    });
+  }
+
+  /**
+   * Show one sub-tab.
+   *
+   * Re-checks `allowed()` rather than trusting the caller: the key can arrive
+   * from a remembered value or a stale button, and a pane is only as closed as
+   * the last thing that opened it. The server gates the DATA regardless — this
+   * keeps the screen honest, it is not the access control.
+   */
+  function showSubtab(key) {
+    var available = availableSubtabs();
+    if (!available.length) return;
+
+    var chosen = available.filter(function (t) { return t.key === key; })[0]
+              || available[0];
+    activeSubtab = chosen.key;
+
+    SUBTABS.forEach(function (t) {
+      var pane = document.getElementById('adminPane-' + t.key);
+      if (pane) pane.hidden = t.key !== activeSubtab;
+    });
+
+    var bar = document.getElementById('adminSubtabs');
+    if (bar) {
+      bar.querySelectorAll('.admin-subtab').forEach(function (b) {
+        var on = b.dataset.subtab === activeSubtab;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-selected', String(on));
+      });
+    }
+
+    renderSubtab(activeSubtab);
+  }
+
+  /*
+   * Render on open, not on tab entry.
+   *
+   * Every one of these is tenant-scoped, and rendering all three whenever the
+   * Admin tab opens costs three round trips to show one. Re-rendering on each
+   * open also means a superadmin who switches client never sees the previous
+   * customer's estate sitting in a pane they had already visited.
+   */
+  function renderSubtab(key) {
+    if (key === 'integrations') renderIntegrations();
+    else if (key === 'users')   renderUsers();
+    else if (key === 'client-profile' && window.ClientProfileTab) {
+      window.ClientProfileTab.loadAndRender();
+    }
+  }
+
   // ── Init ──────────────────────────────────────────────────────────────────
 
+  /*
+   * Called by app.js when the Admin tab opens, and again when a superadmin
+   * changes the selected organisation. Re-rendering only the visible pane is
+   * what keeps that second case cheap and correct.
+   */
   window.renderAdmin = function () {
-    renderUsers();
-    renderIntegrations();
+    buildSubtabs();
+    showSubtab(activeSubtab);
   };
 
   // Wait for auth.js to set window.currentUser before initialising

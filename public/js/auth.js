@@ -262,8 +262,22 @@
     }
 
     // ── Hide side-nav items for pages the user cannot view ───────────────
+    /*
+     * `data-tab-also="a,b"` names other page keys reachable THROUGH this nav
+     * item, so the item stays visible for someone who can view one of them but
+     * not the item's own page.
+     *
+     * It exists because the Admin tab now hosts the Client Profile as a
+     * sub-tab. Those are still two separate page keys with separate access
+     * levels — a per-page override can grant client-profile and not admin — and
+     * without this, such a user would hold a page with no route to it. The
+     * sub-tab itself is gated on its own key inside tab-admin.js; this only
+     * decides whether the door is visible, never what is behind it.
+     */
     document.querySelectorAll('.side-nav-item[data-tab]').forEach(el => {
-      el.hidden = !window.canView(el.dataset.tab);
+      const keys = [el.dataset.tab].concat(
+        (el.dataset.tabAlso || '').split(',').map(k => k.trim()).filter(Boolean));
+      el.hidden = !keys.some(k => window.canView(k));
     });
 
     // Roll that up to the category headers — otherwise a readonly or sales
