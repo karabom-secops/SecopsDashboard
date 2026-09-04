@@ -21,6 +21,7 @@
     edr:          document.getElementById('tab-edr'),
     ndr:          document.getElementById('tab-ndr'),
     o365:         document.getElementById('tab-o365'),
+    email:        document.getElementById('tab-email'),
     'mdr-pricing': document.getElementById('tab-mdr-pricing'),
     reports:      document.getElementById('tab-reports'),
     training:     document.getElementById('tab-training'),
@@ -49,6 +50,7 @@
     edr:        'Managed EDR',
     ndr:        'Managed NDR',
     o365:       'Managed Identity',
+    email:      'Managed Email Security',
     'mdr-pricing': 'MDR Pricing',
     reports:    'Reports',
     training:   'Training',
@@ -162,6 +164,12 @@
     }
     if (target === 'o365' && typeof window.O365Tab !== 'undefined') {
       window.O365Tab.loadAndRender();
+    }
+    // Tenant-scoped like the other managed-service tabs: re-read on every
+    // switch so a superadmin changing organisation never leaves one client's
+    // targeted mailboxes on screen under another client's name.
+    if (target === 'email' && typeof window.EmailTab !== 'undefined') {
+      window.EmailTab.loadAndRender();
     }
     if (target === 'mdr-pricing' && typeof window.MdrPricingTab !== 'undefined') {
       window.MdrPricingTab.loadAndRender();

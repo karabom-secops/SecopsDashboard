@@ -44,7 +44,9 @@ const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports
 const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
 const sentinelOneAdapter = require('./lib/integrations/sentinelone');
 const wazuhAdapter = require('./lib/integrations/wazuh-indexer');
+const acronisAdapter = require('./lib/integrations/acronis');
 const { computeEdrSummary } = require('./lib/edr-metrics');
+const { computeEmailSummary } = require('./lib/email-metrics');
 const wazuhMetrics = require('./lib/wazuh-metrics');
 const { buildPentestReport, imageDimensions, DEFAULT_OWASP } = require('./lib/report-docx');
 const pptxRoute = require('./lib/report-pptx-route');
@@ -2698,7 +2700,39 @@ const EDR_PROVIDER = 'sentinelone';
 // daily rollups for the long ones. Not in INTEGRATION_ADAPTERS for that reason.
 const WAZUH_PROVIDER = 'wazuh';
 
-const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER]);
+/*
+ * Acronis backs Managed Email Security. Not ticket-shaped either: it syncs
+ * email-security alerts into their own table.
+ *
+ * It is also the only provider here that does NOT authenticate with an API key.
+ * Acronis uses OAuth client credentials, so the integrations row holds the
+ * client id in config_json and the client SECRET in the existing encrypted
+ * api_key column — reusing the encrypted column rather than adding a second
+ * secret store, so there is exactly one path a credential can take to disk.
+ */
+const EMAIL_PROVIDER = 'acronis';
+
+const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER]);
+
+/*
+ * Degrade-open probe for the email-security tables, matching hasFirewallTables.
+ * The migration is unrun on any database that has not had it applied, and a tab
+ * that 500s is worse than one that says "not set up yet".
+ *
+ * Cached ONLY on a positive answer: a false result must stay re-checkable, or
+ * running the migration would require a restart to take effect.
+ */
+let _hasEmailTables = false;
+async function hasEmailTables() {
+  if (_hasEmailTables) return true;
+  try {
+    await pool.query('SELECT 1 FROM email_alerts LIMIT 1');
+    _hasEmailTables = true;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 
 function resolveIntegrationTenant(req, source) {
   if (req.session.role === 'superadmin') {
@@ -2818,6 +2852,33 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
       await arcticWolfReportsAdapter.testConnection({ base_url, api_key, ...(config_json || {}) });
     } else if (provider === EDR_PROVIDER) {
       await sentinelOneAdapter.testConnection({ base_url, api_key, ...(config_json || {}) });
+    } else if (provider === EMAIL_PROVIDER) {
+      /*
+       * A tick here is not enough. Acronis serves backup, DR and patching alerts
+       * through the same endpoint, so credentials can be perfect while the
+       * classifier reads none of what comes back as email security — which on
+       * the tab looks identical to a quiet month.
+       *
+       * So the test reports what it actually saw: how many alert types came
+       * back and how many were read as email. An operator who connects a tenant
+       * and is told "0 of 7 types look like email security" knows to check the
+       * Advanced Email Security licence, rather than waiting a week for a chart
+       * that will never fill.
+       */
+      const probe = await acronisAdapter.testConnection({
+        base_url, api_key, ...(config_json || {}),
+      });
+      const types = probe.typesSeen || [];
+      const emailTypes = types.filter(t => t.isEmail);
+      const note = types.length === 0
+        ? ' No alerts were returned for this tenant, so nothing could be classified yet.'
+        : ` ${emailTypes.length} of ${types.length} alert type(s) on the first page were read as email security.`;
+      return res.json({
+        ok: true,
+        message: 'Connection successful.' + note + disabledNote,
+        typesSeen: types,
+        isEnabled: is_enabled,
+      });
     } else if (provider === WAZUH_PROVIDER) {
       const cfg  = { base_url, api_key, ...(config_json || {}) };
       const info = await wazuhAdapter.testConnection(cfg);
@@ -3175,6 +3236,145 @@ async function runSentinelOneSync(tenantId) {
   }
 }
 
+/**
+ * Core sync logic for Acronis (Managed Email Security).
+ *
+ * Pulls alerts incrementally from the newest updated_at already stored, keeps
+ * the ones the classifier reads as email security, and records EVERY alert type
+ * it saw — including the ones it rejected — so a classifier gap is visible in
+ * the tab instead of showing up as a chart that quietly stops rising.
+ *
+ * Throws on failure; thrown errors carry `.httpStatus` for the HTTP route.
+ */
+async function runAcronisSync(tenantId) {
+  const provider = EMAIL_PROVIDER;
+
+  if (!await hasEmailTables()) {
+    const err = new Error('Email security tables are not present — run db/migrate-email-security.sql.');
+    err.httpStatus = 503;
+    throw err;
+  }
+
+  const intRow = await pool.query(
+    'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE',
+    [tenantId, provider]
+  );
+  if (!intRow.rows.length) {
+    const err = new Error('Integration not configured or disabled.');
+    err.httpStatus = 404;
+    throw err;
+  }
+
+  const { base_url, api_key_enc, api_key_iv, config_json } = intRow.rows[0];
+  const config = { base_url, api_key: decryptKey(api_key_enc, api_key_iv), ...(config_json || {}) };
+
+  /*
+   * Resume from the newest alert we already hold, on updated_at rather than
+   * created_at: an alert that was later dismissed or reclassified comes back
+   * and overwrites its stored row. Watermarking on created_at would pull it
+   * once and never see the change.
+   */
+  const watermark = await pool.query(
+    'SELECT MAX(updated_at) AS since FROM email_alerts WHERE tenant_id = $1',
+    [tenantId]
+  );
+  const since = watermark.rows[0].since ? new Date(watermark.rows[0].since).toISOString() : null;
+
+  let result;
+  try {
+    result = await acronisAdapter.fetchAlerts(config, { since });
+  } catch (fetchErr) {
+    await pool.query(
+      `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
+       WHERE tenant_id = $2 AND provider = $3`,
+      [fetchErr.message, tenantId, provider]
+    );
+    fetchErr.httpStatus = 502;
+    throw fetchErr;
+  }
+
+  const { alerts, typesSeen, truncated } = result;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    for (const a of alerts) {
+      await client.query(
+        `INSERT INTO email_alerts (
+           tenant_id, alert_id, alert_type, category, severity, threat_class,
+           disposition, recipient, recipient_domain, sender, sender_domain,
+           subject, created_at, updated_at, received_at, resolved_at,
+           alert_status, raw_json, synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW())
+         ON CONFLICT (tenant_id, alert_id) DO UPDATE SET
+           alert_type       = EXCLUDED.alert_type,
+           category         = EXCLUDED.category,
+           severity         = EXCLUDED.severity,
+           threat_class     = EXCLUDED.threat_class,
+           disposition      = EXCLUDED.disposition,
+           recipient        = EXCLUDED.recipient,
+           recipient_domain = EXCLUDED.recipient_domain,
+           sender           = EXCLUDED.sender,
+           sender_domain    = EXCLUDED.sender_domain,
+           subject          = EXCLUDED.subject,
+           updated_at       = EXCLUDED.updated_at,
+           received_at      = EXCLUDED.received_at,
+           resolved_at      = EXCLUDED.resolved_at,
+           alert_status     = EXCLUDED.alert_status,
+           raw_json         = EXCLUDED.raw_json,
+           synced_at        = NOW()`,
+        [tenantId, a.alertId, a.alertType, a.category, a.severity, a.threatClass,
+         a.disposition, a.recipient, a.recipientDomain, a.sender, a.senderDomain,
+         a.subject, a.createdAt, a.updatedAt, a.receivedAt, a.resolvedAt,
+         a.status, JSON.stringify(a.raw)]);
+    }
+
+    // The ledger of what was seen, email or not. seen_count accumulates across
+    // syncs; is_email is overwritten, so teaching the classifier a new keyword
+    // and re-syncing flips the type from unrecognised to recognised in place.
+    for (const t of typesSeen) {
+      await client.query(
+        `INSERT INTO email_alert_types_seen
+           (tenant_id, alert_type, category, is_email, seen_count, first_seen_at, last_seen_at)
+         VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+         ON CONFLICT (tenant_id, alert_type) DO UPDATE SET
+           category     = EXCLUDED.category,
+           is_email     = EXCLUDED.is_email,
+           seen_count   = email_alert_types_seen.seen_count + EXCLUDED.seen_count,
+           last_seen_at = NOW()`,
+        [tenantId, t.alertType, t.category, t.isEmail, t.count]);
+    }
+
+    const unrecognised = typesSeen.filter(t => !t.isEmail).length;
+    let message = `Synced ${alerts.length} email alert${alerts.length !== 1 ? 's' : ''}`
+      + ` from ${typesSeen.length} alert type(s); ${unrecognised} type(s) were not read as email security`;
+    // A capped pull is reported as capped. Silently returning the first N pages
+    // would look like a quiet period rather than a partial sync.
+    if (truncated) message += '. PAGE LIMIT REACHED — this sync is partial; run it again to continue';
+
+    await client.query(
+      `UPDATE integrations SET last_synced_at = NOW(),
+              last_sync_status = $1, last_sync_message = $2
+       WHERE tenant_id = $3 AND provider = $4`,
+      [truncated ? 'partial' : 'ok', message, tenantId, provider]
+    );
+
+    await client.query('COMMIT');
+    console.log(`[integrations] ${provider} sync: ${message} for tenant ${tenantId}`);
+    return {
+      ok: true, synced: alerts.length, alerts: alerts.length,
+      typesSeen: typesSeen.length, unrecognisedTypes: unrecognised,
+      truncated, message,
+    };
+  } catch (dbErr) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw dbErr;
+  } finally {
+    client.release();
+  }
+}
+
 /** Load an enabled Wazuh integration row with its key decrypted, or throw.
  *  The thrown error carries `.reason` so callers can tell a missing integration
  *  apart from one that exists but is switched off — those need completely
@@ -3264,6 +3464,7 @@ app.post('/api/integrations/:provider/sync', async (req, res) => {
     if (provider === REPORTS_PROVIDER)     result = await runArcticWolfReportsSync(tenantId, req.session.userId);
     else if (provider === EDR_PROVIDER)    result = await runSentinelOneSync(tenantId);
     else if (provider === WAZUH_PROVIDER)  result = await runWazuhRollupSync(tenantId);
+    else if (provider === EMAIL_PROVIDER)  result = await runAcronisSync(tenantId);
     else                                   result = await runTicketIntegrationSync(provider, tenantId, req.session.userId);
     return res.json(result);
   } catch (err) {
@@ -3284,10 +3485,13 @@ const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 async function runScheduledSyncs() {
   let rows;
   try {
-    // SentinelOne and Wazuh are excluded — they run on their own cadences below.
+    // SentinelOne, Wazuh and Acronis are excluded — each runs on its own cadence
+    // below. A provider missing from this list would be swept into
+    // runTicketIntegrationSync, which would call fetchTickets on an adapter that
+    // has no such method.
     rows = (await pool.query(
       'SELECT tenant_id, provider FROM integrations WHERE is_enabled = TRUE AND provider <> ALL($1::text[])',
-      [[EDR_PROVIDER, WAZUH_PROVIDER]]
+      [[EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER]]
     )).rows;
   } catch (err) {
     console.error('[integrations] scheduled sync: failed to load integrations —', err.message);
@@ -3393,6 +3597,56 @@ async function runEdrSyncs() {
 
 setTimeout(() => { runEdrSyncs().catch(err => console.error('[integrations] sentinelone sync crashed —', err.message)); }, 45 * 1000);
 setInterval(() => { runEdrSyncs().catch(err => console.error('[integrations] sentinelone sync crashed —', err.message)); }, EDR_SYNC_INTERVAL_MS);
+
+// ── Managed Email Security sync (every 6 hours) ────────────────────────────
+// Same reasoning as EDR: email threat data is operational, and a client asking
+// "did we get hit by that campaign this morning" is not well served by a feed
+// that refreshes once a day. Four times a day keeps the tab current without
+// pulling a partner's alert history around the clock.
+
+const EMAIL_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let emailSyncRunning = false;
+
+async function runEmailSyncs() {
+  // A first backfill over a busy tenant can run long; overlapping runs would
+  // fight over the same upsert keys and double the API load for nothing.
+  if (emailSyncRunning) {
+    console.log('[integrations] acronis sync still running — skipping this tick');
+    return;
+  }
+  emailSyncRunning = true;
+
+  try {
+    // No tables, no sync — and no error every six hours on a database where the
+    // migration has not been run.
+    if (!await hasEmailTables()) return;
+
+    let rows;
+    try {
+      rows = (await pool.query(
+        'SELECT tenant_id FROM integrations WHERE is_enabled = TRUE AND provider = $1',
+        [EMAIL_PROVIDER]
+      )).rows;
+    } catch (err) {
+      console.error('[integrations] acronis sync: failed to load integrations —', err.message);
+      return;
+    }
+
+    for (const row of rows) {
+      try {
+        const result = await runAcronisSync(row.tenant_id);
+        console.log(`[integrations] acronis sync ok: tenant ${row.tenant_id} (${result.alerts} email alerts, ${result.unrecognisedTypes} unrecognised type(s))`);
+      } catch (err) {
+        console.error(`[integrations] acronis sync failed: tenant ${row.tenant_id} — ${err.message}`);
+      }
+    }
+  } finally {
+    emailSyncRunning = false;
+  }
+}
+
+setTimeout(() => { runEmailSyncs().catch(err => console.error('[integrations] acronis sync crashed —', err.message)); }, 75 * 1000);
+setInterval(() => { runEmailSyncs().catch(err => console.error('[integrations] acronis sync crashed —', err.message)); }, EMAIL_SYNC_INTERVAL_MS);
 
 // ── Wazuh daily rollups (hourly tick, snapshots complete days) ──────────────
 // The Managed NDR and Managed Identity tabs read the indexer live for short ranges,
@@ -3697,6 +3951,112 @@ app.get('/api/edr/agents', requireAuth, async (req, res) => {
               active_threats AS "activeThreats", last_active_at AS "lastActiveAt"
        FROM edr_agents WHERE tenant_id = $1
        ORDER BY is_infected DESC, active_threats DESC, computer_name ASC`,
+      [tenantId]
+    );
+    res.json(result.rows);
+  } catch (err) { return serverError(res, err); }
+});
+
+// ── Managed Email Security (Acronis) data routes ───────────────────────────
+
+/*
+ * Tenant resolution mirrors resolveEdrTenant: a superadmin with no client
+ * selected resolves to null and the routes answer with an empty shape rather
+ * than an error, because "pick a client" is a UI state and not a failure.
+ */
+function resolveEmailTenant(req) {
+  if (req.session.role === 'superadmin') {
+    const tid = parseInt(req.query.tenantId, 10);
+    if (isNaN(tid) || tid < 1) return { tenantId: null };
+    return { tenantId: tid };
+  }
+  return { tenantId: req.session.tenantId };
+}
+
+/** GET /api/email/summary?days=30 — headline metrics, breakdowns and trends */
+app.get('/api/email/summary', requireAuth, async (req, res) => {
+  try {
+    const { tenantId } = resolveEmailTenant(req);
+    if (tenantId === null) return res.json(null);
+    // `available: false` is NOT the same as an empty summary, and the tab says
+    // so: one means the migration has not been run, the other means a quiet
+    // month. Returning zeros for the first would be a lie about the data.
+    if (!await hasEmailTables()) return res.json({ available: false, summary: null });
+    res.json({
+      available: true,
+      summary: await computeEmailSummary(pool, tenantId, req.query.days),
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/email/alerts — the alert list backing the tab's table */
+app.get('/api/email/alerts', requireAuth, async (req, res) => {
+  try {
+    const { tenantId } = resolveEmailTenant(req);
+    if (tenantId === null) return res.json([]);
+    if (!await hasEmailTables()) return res.json([]);
+
+    const days  = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 200));
+    const params = [tenantId, days];
+    const where  = ['tenant_id = $1', `created_at >= NOW() - ($2::int * INTERVAL '1 day')`];
+
+    /*
+     * Filters are parameterised and the COLUMN names are fixed literals here —
+     * never interpolated from req.query. The value goes in a placeholder; the
+     * column is chosen by this code and nothing else.
+     */
+    if (req.query.threatClass) {
+      params.push(req.query.threatClass);
+      where.push(`threat_class = $${params.length}`);
+    }
+    if (req.query.disposition) {
+      params.push(req.query.disposition);
+      where.push(`disposition = $${params.length}`);
+    }
+    if (req.query.severity) {
+      params.push(req.query.severity);
+      where.push(`severity = $${params.length}`);
+    }
+    params.push(limit);
+
+    const result = await pool.query(
+      `SELECT alert_id AS "alertId", alert_type AS "alertType", category, severity,
+              threat_class AS "threatClass", disposition,
+              recipient, recipient_domain AS "recipientDomain",
+              sender, sender_domain AS "senderDomain", subject,
+              created_at AS "createdAt", updated_at AS "updatedAt",
+              resolved_at AS "resolvedAt", alert_status AS "status"
+         FROM email_alerts
+        WHERE ${where.join(' AND ')}
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT $${params.length}`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * GET /api/email/types — every Acronis alert type seen, and how it was read.
+ *
+ * The classifier's own report card. Exists so that "the chart is flat" can be
+ * told apart from "the classifier does not recognise this tenant's alert types"
+ * without anyone reading server logs.
+ */
+app.get('/api/email/types', requireAuth, async (req, res) => {
+  try {
+    const { tenantId } = resolveEmailTenant(req);
+    if (tenantId === null) return res.json([]);
+    if (!await hasEmailTables()) return res.json([]);
+
+    const result = await pool.query(
+      `SELECT alert_type AS "alertType", category, is_email AS "isEmail",
+              seen_count AS "seenCount", first_seen_at AS "firstSeenAt",
+              last_seen_at AS "lastSeenAt"
+         FROM email_alert_types_seen
+        WHERE tenant_id = $1
+        ORDER BY is_email DESC, seen_count DESC, alert_type`,
       [tenantId]
     );
     res.json(result.rows);

@@ -58,6 +58,9 @@ window.ReportsTab = (function () {
     // Latest FortiGate configuration audit. The config itself was never stored;
     // this is the findings.
     firewall:         function () { return 'api/firewall/audits/latest' + tenantParam('?'); },
+    // Managed Email Security. Takes a trailing day window like edr/o365, so it
+    // asks for enough days to span the reporting period.
+    email:            function (ctx) { return 'api/email/summary?days=' + edrWindowDays(ctx) + tenantParam('&'); },
   };
 
   /**

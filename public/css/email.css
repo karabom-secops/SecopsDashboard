@@ -1,0 +1,100 @@
+/* email.css — Managed Email Security tab.
+ *
+ * Palette and spacing follow firewall.css so the two newest tabs read as one
+ * app rather than two. Colours are stated with fallbacks rather than assuming a
+ * theme variable exists.
+ */
+
+.em-toolbar {
+  display: flex; justify-content: flex-end; align-items: center;
+  gap: 0.6rem; margin-bottom: 1rem;
+}
+.em-range { font-size: 0.85rem; color: #8C8C8C; display: flex; align-items: center; gap: 0.5rem; }
+.em-range select { width: auto; }
+
+.em-h {
+  margin: 1.6rem 0 0.7rem; font-size: 0.95rem; font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.em-note {
+  font-size: 0.82rem; line-height: 1.5; color: #8C8C8C;
+  padding: 0.6rem 0.8rem; margin: 0.5rem 0;
+  border-left: 3px solid rgba(127, 127, 127, 0.3);
+  background: rgba(127, 127, 127, 0.06); border-radius: 0 4px 4px 0;
+}
+.em-note strong { color: inherit; }
+.em-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95em;
+}
+.em-warn { border-left-color: #E8394A; color: #C0392B; background: rgba(232, 57, 74, 0.07); }
+
+/* "No data" is never zero, and never renders like a value. */
+.em-nd { color: #8C8C8C; font-weight: 400; }
+.em-good { color: #22C55E; }
+.em-bad  { color: #E8394A; font-weight: 600; }
+
+/* ── Trend ─────────────────────────────────────────────────────────────────── */
+
+.em-chart { margin: 0.4rem 0 0.8rem; }
+.em-chart svg {
+  width: 100%; height: 130px; display: block;
+  background: rgba(127, 127, 127, 0.05); border-radius: 5px;
+}
+.em-bar-total     { fill: rgba(0, 102, 204, 0.28); }
+.em-bar-contained { fill: #0066CC; }
+
+.em-legend {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.75rem; color: #8C8C8C; margin-top: 0.4rem;
+}
+.em-key { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.em-k-total     { background: rgba(0, 102, 204, 0.28); }
+.em-k-contained { background: #0066CC; }
+.em-axis { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* ── Breakdown bars ────────────────────────────────────────────────────────── */
+
+.em-bars { display: flex; flex-direction: column; gap: 0.35rem; }
+.em-bar-row { display: flex; align-items: center; gap: 0.7rem; font-size: 0.83rem; }
+.em-bar-l { flex: 0 0 12rem; }
+.em-bar-track {
+  flex: 1 1 auto; height: 0.65rem; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.14); overflow: hidden;
+}
+.em-bar-fill { display: block; height: 100%; background: #0066CC; border-radius: 3px; }
+.em-bar-n {
+  flex: 0 0 3rem; text-align: right; font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* ── Tables ────────────────────────────────────────────────────────────────── */
+
+.em-table { width: 100%; font-size: 0.82rem; }
+.em-r { text-align: right; font-variant-numeric: tabular-nums; }
+.em-scroll { overflow-x: auto; }
+
+/* Subjects are attacker-controlled text and can be arbitrarily long. Clamp the
+   column so one crafted subject cannot push the outcome column off screen. */
+.em-subject {
+  max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── Unrecognised alert types ──────────────────────────────────────────────── */
+
+.em-types { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.em-type {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 0.75rem; padding: 0.25rem 0.55rem;
+  border: 1px solid rgba(127, 127, 127, 0.25); border-radius: 999px;
+  color: #8C8C8C; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.em-type-n {
+  font-family: inherit; font-weight: 700; color: inherit; opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 700px) {
+  .em-bar-l { flex-basis: 7rem; }
+  .em-subject { max-width: 10rem; }
+}

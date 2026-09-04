@@ -912,6 +912,23 @@
       urlHint:  'e.g. https://euce1-101.sentinelone.net',
       scopeFields: true, // optional site / account scoping
     },
+    {
+      id:       'acronis',
+      name:     'Acronis',
+      icon:     '✉️',
+      desc:     'Managed Email Security — syncs email threat alerts every 6 hours.',
+      urlLabel: 'Data Centre URL',
+      urlHint:  'e.g. https://eu2-cloud.acronis.com',
+      acronisFields: true,
+      /*
+       * Acronis authenticates with OAuth client credentials, not an API key.
+       * The generic field is relabelled rather than reused as-is: a box marked
+       * "API Key / Token" is one somebody pastes the client ID into, and the
+       * resulting 401 gives no clue which of the two halves is wrong.
+       */
+      keyLabel: 'Client Secret',
+      keyHint:  'Paste the client secret shown once when the API client was created…',
+    },
   ];
 
   // Last-rendered integration rows, keyed by provider.
@@ -1079,12 +1096,25 @@
               <input type="text" class="int-account-ids form-input" data-provider="${p.id}"
                      placeholder="Comma-separated — leave blank for all accounts"
                      value="${escHtmlInt(cfg && cfg.config_json && cfg.config_json.accountIds ? cfg.config_json.accountIds : '')}">
+            </div>` : ''}
+            ${p.acronisFields ? `
+            <div class="form-group">
+              <label class="modal-label">Client ID</label>
+              <input type="text" class="int-client-id form-input" data-provider="${p.id}"
+                     placeholder="API client ID from Settings → API clients"
+                     value="${escHtmlInt(cfgVal(cfg, 'client_id'))}">
+            </div>
+            <div class="form-group">
+              <label class="modal-label">Acronis Tenant UUID</label>
+              <input type="text" class="int-tenant-uuid form-input" data-provider="${p.id}"
+                     placeholder="The customer tenant this client's alerts belong to"
+                     value="${escHtmlInt(cfgVal(cfg, 'tenant_uuid'))}">
             </div>` : ''}`}
             <div class="form-group">
-              <label class="modal-label">API Key / Token</label>
+              <label class="modal-label">${escHtmlInt(p.keyLabel || 'API Key / Token')}</label>
               <div class="int-key-row">
                 <input type="password" class="int-key-input form-input" data-provider="${p.id}"
-                       placeholder="${cfg ? '••••••••  (saved — enter new key to change)' : 'Paste API key…'}">
+                       placeholder="${cfg ? '••••••••  (saved — enter new value to change)' : escHtmlInt(p.keyHint || 'Paste API key…')}">
                 ${cfg ? `<button class="btn btn-sm int-clear-key" data-provider="${p.id}" title="Clear key to enter a new one">✕</button>` : ''}
               </div>
             </div>
@@ -1181,6 +1211,35 @@
       body.configJson = {};
       if (siteIds)    body.configJson.siteIds    = siteIds;
       if (accountIds) body.configJson.accountIds = accountIds;
+    }
+
+    if (providerId === 'acronis') {
+      const idInput   = container.querySelector(`.int-client-id[data-provider="${providerId}"]`);
+      const uuidInput = container.querySelector(`.int-tenant-uuid[data-provider="${providerId}"]`);
+      const clientId  = idInput   ? idInput.value.trim()   : '';
+      const tenantUuid = uuidInput ? uuidInput.value.trim() : '';
+
+      if (!clientId) {
+        setIntFeedback(providerId, 'Client ID is required for Acronis.', true); return;
+      }
+      /*
+       * The tenant UUID is REQUIRED, not optional.
+       *
+       * Without it the alert query is unscoped and returns whatever the
+       * credential can see. On a per-client API client that is usually just
+       * that client — but "usually" is not a property to rely on when the
+       * failure mode is writing one customer's targeted mailboxes into another
+       * customer's dashboard. Make it explicit and the question never arises.
+       */
+      if (!tenantUuid) {
+        setIntFeedback(providerId,
+          'Acronis Tenant UUID is required — without it, alerts cannot be scoped to this client.', true);
+        return;
+      }
+      // The client SECRET is not here: it travels in api_key and is encrypted
+      // server-side like every other provider's credential. config_json is
+      // stored in the clear, so nothing secret may be put in it.
+      body.configJson = { client_id: clientId, tenant_uuid: tenantUuid };
     }
 
     if (providerId === 'wazuh') {

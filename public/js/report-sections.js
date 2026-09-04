@@ -3326,6 +3326,113 @@ window.ReportSections = (function () {
    * what to do. The analyst tab has the detail for the conversation that
    * follows.
    */
+  /**
+   * Email Security Dashboard.
+   *
+   * ══ WHAT THIS SECTION DELIBERATELY DOES NOT CLAIM ══
+   *
+   * It does not report a percentage of mail blocked. The Acronis alert feed
+   * counts threats, not messages scanned, so there is no denominator for that
+   * figure and inventing one would put a number on a board slide that nobody
+   * downstream could check. What is reported instead is CONTAINMENT — of the
+   * threats whose outcome was stated, how many were stopped — and the size of
+   * the population it was computed over travels with it, in the section body.
+   *
+   * It also carries no per-message detail: no subjects, no sender addresses, no
+   * alert ids. Targeted MAILBOXES are named, because the client owns that data
+   * and the whole operational point is knowing who to train. What is withheld
+   * is the attacker's side of it, which is a working map of what gets through.
+   */
+  function renderEmailSecurity(ctx) {
+    var payload = ctx.data.email;
+    var s = payload && payload.summary;
+    if (!s) return null;
+
+    var t = s.threats || {};
+    var c = s.containment || {};
+
+    // null is not zero. A containment rate of 0% says everything got through;
+    // no data says nobody recorded an outcome. The tile shows the difference.
+    var rate = c.rate == null ? 'No data' : c.rate + '%';
+
+    var tiles = '<div class="bi-grid tight">' +
+        '<div class="bi-cell"><div class="bi-v">' + esc(t.total || 0) + '</div>' +
+          '<div class="bi-l">Email threats detected</div></div>' +
+        '<div class="bi-cell"><div class="bi-v' + (c.rate == null ? ' nd' : '') + '">' +
+          esc(rate) + '</div><div class="bi-l">Threats contained</div></div>' +
+        '<div class="bi-cell"><div class="bi-v">' + esc(c.delivered || 0) + '</div>' +
+          '<div class="bi-l">Reached a mailbox</div></div>' +
+        '<div class="bi-cell"><div class="bi-v">' + esc(t.targetedUsers || 0) + '</div>' +
+          '<div class="bi-l">People targeted</div></div>' +
+      '</div>';
+
+    var head = '<div class="rag-note" style="margin-bottom:4mm">' +
+      'Over the last ' + esc(s.windowDays) + ' days, Acronis raised ' +
+      '<strong>' + esc(t.total || 0) + '</strong> email security alert' +
+      ((t.total || 0) === 1 ? '' : 's') + ' across <strong>' +
+      esc(t.targetedUsers || 0) + '</strong> mailbox' +
+      ((t.targetedUsers || 0) === 1 ? '' : 'es') + ', from ' +
+      esc(t.senderDomains || 0) + ' sending domain' +
+      ((t.senderDomains || 0) === 1 ? '' : 's') + '. ' +
+      /*
+       * The denominator, in the report and not only on the internal tab. A
+       * board reading "98% contained" is entitled to know it was computed over
+       * a third of the alerts, and this is the only place it will be told.
+       */
+      (c.knownDisposition
+        ? 'The containment figure covers the ' + esc(c.knownDisposition) + ' alert' +
+          (c.knownDisposition === 1 ? '' : 's') + ' that recorded an outcome' +
+          (c.unknownDisposition
+            ? '; ' + esc(c.unknownDisposition) + ' did not state one and ' +
+              'are excluded rather than assumed blocked.'
+            : ' — every alert in the period.')
+        : 'No alert in this period recorded what happened to the message, so no ' +
+          'containment figure can be given. This is a reporting gap rather than ' +
+          'a clean period.') +
+      ' These are counts of threats, not of mail volume: the alert feed does not ' +
+      'report how many messages were scanned.</div>';
+
+    var order = ['bec', 'phishing', 'malware', 'url', 'attachment', 'spam', 'dlp', 'unclassified'];
+    var names = {
+      bec: 'Business email compromise', phishing: 'Phishing', malware: 'Malware',
+      url: 'Malicious link', attachment: 'Malicious attachment', spam: 'Spam / bulk',
+      dlp: 'Data loss', unclassified: 'Unclassified',
+    };
+    var classRows = (s.byClass || []).slice().sort(function (a, b) {
+      var ai = order.indexOf(a.label), bi = order.indexOf(b.label);
+      return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+    }).map(function (r) {
+      return { kind: names[r.label] || r.label, count: r.count };
+    });
+
+    var classTable = classRows.length ? D.dataTable({
+      cols: [
+        { label: 'Threat type', key: 'kind',  width: '60%' },
+        { label: 'Detected',    key: 'count', width: '40%' },
+      ],
+      rows: classRows,
+    }) : '';
+
+    /*
+     * Targeted mailboxes: the actionable half of this section. Named because
+     * the client owns this data and because "three people absorbed 40% of the
+     * phishing aimed at you" is the sentence that gets awareness training
+     * budgeted.
+     */
+    var targets = (s.topRecipients || []).slice(0, 8);
+    var targetTable = targets.length ? '<div class="sec-sub">Most targeted mailboxes</div>' +
+      D.dataTable({
+        cols: [
+          { label: 'Mailbox',       key: 'label',     width: '60%' },
+          { label: 'Threats aimed', key: 'count',     width: '20%' },
+          { label: 'Reached inbox', key: 'delivered', width: '20%' },
+        ],
+        rows: targets,
+      }) : '';
+
+    return tiles + head + classTable + targetTable + sectionComment(ctx, 'emailSecurity');
+  }
+
   function renderFirewallAudit(ctx) {
     var payload = ctx.data.firewall;
     var a = payload && payload.audit;
@@ -3623,7 +3730,11 @@ window.ReportSections = (function () {
       services: ['firewall'],
       requires: ['firewall'], render: renderFirewallAudit, commentable: true },
 
-    { n: 17, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',
+    { n: 17, id: 'emailSecurity',      label: 'Email Security Dashboard',                group: 'Dashboards',
+      services: ['email'],
+      requires: ['email'], render: renderEmailSecurity, commentable: true },
+
+    { n: 18, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',
       services: null,          // always offered, whatever the client buys
       requires: ['secureScore'], optional: ['vulnFindings'],
       render: renderDecisions, commentable: true },

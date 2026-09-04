@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="css/client-profile.css" />
   <link rel="stylesheet" href="css/training.css" />
   <link rel="stylesheet" href="css/firewall.css" />
+  <link rel="stylesheet" href="css/email.css" />
   <script>
     /* Applies the stored sidebar state to <html> BEFORE first paint. Without
        this, rail users watch the sidebar render at 280px and snap to 64px on
@@ -132,6 +133,10 @@
           <button class="side-nav-item" type="button" data-tab="o365" hidden>
             <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
             <span class="side-nav-text">Managed Identity</span>
+          </button>
+          <button class="side-nav-item" type="button" data-tab="email" hidden>
+            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 6 10-6"/></svg>
+            <span class="side-nav-text">Managed Email Security</span>
           </button>
         </div>
       </div>
@@ -2059,6 +2064,10 @@
   <!-- Firewall Audit — rendered entirely by tab-firewall.js. -->
   <section id="tab-firewall" class="tab-panel" role="tabpanel" hidden></section>
 
+  <!-- Managed Email Security renders itself entirely from tab-email.js, like
+       the Firewall tab. No scaffold here to drift out of step with it. -->
+  <section id="tab-email" class="tab-panel" role="tabpanel" hidden></section>
+
   <!-- Training — rendered entirely by tab-training.js. -->
   <section id="tab-training" class="tab-panel" role="tabpanel" hidden></section>
 
@@ -2352,6 +2361,7 @@
   <script src="js/report-sections.js"></script>
   <script src="js/tab-reports.js"></script>
   <script src="js/tab-firewall.js"></script>
+  <script src="js/tab-email.js"></script>
   <script src="js/tab-training.js"></script>
   <script src="js/tab-client-profile.js"></script>
   <script src="js/tab-admin.js"></script>
