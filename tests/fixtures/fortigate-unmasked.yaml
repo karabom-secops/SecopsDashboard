@@ -1,0 +1,130 @@
+# A FortiGate backup as the device writes it, WITHOUT "Password mask" ticked.
+#
+# THE SECRETS BELOW ARE FAKE AND DELIBERATE. tests/fortigate.test.js asserts
+# that none of these strings appears anywhere in the findings, the evidence or
+# the API response — a config arriving unmasked must not have its secrets
+# copied into the database by an audit. Each is tagged CANARY so a leak is
+# unmistakable in a failure message.
+#
+# This config is also deliberately BAD: telnet on, a 30-minute idle timeout, an
+# any/any/ALL policy with logging off, a default `admin` account with no trusted
+# host, SNMP v1 community, and a weak IPsec proposal. A fixture where everything
+# passes tests nothing.
+
+config-version: FGT60F-7.6.0-FW-build2620-240611:opmode=0:vdom=0
+
+system:
+  global:
+    hostname: FG-EDGE-01
+    admintimeout: 30
+    admin-telnet: enable
+    admin-ssh: enable
+    admin-https-redirect: enable
+    admin-port: 80
+    admin-sport: 443
+    pre-login-banner: disable
+    strong-crypto: disable
+  admin:
+    admin:
+      accprofile: super_admin
+      password: CANARY_ADMIN_HASH_1a2b3c4d5e6f
+    kmoloi:
+      accprofile: super_admin
+      trusthost1: 10.10.0.0 255.255.0.0
+      password: CANARY_ADMIN_HASH_9z8y7x6w5v
+  password-policy:
+    status: disable
+  snmp:
+    community:
+      "1":
+        name: CANARY_SNMP_COMMUNITY
+        status: enable
+  ntp:
+    ntpsync: enable
+  dns:
+    primary: 1.1.1.1
+  interface:
+    port1:
+      name: port1
+      role: wan
+      allowaccess: ping https ssh http
+    port2:
+      name: port2
+      role: lan
+      allowaccess: ping https
+
+firewall:
+  policy:
+    "1":
+      name: outbound-any
+      srcintf: [{name: port2}]
+      dstintf: [{name: port1}]
+      srcaddr: [{name: all}]
+      dstaddr: [{name: all}]
+      service: [{name: ALL}]
+      action: accept
+      logtraffic: disable
+      nat: enable
+    "2":
+      name: web-out
+      srcintf: [{name: port2}]
+      dstintf: [{name: port1}]
+      srcaddr: [{name: LAN_NET}]
+      dstaddr: [{name: all}]
+      service: [{name: HTTPS}, {name: HTTP}]
+      action: accept
+      logtraffic: all
+      av-profile: default
+      ips-sensor: default
+      webfilter-profile: default
+      nat: enable
+    "3":
+      name: legacy-unused
+      status: disable
+      srcintf: [{name: port2}]
+      dstintf: [{name: port1}]
+      srcaddr: [{name: OLD_SERVER}]
+      dstaddr: [{name: all}]
+      service: [{name: ALL}]
+      action: accept
+      logtraffic: all
+
+antivirus:
+  profile:
+    default:
+      name: default
+
+ips:
+  sensor:
+    default:
+      name: default
+
+vpn:
+  ipsec:
+    phase1-interface:
+      site-a:
+        name: site-a
+        proposal: aes128-sha1
+        psksecret: CANARY_IPSEC_PSK_correcthorse
+        dhgrp: 2
+  ssl:
+    settings:
+      port: 443
+      servercert: self-sign
+      source-interface: [{name: port1}]
+
+log:
+  disk:
+    setting:
+      status: enable
+  syslogd:
+    setting:
+      status: disable
+
+# Present, and not something this parser claims to understand. The test asserts
+# it appears in `unread` rather than being silently dropped.
+router:
+  static:
+    "1":
+      dst: 0.0.0.0 0.0.0.0
+      gateway: 203.0.113.1

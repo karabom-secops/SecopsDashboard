@@ -3312,6 +3312,98 @@ window.ReportSections = (function () {
 
   var MAX_DOMAIN_ROWS = 11;
 
+  /* ── Firewall Configuration Review ────────────────────────────────────────
+   *
+   * WHAT THIS SLIDE DELIBERATELY DOES NOT CONTAIN.
+   *
+   * No policy ids, no interface names, no tunnel names — none of the `evidence`
+   * a finding carries internally. Together those are a working map of where
+   * this client's firewall is weakest, and this deck is emailed, forwarded and
+   * left on laptops. It is the same reason the portal withholds the
+   * vulnerability finding list.
+   *
+   * The client gets what they need to act: the finding, how serious it is, and
+   * what to do. The analyst tab has the detail for the conversation that
+   * follows.
+   */
+  function renderFirewallAudit(ctx) {
+    var payload = ctx.data.firewall;
+    var a = payload && payload.audit;
+    if (!a) return null;
+
+    var findings = a.findings || [];
+    var fails = findings.filter(function (f) { return f.status === 'fail'; });
+    var na    = findings.filter(function (f) { return f.status === 'not-assessable'; });
+
+    var order = { critical: 0, high: 1, medium: 2, low: 3 };
+    fails.sort(function (x, y) { return (order[x.severity] || 9) - (order[y.severity] || 9); });
+
+    var scoreLabel = a.score == null ? 'Not assessed' : a.score + '/100';
+
+    var tiles = '<div class="bi-grid tight">' +
+        '<div class="bi-cell"><div class="bi-v' + (a.score == null ? ' nd' : '') + '">' +
+          esc(scoreLabel) + '</div><div class="bi-l">Configuration posture' +
+          (a.band && a.band.label ? ' &middot; ' + esc(a.band.label) : '') + '</div></div>' +
+        '<div class="bi-cell"><div class="bi-v">' + esc(a.failed) + '</div>' +
+          '<div class="bi-l">Findings to address</div></div>' +
+        '<div class="bi-cell"><div class="bi-v">' + esc(a.coverage) + '%</div>' +
+          '<div class="bi-l">Benchmark coverage</div></div>' +
+      '</div>';
+
+    var device = a.device || {};
+    var head = '<div class="rag-note" style="margin-bottom:4mm">Reviewed ' +
+      (device.model ? '<strong>' + esc(device.model) + '</strong>' : 'the FortiGate') +
+      (device.firmware ? ' running FortiOS <strong>' + esc(device.firmware) + '</strong>' : '') +
+      ' against the CIS FortiGate Benchmark and Reflex\'s own checks. ' +
+      esc(a.assessed) + ' of ' + esc(a.totalChecks) + ' checks could be evaluated ' +
+      'from the configuration supplied.' +
+      // The configuration is not kept, and the client should know that.
+      ' The configuration file itself was not retained.</div>';
+
+    var table = fails.length ? D.dataTable({
+      cols: [
+        { label: 'Severity', key: 'severity', width: '14%',
+          raw: function (r) {
+            return '<span class="sev-dot" style="background:' +
+              severityTone(r.severity.charAt(0).toUpperCase() + r.severity.slice(1)) +
+              '"></span> ' + esc(r.severity.charAt(0).toUpperCase() + r.severity.slice(1));
+          } },
+        { label: 'Finding', key: 'title', width: '40%',
+          raw: function (r) {
+            return esc(r.title) +
+              (r.cis ? '<span class="sev-sla">CIS ' + esc(r.cis) + '</span>' : '');
+          } },
+        { label: 'What to do', key: 'remediation', width: '46%',
+          raw: function (r) { return esc(r.remediation || ''); } },
+      ],
+      rows: fails,
+    }) : '<div class="rag-note">No findings. Every check that could be evaluated ' +
+         'passed.</div>';
+
+    /*
+     * What could not be assessed, stated rather than omitted.
+     *
+     * A score computed over 22 of 30 checks is not the same claim as one
+     * computed over all 30, and a reader who is not told cannot tell the
+     * difference. Masking the config is the responsible thing for a client to
+     * do, and this is what it costs.
+     */
+    var naNote = na.length
+      ? '<div class="rag-note" style="margin-top:3mm">' + esc(na.length) +
+        ' check' + (na.length === 1 ? '' : 's') + ' could not be assessed from the ' +
+        'configuration supplied — either the section was absent or the values were ' +
+        'password-masked. These are excluded from the score rather than counted ' +
+        'against it, and are confirmed directly on the device.</div>'
+      : '';
+
+    var unreadNote = (a.unreadSections || []).length
+      ? '<div class="rag-note">' + esc(a.unreadSections.length) + ' configuration ' +
+        'section(s) were present but outside the scope of this review.</div>'
+      : '';
+
+    return tiles + head + table + naNote + unreadNote + sectionComment(ctx, 'firewallAudit');
+  }
+
   function renderCompliance(ctx) {
     var g = grcData(ctx);
     if (!g) return null;
@@ -3527,7 +3619,11 @@ window.ReportSections = (function () {
       services: ['viso'],
       requires: ['grcAssessment', 'grcQuestions'], render: renderCompliance },
 
-    { n: 16, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',
+    { n: 16, id: 'firewallAudit',      label: 'Firewall Configuration Review',           group: 'Dashboards',
+      services: ['firewall'],
+      requires: ['firewall'], render: renderFirewallAudit, commentable: true },
+
+    { n: 17, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',
       services: null,          // always offered, whatever the client buys
       requires: ['secureScore'], optional: ['vulnFindings'],
       render: renderDecisions, commentable: true },

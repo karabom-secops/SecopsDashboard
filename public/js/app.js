@@ -24,6 +24,7 @@
     'mdr-pricing': document.getElementById('tab-mdr-pricing'),
     reports:      document.getElementById('tab-reports'),
     training:     document.getElementById('tab-training'),
+    firewall:     document.getElementById('tab-firewall'),
     'client-profile': document.getElementById('tab-client-profile'),
     admin:        document.getElementById('tab-admin'),
   };
@@ -51,6 +52,7 @@
     'mdr-pricing': 'MDR Pricing',
     reports:    'Reports',
     training:   'Training',
+    firewall:   'Firewall Audit',
     'client-profile': 'Client Profile',
     admin:      'Admin',
   };
@@ -127,6 +129,12 @@
     // dispatched on open like the others and simply ignores the tenant.
     if (target === 'training' && typeof window.TrainingTab !== 'undefined') {
       window.TrainingTab.loadAndRender();
+    }
+    // Re-reads on every switch, including a superadmin changing organisation:
+    // a firewall audit belongs to one client and must never be left on screen
+    // labelled as another's.
+    if (target === 'firewall' && typeof window.FirewallTab !== 'undefined') {
+      window.FirewallTab.loadAndRender();
     }
     if (target === 'grc' && typeof window.GrcTab !== 'undefined') {
       window.GrcTab.loadAndRender();

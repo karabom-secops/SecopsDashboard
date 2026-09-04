@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="css/secure-score.css" />
   <link rel="stylesheet" href="css/client-profile.css" />
   <link rel="stylesheet" href="css/training.css" />
+  <link rel="stylesheet" href="css/firewall.css" />
   <script>
     /* Applies the stored sidebar state to <html> BEFORE first paint. Without
        this, rail users watch the sidebar render at 280px and snap to 64px on
@@ -215,6 +216,10 @@
       </div>
     </nav>
     <div class="side-nav-footer">
+      <button class="side-nav-item" type="button" data-tab="firewall" title="Firewall Audit" hidden>
+        <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M4 11h16"/><path d="M12 2v9"/></svg>
+        <span class="side-nav-text">Firewall Audit</span>
+      </button>
       <button class="side-nav-item" type="button" data-tab="training" title="Training" hidden>
         <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
         <span class="side-nav-text">Training</span>
@@ -2051,6 +2056,9 @@
   </section>
 
   <!-- ── Admin Tab Panel ─────────────────────────────────────────────────── -->
+  <!-- Firewall Audit — rendered entirely by tab-firewall.js. -->
+  <section id="tab-firewall" class="tab-panel" role="tabpanel" hidden></section>
+
   <!-- Training — rendered entirely by tab-training.js. -->
   <section id="tab-training" class="tab-panel" role="tabpanel" hidden></section>
 
@@ -2343,6 +2351,7 @@
   <script src="js/report-deck.js"></script>
   <script src="js/report-sections.js"></script>
   <script src="js/tab-reports.js"></script>
+  <script src="js/tab-firewall.js"></script>
   <script src="js/tab-training.js"></script>
   <script src="js/tab-client-profile.js"></script>
   <script src="js/tab-admin.js"></script>

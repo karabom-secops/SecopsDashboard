@@ -368,11 +368,23 @@ check('and so is every other non-viewer tab',
   /NON_VIEWER_TABS = \[[^\]]*'admin'[^\]]*\]/.test(pagesJs) &&
   /NON_VIEWER_TABS = \[[^\]]*'client-profile'[^\]]*\]/.test(pagesJs));
 
-// An analyst is readonly plus training, so the two cannot drift apart.
+/*
+ * An analyst is readonly plus the tabs that ARE the job, so the two cannot
+ * drift apart. Named rather than counted: this was `diffs.length === 1` and
+ * went stale the moment the Firewall Audit tab was added — and the obvious
+ * repair to a count is to raise the number until it passes, which asserts
+ * nothing about WHICH page was granted.
+ */
+const ANALYST_EXTRAS = ['training', 'firewall'];
 const diffs = P.PAGE_KEYS.filter(k =>
-  P.ROLE_DEFAULTS.analyst[k] !== P.ROLE_DEFAULTS.readonly[k]);
-check('an analyst differs from readonly in exactly one page',
-  diffs.length === 1 && diffs[0] === 'training', diffs.join(','));
+  P.ROLE_DEFAULTS.analyst[k] !== P.ROLE_DEFAULTS.readonly[k]).sort();
+check('an analyst differs from readonly only in the analyst tabs',
+  JSON.stringify(diffs) === JSON.stringify(ANALYST_EXTRAS.slice().sort()),
+  diffs.join(','));
+check('and every one of those differences is a grant, not a revocation',
+  diffs.every(k => P.ROLE_DEFAULTS.analyst[k] === 'write' &&
+                   P.ROLE_DEFAULTS.readonly[k] === 'none'),
+  diffs.map(k => k + ':' + P.ROLE_DEFAULTS.analyst[k]).join(','));
 
 check('the role migration widens the constraint',
   /CHECK \(role IN \([^)]*'analyst'[^)]*\)\)/.test(

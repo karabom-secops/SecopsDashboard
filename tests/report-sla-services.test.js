@@ -410,8 +410,20 @@ section('services combine, they do not compete');
 const both = on(['awareness', 'vuln']);
 check('two services yield the union',
   both.indexOf('humanRisk') >= 0 && both.indexOf('vulnDashboard') >= 0);
-const all = on(['mdr', 'vuln', 'awareness', 'edr', 'ndr', 'identity', 'pentest', 'viso']);
-check('the full stack yields every section', all.length === S.length, all.length + '/' + S.length);
+/*
+ * Derived from the catalogue, not written out by hand.
+ *
+ * This listed the eight service keys literally and broke the moment a ninth was
+ * added — reporting that the full stack no longer yields every section, when
+ * what had actually happened was that the test did not know about a service.
+ * The claim being made is "a client who buys everything is offered everything",
+ * and that claim has to read the real catalogue to mean anything.
+ */
+const ALL_SERVICE_KEYS = require(path.join(ROOT, 'lib', 'services.js')).SERVICE_KEYS;
+const all = on(ALL_SERVICE_KEYS);
+check('the full stack yields every section',
+  all.length === S.length, all.length + '/' + S.length +
+  ' over ' + ALL_SERVICE_KEYS.length + ' services');
 
 section('MDR includes endpoint, network and identity');
 

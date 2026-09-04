@@ -1,0 +1,143 @@
+/* firewall.css — FortiGate configuration audit.
+ *
+ * Findings-first. The score is context; what an analyst came for is the list of
+ * things to fix and the reason each one matters.
+ */
+
+.fw-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 1.2rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+}
+
+.fw-tab {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  padding: 0.55rem 0.9rem; font: inherit; font-size: 0.88rem;
+  color: #8C8C8C; cursor: pointer;
+}
+.fw-tab.is-on { color: inherit; border-bottom-color: #2E7DD1; font-weight: 600; }
+.fw-tab:hover { color: inherit; }
+
+/* ── Header ───────────────────────────────────────────────────────────────── */
+
+.fw-head {
+  display: flex; gap: 1.2rem; align-items: center;
+  padding: 1rem 1.2rem; margin-bottom: 1rem;
+  border: 1px solid rgba(127, 127, 127, 0.22); border-radius: 8px;
+}
+
+.fw-score { flex: 0 0 auto; text-align: center; min-width: 108px; }
+.fw-score-v { font-size: 2.1rem; font-weight: 700; line-height: 1.1; }
+.fw-of { font-size: 0.9rem; font-weight: 400; opacity: 0.55; }
+.fw-score-l { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+.fw-excellent .fw-score-v, .fw-excellent .fw-score-l { color: #2E9E5B; }
+.fw-good      .fw-score-v, .fw-good      .fw-score-l { color: #2E7DD1; }
+.fw-fair      .fw-score-v, .fw-fair      .fw-score-l { color: #f39c12; }
+.fw-poor      .fw-score-v, .fw-poor      .fw-score-l { color: #e74c3c; }
+.fw-unknown   .fw-score-v, .fw-unknown   .fw-score-l { color: #8C8C8C; }
+
+/* "Not assessed" must not read as a result. */
+.fw-nd { font-size: 1.1rem; font-style: italic; color: #8C8C8C; }
+
+.fw-meta { flex: 1 1 auto; min-width: 0; }
+.fw-device { font-weight: 650; margin-bottom: 0.25rem; }
+.fw-sub { font-size: 0.8rem; color: #8C8C8C; line-height: 1.5; }
+
+/* ── Notices ──────────────────────────────────────────────────────────────── */
+
+.fw-note {
+  font-size: 0.83rem; line-height: 1.55;
+  padding: 0.65rem 0.9rem; margin: 0 0 0.9rem;
+  border-left: 3px solid #8C8C8C;
+  background: rgba(127, 127, 127, 0.06);
+  border-radius: 3px;
+}
+
+.fw-note.fw-good { border-left-color: #2E9E5B; background: rgba(46, 158, 91, 0.07); }
+/* An unmasked upload is the loudest thing on this page, deliberately: it is the
+   one state where somebody has to go and do something about a real exposure. */
+.fw-note.fw-bad  { border-left-color: #e74c3c; background: rgba(231, 76, 60, 0.08); }
+
+.fw-note code {
+  font-size: 0.9em; padding: 0.05rem 0.25rem;
+  background: rgba(127, 127, 127, 0.14); border-radius: 3px;
+}
+
+/* ── Findings ─────────────────────────────────────────────────────────────── */
+
+.fw-h {
+  font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: #8C8C8C; margin: 1.6rem 0 0.7rem;
+}
+
+.fw-f {
+  padding: 0.75rem 0.95rem; margin-bottom: 0.7rem;
+  border: 1px solid rgba(127, 127, 127, 0.2);
+  border-left-width: 3px; border-radius: 5px;
+}
+
+.fw-f.fw-sev-critical { border-left-color: #c0392b; }
+.fw-f.fw-sev-high     { border-left-color: #e74c3c; }
+.fw-f.fw-sev-medium   { border-left-color: #f39c12; }
+.fw-f.fw-sev-low      { border-left-color: #8C8C8C; }
+
+.fw-f-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
+.fw-f-t { font-weight: 600; flex: 1 1 240px; }
+
+.fw-badge {
+  font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem; border-radius: 3px; font-weight: 700;
+}
+.fw-badge.fw-fail { background: rgba(231, 76, 60, 0.14);  color: #e74c3c; }
+.fw-badge.fw-pass { background: rgba(46, 158, 91, 0.14);  color: #2E9E5B; }
+/* Grey, not amber: "we could not check this" is not a warning about the
+   client's firewall, it is a statement about our visibility. */
+.fw-badge.fw-na   { background: rgba(127, 127, 127, 0.16); color: #8C8C8C; }
+
+.fw-sev { font-size: 0.7rem; text-transform: uppercase; color: #8C8C8C; letter-spacing: 0.04em; }
+
+.fw-ref {
+  font-size: 0.68rem; color: #8C8C8C;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  padding: 0.03rem 0.32rem; border-radius: 3px;
+}
+/* Ours is marked as ours rather than dressed up as a standard. */
+.fw-ref.fw-own { border-style: dashed; }
+
+.fw-f-d { font-size: 0.87rem; margin-top: 0.4rem; line-height: 1.5; }
+.fw-f-r { font-size: 0.82rem; margin-top: 0.35rem; line-height: 1.55; color: #8C8C8C; }
+
+/* Policy ids, interface names, tunnel names. Never a secret value, and never
+   shown to a client — see publicFinding() in lib/fortigate-score.js. */
+.fw-ev {
+  font-size: 0.78rem; margin-top: 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #8C8C8C; word-break: break-word;
+}
+
+/* ── History ──────────────────────────────────────────────────────────────── */
+
+.fw-hist { display: flex; flex-direction: column; gap: 0.4rem; }
+
+.fw-h-row {
+  display: flex; align-items: baseline; gap: 0.9rem;
+  width: 100%; text-align: left; font: inherit; cursor: pointer;
+  padding: 0.6rem 0.85rem; color: inherit; background: transparent;
+  border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 5px;
+}
+.fw-h-row:hover { border-color: #2E7DD1; }
+
+.fw-h-when  { flex: 0 0 auto; color: #8C8C8C; font-variant-numeric: tabular-nums; }
+.fw-h-dev   { flex: 1 1 auto; font-weight: 600; }
+.fw-h-score { flex: 0 0 auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+.fw-h-sub   { flex: 0 0 auto; font-size: 0.78rem; color: #8C8C8C; }
+
+.fw-upload { margin-bottom: 1.2rem; }
+
+@media (max-width: 700px) {
+  .fw-head { flex-wrap: wrap; }
+  .fw-h-row { flex-wrap: wrap; gap: 0.25rem 0.7rem; }
+  .fw-h-when { flex-basis: 100%; }
+}

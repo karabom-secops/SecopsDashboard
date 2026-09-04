@@ -55,6 +55,9 @@ window.ReportsTab = (function () {
     grcAssessment:    function () { return 'api/grc/assessment' + tenantParam('?'); },
     // The question bank is global — no tenant parameter.
     grcQuestions:     function () { return 'api/grc/questions'; },
+    // Latest FortiGate configuration audit. The config itself was never stored;
+    // this is the findings.
+    firewall:         function () { return 'api/firewall/audits/latest' + tenantParam('?'); },
   };
 
   /**
@@ -523,6 +526,7 @@ window.ReportsTab = (function () {
     vendors:            'viso',
     grcAssessment:      'viso',
     grcQuestions:       'viso',
+    firewall:           'firewall',
     secureScore:        null,
     secureScoreHistory: null,
     metrics:            null,

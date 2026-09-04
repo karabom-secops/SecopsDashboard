@@ -50,6 +50,9 @@ const { buildPentestReport, imageDimensions, DEFAULT_OWASP } = require('./lib/re
 const pptxRoute = require('./lib/report-pptx-route');
 const estateLib = require('./lib/estate');
 const trainingLib = require('./lib/training');
+const fortigateParser = require('./lib/fortigate-parser');
+const fortigateChecks = require('./lib/fortigate-checks');
+const fortigateScore  = require('./lib/fortigate-score');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -1548,6 +1551,260 @@ function resolveVulnTenant(req, source = 'query') {
   }
   return { tenantId: req.session.tenantId };
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * FIREWALL CONFIGURATION AUDIT
+ *
+ * A client takes a backup from the device (admin menu → Configuration → Backup
+ * → Local PC → File format: YAML) and it is audited against the CIS FortiGate
+ * Benchmark and our own checks.
+ *
+ * ══ THE CONFIGURATION IS NEVER STORED ══
+ *
+ * It arrives in memory (multer memoryStorage), is parsed, audited, and goes out
+ * of scope when the request ends. It is not written to the database — see
+ * db/migrate-firewall-audit.sql, which has no column it could go in — not to
+ * disk, and not to a log line.
+ *
+ * Unmasked, a FortiGate backup carries administrator password hashes, IPsec
+ * pre-shared keys, SNMP communities, LDAP and RADIUS bind credentials and
+ * certificate private keys. "Password mask" on that backup screen is optional,
+ * so unmasked files will arrive. Storing them would make a compromise of this
+ * dashboard a compromise of every perimeter we audit.
+ *
+ * The response says whether the file appeared masked, so an analyst who has
+ * just posted an unmasked config is told to have the client rotate what was in
+ * it.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+// 25 MB: a real FortiGate backup is single-digit megabytes, and the parser
+// refuses anything larger before it starts. Both limits exist because either
+// one alone is a single point of failure on an endpoint that accepts uploads.
+const firewallUpload = multer({
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: fortigateParser.MAX_BYTES },
+});
+
+/** Shape an audit row plus its findings for the analyst-facing tab. */
+function shapeAudit(row, findings) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    uploadedAt: row.uploaded_at,
+    uploadedBy: row.uploaded_by_name || null,
+    device: {
+      name: row.device_name, model: row.model,
+      firmware: row.firmware, configVersion: row.config_version,
+    },
+    appearedMasked: row.appeared_masked,
+    score: row.score,
+    band: fortigateScore.band(row.score),
+    totalChecks: row.total_checks,
+    assessed: row.assessed,
+    passed: row.passed,
+    failed: row.failed,
+    notAssessable: row.not_assessable,
+    coverage: row.coverage,
+    severityCounts: row.severity_counts || {},
+    unreadSections: row.unread_sections || [],
+    findings: (findings || []).map(f => ({
+      checkId: f.check_id, severity: f.severity, status: f.status,
+      title: f.title, detail: f.detail, rationale: f.rationale,
+      remediation: f.remediation, cis: f.cis_ref, source: f.source,
+      evidence: f.evidence,
+    })),
+  };
+}
+
+let _firewallTables = null;
+async function hasFirewallTables() {
+  if (_firewallTables) return true;
+  try {
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM information_schema.tables
+        WHERE table_name IN ('firewall_audits', 'firewall_findings')`);
+    if (r.rows[0].n === 2) _firewallTables = true;
+    return r.rows[0].n === 2;
+  } catch (_) { return false; }
+}
+
+/**
+ * POST /api/firewall/audits — upload a config, get an audit.
+ *
+ * The parse, the checks and the score all happen before anything touches the
+ * database, so a file we cannot read is a 400 with nothing written.
+ */
+app.post('/api/firewall/audits', firewallUpload.single('configFile'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { tenantId, error: tenantErr } = resolveVulnTenant(req, 'body');
+    if (tenantErr) return res.status(tenantErr.status).json({ error: tenantErr.message });
+    if (!req.file) return res.status(400).json({ error: 'No configuration file uploaded.' });
+
+    let model;
+    try {
+      model = fortigateParser.parseConfig(req.file.buffer.toString('utf8'),
+        { fileName: req.file.originalname || '' });
+    } catch (err) {
+      // A file the client chose is a 400, never a 500. The message says what
+      // was wrong with it and quotes nothing from inside it.
+      if (err instanceof fortigateParser.FortigateParseError) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+
+    const results = fortigateChecks.runChecks(model);
+    const scored  = fortigateScore.scoreResults(results);
+
+    if (!await hasFirewallTables()) {
+      return res.status(503).json({
+        error: 'Firewall audit storage is not available yet. Run db/migrate-firewall-audit.sql.',
+      });
+    }
+
+    await client.query('BEGIN');
+    const ins = await client.query(
+      `INSERT INTO firewall_audits
+         (tenant_id, uploaded_by, device_name, model, firmware, config_version,
+          appeared_masked, score, total_checks, assessed, passed, failed,
+          not_assessable, coverage, severity_counts, unread_sections)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16::jsonb)
+       RETURNING *`,
+      [tenantId, req.session.userId || null,
+       model.device.hostname, model.device.model, model.device.firmware,
+       model.device.configVersion, model.masked,
+       scored.score, scored.total, scored.assessed, scored.passed, scored.failed,
+       scored.notAssessable, scored.coverage,
+       JSON.stringify(scored.bySeverity), JSON.stringify(model.unread)]);
+
+    const audit = ins.rows[0];
+
+    for (const r of results) {
+      await client.query(
+        `INSERT INTO firewall_findings
+           (audit_id, tenant_id, check_id, severity, status, title, detail,
+            rationale, remediation, cis_ref, source, evidence)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)`,
+        [audit.id, tenantId, r.id, r.severity, r.status, r.title, r.detail,
+         r.rationale, r.remediation, r.cis, r.source,
+         // redact() is the net under the rule that checks put identifiers and
+         // counts in evidence, never values. Nothing should need catching here;
+         // "should" is not a mechanism.
+         JSON.stringify(fortigateParser.redact(r.evidence))]);
+    }
+    await client.query('COMMIT');
+
+    /*
+     * The config goes out of scope here and is never referenced again. The
+     * response deliberately carries the FINDINGS and not the parsed model:
+     * shipping the model back would put the client's ruleset through the
+     * browser cache and anywhere the response is logged, for no benefit.
+     */
+    return res.json({
+      audit: shapeAudit(audit, results.map(r => ({
+        check_id: r.id, severity: r.severity, status: r.status, title: r.title,
+        detail: r.detail, rationale: r.rationale, remediation: r.remediation,
+        cis_ref: r.cis, source: r.source,
+        evidence: fortigateParser.redact(r.evidence),
+      }))),
+      // Advice, never a score. See detectMasking() in lib/fortigate-parser.js.
+      maskWarning: model.masked === false
+        ? 'This configuration appears NOT to have been password-masked. It has not ' +
+          'been stored, but it passed through a browser and this server — have the ' +
+          'client rotate the credentials it contained, and tick "Password mask" next time.'
+        : null,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return serverError(res, err);
+  } finally {
+    client.release();
+  }
+});
+
+/** GET /api/firewall/audits — history for the tenant, newest first. */
+app.get('/api/firewall/audits', async (req, res) => {
+  try {
+    const { tenantId, error } = resolveVulnTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+    if (!await hasFirewallTables()) return res.json({ audits: [], available: false });
+
+    const r = await pool.query(
+      `SELECT a.*, u.username AS uploaded_by_name
+         FROM firewall_audits a
+         LEFT JOIN users u ON u.id = a.uploaded_by
+        WHERE a.tenant_id = $1
+        ORDER BY a.uploaded_at DESC
+        LIMIT 50`, [tenantId]);
+    return res.json({
+      available: true,
+      audits: r.rows.map(row => shapeAudit(row, [])),
+    });
+  } catch (err) { return serverError(res, err); }
+});
+
+/**
+ * GET /api/firewall/audits/latest — the current posture.
+ *
+ * Registered BEFORE /:id, or Express would match 'latest' as an id.
+ */
+app.get('/api/firewall/audits/latest', async (req, res) => {
+  try {
+    const { tenantId, error } = resolveVulnTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+    if (!await hasFirewallTables()) return res.json({ audit: null, available: false });
+
+    const r = await pool.query(
+      `SELECT a.*, u.username AS uploaded_by_name
+         FROM firewall_audits a
+         LEFT JOIN users u ON u.id = a.uploaded_by
+        WHERE a.tenant_id = $1
+        ORDER BY a.uploaded_at DESC LIMIT 1`, [tenantId]);
+    if (!r.rows.length) return res.json({ audit: null, available: true });
+
+    const f = await pool.query(
+      `SELECT * FROM firewall_findings WHERE audit_id = $1 AND tenant_id = $2
+        ORDER BY id`, [r.rows[0].id, tenantId]);
+    return res.json({ available: true, audit: shapeAudit(r.rows[0], f.rows) });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** GET /api/firewall/audits/:id — one audit with its findings. */
+app.get('/api/firewall/audits/:id', async (req, res) => {
+  try {
+    const { tenantId, error } = resolveVulnTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid audit id.' });
+    if (!await hasFirewallTables()) return res.status(404).json({ error: 'Audit not found.' });
+
+    // Ownership in the WHERE clause, not as a check after the fetch: a wrong id
+    // and another tenant's id both 404, and neither can be told apart.
+    const r = await pool.query(
+      `SELECT a.*, u.username AS uploaded_by_name
+         FROM firewall_audits a
+         LEFT JOIN users u ON u.id = a.uploaded_by
+        WHERE a.id = $1 AND a.tenant_id = $2`, [id, tenantId]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Audit not found.' });
+
+    const f = await pool.query(
+      `SELECT * FROM firewall_findings WHERE audit_id = $1 AND tenant_id = $2
+        ORDER BY id`, [id, tenantId]);
+    return res.json({ audit: shapeAudit(r.rows[0], f.rows) });
+  } catch (err) { return serverError(res, err); }
+});
+
+/** DELETE /api/firewall/audits/:id — superadmin only. */
+app.delete('/api/firewall/audits/:id', requireSuperAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid audit id.' });
+    const r = await pool.query('DELETE FROM firewall_audits WHERE id = $1 RETURNING id', [id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Audit not found.' });
+    return res.json({ ok: true });
+  } catch (err) { return serverError(res, err); }
+});
 
 // ── Vuln routes — backed by PostgreSQL ───────────────────────────────────
 
