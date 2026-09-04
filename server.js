@@ -1611,10 +1611,23 @@ function shapeAudit(row, findings) {
     unreadSections: row.unread_sections || [],
     findings: (findings || []).map(f => ({
       checkId: f.check_id, severity: f.severity, status: f.status,
+      // undefined when the category column has not been added yet, NULL when
+      // the finding predates categorisation. Both mean "not categorised" and
+      // neither may be rendered as a category.
+      category: f.category === undefined ? null : f.category,
       title: f.title, detail: f.detail, rationale: f.rationale,
       remediation: f.remediation, cis: f.cis_ref, source: f.source,
       evidence: f.evidence,
     })),
+    /*
+     * The per-category rollup is RECOMPUTED from the stored findings rather
+     * than stored on the audit row, so a change to the category list applies to
+     * historical audits on the next read instead of leaving old audits grouped
+     * by a scheme that no longer exists.
+     */
+    byCategory: fortigateScore.scoreResults((findings || []).map(f => ({
+      severity: f.severity, status: f.status, category: f.category || null,
+    }))).byCategory,
   };
 }
 
@@ -1627,6 +1640,29 @@ async function hasFirewallTables() {
         WHERE table_name IN ('firewall_audits', 'firewall_findings')`);
     if (r.rows[0].n === 2) _firewallTables = true;
     return r.rows[0].n === 2;
+  } catch (_) { return false; }
+}
+
+/*
+ * Does firewall_findings carry the category column yet?
+ *
+ * db/migrate-firewall-categories.sql adds it. Naming the column unconditionally
+ * on a database without it would make every INSERT fail — losing the whole
+ * audit — and every SELECT throw, which the route's catch would turn into "no
+ * audits", indistinguishable from a client who has never uploaded one.
+ *
+ * Cached ONLY on a positive answer, so running the migration takes effect
+ * without a restart.
+ */
+let _firewallCategoryColumn = false;
+async function hasFirewallCategoryColumn() {
+  if (_firewallCategoryColumn) return true;
+  try {
+    const r = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'firewall_findings' AND column_name = 'category'`);
+    if (r.rows.length) _firewallCategoryColumn = true;
+    return r.rows.length > 0;
   } catch (_) { return false; }
 }
 
@@ -1665,6 +1701,9 @@ app.post('/api/firewall/audits', firewallUpload.single('configFile'), async (req
       });
     }
 
+    // Probed once per upload, outside the loop — not once per finding.
+    const withCategory = await hasFirewallCategoryColumn();
+
     await client.query('BEGIN');
     const ins = await client.query(
       `INSERT INTO firewall_audits
@@ -1684,16 +1723,20 @@ app.post('/api/firewall/audits', firewallUpload.single('configFile'), async (req
 
     for (const r of results) {
       await client.query(
+        // The category column is named only where it exists — see
+        // hasFirewallCategoryColumn. On a database without the migration the
+        // audit still stores, uncategorised, rather than failing entirely.
         `INSERT INTO firewall_findings
            (audit_id, tenant_id, check_id, severity, status, title, detail,
-            rationale, remediation, cis_ref, source, evidence)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)`,
+            rationale, remediation, cis_ref, source, evidence${withCategory ? ', category' : ''})
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb${withCategory ? ',$13' : ''})`,
         [audit.id, tenantId, r.id, r.severity, r.status, r.title, r.detail,
          r.rationale, r.remediation, r.cis, r.source,
          // redact() is the net under the rule that checks put identifiers and
          // counts in evidence, never values. Nothing should need catching here;
          // "should" is not a mechanism.
-         JSON.stringify(fortigateParser.redact(r.evidence))]);
+         JSON.stringify(fortigateParser.redact(r.evidence))]
+          .concat(withCategory ? [r.category || null] : []));
     }
     await client.query('COMMIT');
 

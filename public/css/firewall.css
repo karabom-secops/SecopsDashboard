@@ -117,6 +117,43 @@
   color: #8C8C8C; word-break: break-word;
 }
 
+/* ── Category scorecards ──────────────────────────────────────────────────── */
+
+.fw-cats {
+  display: grid; gap: 0.6rem;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+}
+
+.fw-cat {
+  padding: 0.7rem 0.85rem; border-radius: 6px;
+  border: 1px solid rgba(127, 127, 127, 0.2);
+  border-left-width: 3px;
+}
+.fw-cat-top { display: flex; align-items: baseline; gap: 0.6rem; }
+.fw-cat-l { flex: 1 1 auto; font-weight: 600; font-size: 0.85rem; }
+.fw-cat-v { flex: 0 0 auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+.fw-cat-sub { font-size: 0.76rem; color: #8C8C8C; margin-top: 0.2rem; }
+.fw-cat-b { font-size: 0.74rem; color: #8C8C8C; margin-top: 0.4rem; line-height: 1.45; }
+
+/* Band colours reuse the score block's, so a category reads the same way the
+   headline score does. */
+.fw-cat.fw-excellent { border-left-color: #22C55E; }
+.fw-cat.fw-good      { border-left-color: #4ADE80; }
+.fw-cat.fw-fair      { border-left-color: #F59E0B; }
+.fw-cat.fw-poor      { border-left-color: #E8394A; }
+.fw-cat.fw-unknown   { border-left-color: rgba(127, 127, 127, 0.4); }
+
+/* Heading above each group of findings. */
+.fw-cat-h {
+  margin: 1.3rem 0 0.5rem; font-size: 0.85rem; font-weight: 700;
+  display: flex; align-items: center; gap: 0.5rem;
+}
+.fw-cat-n {
+  font-size: 0.72rem; font-weight: 600; color: #8C8C8C;
+  border: 1px solid rgba(127, 127, 127, 0.25); border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+}
+
 /* ── History ──────────────────────────────────────────────────────────────── */
 
 .fw-hist { display: flex; flex-direction: column; gap: 0.4rem; }

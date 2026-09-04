@@ -637,10 +637,23 @@ check('the rationale survives, so they can argue with it', !!pub.rationale);
 check('evidence is withheld', pub.evidence === undefined,
   JSON.stringify(Object.keys(pub)));
 check('and so is the internal detail', pub.detail === undefined);
+/*
+ * The exact key set, pinned. This is the check that makes the allowlist worth
+ * having: a field added to a finding cannot reach a client until somebody
+ * changes this line and has to justify it.
+ *
+ * `category` is on the list deliberately. It is the finding's HEADING — which
+ * kind of weakness this is — and the client needs it to read a report grouped
+ * by category. It names no policy, port or interface, so it is not part of the
+ * map that `evidence` is.
+ */
 check('the projection is an allowlist, not a delete-list',
   JSON.stringify(Object.keys(pub).sort()) ===
-  '["cis","id","rationale","remediation","severity","source","status","title"]',
+  '["category","cis","id","rationale","remediation","severity","source","status","title"]',
   JSON.stringify(Object.keys(pub).sort()));
+check('the category travels as a label, never as evidence',
+  typeof pub.category === 'string' && pub.category.indexOf('policy') >= 0 &&
+  JSON.stringify(pub).indexOf('policyid') < 0);
 
 check('the portal uses that projection rather than its own',
   /fortigateScore\.publicFinding\(/.test(codeOnly(portalJs)));
@@ -901,6 +914,284 @@ check('and the base comes from <base href> like every other module',
  * The exit hook is the guard: if the async block never ran, the suite must fail
  * rather than report green having made fewer assertions than it printed.
  */
+/* ══ Policy analysis — the rulebase, not the device ═════════════════════════
+ *
+ * These are the checks behind the five report categories. The risk they guard
+ * against is specific: a rulebase we could only half read reporting as a
+ * rulebase we read and found clean.
+ */
+
+const policyLib = require(path.join(ROOT, 'lib', 'fortigate-policy'));
+
+/** Build a config around a policy table, so each case states only what matters. */
+function cfgWith(policies, extra) {
+  return parser.parseConfig(JSON.stringify(Object.assign({
+    system: {
+      interface: {
+        wan1:     { name: 'wan1', role: 'wan' },
+        internal: { name: 'internal', role: 'lan' },
+      },
+    },
+    firewall: Object.assign({ policy: policies }, (extra && extra.firewall) || {}),
+  }, extra && extra.root)));
+}
+
+function resultsFor(model) {
+  const out = {};
+  checks.runChecks(model).forEach((r) => { out[r.id] = r; });
+  return out;
+}
+
+section('a service name is resolved to ports, not matched as a string');
+
+/*
+ * THE CHECK THIS WHOLE MODULE EXISTS FOR.
+ *
+ * Almost nobody references the predefined 'RDP' service. They define
+ * `Remote-Desktop` as tcp/3389 and put it in a group. Matching on the string
+ * 'RDP' would report that firewall as clean while it published RDP to the
+ * internet — the exact finding the audit is bought to produce.
+ */
+const customRdp = cfgWith({
+  1: { policyid: 1, srcintf: 'wan1', dstintf: 'internal', srcaddr: 'all',
+       dstaddr: 'srv', service: 'Publish', action: 'accept' },
+}, {
+  firewall: {
+    service: {
+      custom: {
+        'Remote-Desktop': { name: 'Remote-Desktop', protocol: 'TCP', 'tcp-portrange': '3389' },
+        Web: { name: 'Web', protocol: 'TCP', 'tcp-portrange': '80 443' },
+      },
+      group: { Publish: { name: 'Publish', member: 'Remote-Desktop Web' } },
+    },
+  },
+});
+
+const rdpAnalysis = policyLib.analysePolicies(customRdp);
+check('a custom service resolves through a group to its ports',
+  JSON.stringify(rdpAnalysis.policies[0].resolved.tcp.sort((a, b) => a[0] - b[0])) ===
+  '[[80,80],[443,443],[3389,3389]]',
+  JSON.stringify(rdpAnalysis.policies[0].resolved.tcp));
+check('and nothing was left unresolved',
+  rdpAnalysis.policies[0].resolved.unresolved.length === 0);
+
+const rdpResults = resultsFor(customRdp);
+check('so an RDP exposure hidden behind a custom name is still found',
+  rdpResults['ric-critical-services'].status === 'fail',
+  rdpResults['ric-critical-services'].status + ' — ' + rdpResults['ric-critical-services'].detail);
+check('and it names the policy, not the port',
+  JSON.stringify(rdpResults['ric-critical-services'].evidence).indexOf('3389') < 0 &&
+  JSON.stringify(rdpResults['ric-critical-services'].evidence).indexOf('"policy"') >= 0);
+check('an "all" source over a risky service is a blanket finding',
+  rdpResults['rib-blanket-risky'].status === 'fail');
+
+check('port ranges parse, source halves ignored',
+  JSON.stringify(policyLib.parsePortRanges('80 443 1000-2000 8080:1024-65535')) ===
+  '[[80,80],[443,443],[1000,2000],[8080,8080]]',
+  JSON.stringify(policyLib.parsePortRanges('80 443 1000-2000 8080:1024-65535')));
+check('an unparseable port range yields nothing rather than zero',
+  policyLib.parsePortRanges('not-a-port').length === 0);
+// A self-referencing service group is a config a device will happily hold.
+check('a recursive service group does not hang the parser',
+  (() => {
+    const idx = policyLib.buildServiceIndex({
+      services: { custom: {}, groups: { A: { name: 'A', member: 'B' }, B: { name: 'B', member: 'A' } } },
+    });
+    return policyLib.resolveServices(idx, ['A']).tcp.length === 0;
+  })());
+
+section('what could not be read is never reported as clean');
+
+const unreadable = cfgWith({
+  1: { policyid: 1, srcintf: 'wan1', dstintf: 'internal', srcaddr: 'net',
+       dstaddr: 'srv', service: 'Made-Up-Service', action: 'accept' },
+});
+const unreadableResults = resultsFor(unreadable);
+/*
+ * The policy references a service this audit cannot resolve. We did not look
+ * inside it, so "no critical services exposed" is a stronger claim than the
+ * evidence supports.
+ */
+check('an unresolvable service makes an inbound check not-assessable, not pass',
+  unreadableResults['ric-critical-services'].status === 'not-assessable',
+  unreadableResults['ric-critical-services'].status);
+check('and it says which policy it could not read',
+  JSON.stringify(unreadableResults['ric-critical-services'].evidence)
+    .indexOf('unreadPolicies') >= 0);
+check('the coverage gap is its own finding',
+  unreadableResults['rpc-services-resolved'].status === 'not-assessable');
+/*
+ * NOT a fail. Nothing is wrong with the device — the audit could not see far
+ * enough, and grading that as a failure penalises a client for our gap.
+ */
+check('reported as a limit of the audit rather than a fault of the firewall',
+  unreadableResults['rpc-services-resolved'].status !== 'fail');
+check('and it names the service it could not resolve',
+  JSON.stringify(unreadableResults['rpc-services-resolved'].evidence)
+    .indexOf('Made-Up-Service') >= 0);
+
+section('a policy whose direction cannot be determined is not silently dropped');
+
+/*
+ * srcintf and dstintf both 'any' touches the WAN at both ends, so direction is
+ * undeterminable — and that rule is usually the most dangerous on the device.
+ * Before the guard, it appeared in neither set and the inbound checks reported
+ * "no inbound policies found" as a PASS.
+ */
+const anyAny = cfgWith({
+  1: { policyid: 1, srcintf: 'any', dstintf: 'any', srcaddr: 'all',
+       dstaddr: 'all', service: 'ALL', action: 'accept' },
+});
+check('its direction is unknown rather than guessed',
+  policyLib.analysePolicies(anyAny).policies[0].direction === 'unknown',
+  policyLib.analysePolicies(anyAny).policies[0].direction);
+
+const anyAnyResults = resultsFor(anyAny);
+check('so the inbound checks report not-assessable, never pass',
+  anyAnyResults['ric-critical-services'].status === 'not-assessable',
+  anyAnyResults['ric-critical-services'].status);
+check('and the outbound checks too',
+  anyAnyResults['roc-risky-egress'].status === 'not-assessable');
+check('naming the policies that could not be placed',
+  JSON.stringify(anyAnyResults['ric-critical-services'].evidence)
+    .indexOf('unplacedPolicies') >= 0);
+// It is still caught by the direction-agnostic checks, so it is not lost.
+check('but it is still found by the permissiveness checks',
+  anyAnyResults['rpc-any-source'].status === 'fail' &&
+  anyAnyResults['policy-any-any'].status === 'fail');
+
+section('direction, when the interface roles allow it');
+
+const bothWays = cfgWith({
+  1: { policyid: 1, srcintf: 'wan1', dstintf: 'internal', srcaddr: 'net', dstaddr: 'srv',
+       service: 'HTTPS', action: 'accept', logtraffic: 'all' },
+  2: { policyid: 2, srcintf: 'internal', dstintf: 'wan1', srcaddr: 'all', dstaddr: 'all',
+       service: 'TELNET', action: 'accept', logtraffic: 'all' },
+});
+const bw = policyLib.analysePolicies(bothWays);
+check('wan -> lan is inbound', bw.policies[0].direction === 'inbound');
+check('lan -> wan is outbound', bw.policies[1].direction === 'outbound');
+
+const bwResults = resultsFor(bothWays);
+check('outbound telnet is a risky-egress finding',
+  bwResults['roc-risky-egress'].status === 'fail');
+check('but inbound HTTPS is not a critical exposure',
+  bwResults['ric-critical-services'].status === 'pass',
+  bwResults['ric-critical-services'].detail);
+
+/*
+ * Interface roles are cosmetic on many deployments. Where none is declared,
+ * assuming which interface faces the internet would invent findings.
+ */
+const noRoles = parser.parseConfig(JSON.stringify({
+  system: { interface: { port1: { name: 'port1' } } },
+  firewall: { policy: { 1: { policyid: 1, srcintf: 'port1', dstintf: 'port2',
+    srcaddr: 'all', dstaddr: 'all', service: 'ALL', action: 'accept' } } },
+}));
+const noRoleResults = resultsFor(noRoles);
+check('with no wan role declared, direction checks are not-assessable',
+  noRoleResults['ric-critical-services'].status === 'not-assessable');
+check('and say so rather than guessing an interface',
+  /role: wan/.test(noRoleResults['ric-critical-services'].detail));
+
+section('every check belongs to a category');
+
+const allResults = checks.runChecks(model);
+check('no check is uncategorised',
+  allResults.every(r => r.category),
+  allResults.filter(r => !r.category).map(r => r.id).join(','));
+check('and every category used is in the catalogue',
+  allResults.every(r => checks.CATEGORY_KEYS.indexOf(r.category) >= 0),
+  [...new Set(allResults.map(r => r.category))]
+    .filter(c => checks.CATEGORY_KEYS.indexOf(c) < 0).join(','));
+check('the five report categories all exist',
+  ['risky-policy-conditions', 'policy-attribute', 'risky-inbound-blanket',
+   'risky-inbound-conditions', 'risky-outbound-conditions']
+    .every(k => checks.CATEGORY_KEYS.indexOf(k) >= 0));
+check('and each of them has at least one check',
+  ['risky-policy-conditions', 'policy-attribute', 'risky-inbound-blanket',
+   'risky-inbound-conditions', 'risky-outbound-conditions']
+    .every(k => allResults.some(r => r.category === k)));
+/*
+ * Three older policy- checks carry an explicit category because they are risk
+ * findings, not hygiene, and the id prefix cannot know that.
+ */
+check('an explicit category beats the prefix map',
+  allResults.find(r => r.id === 'policy-any-any').category === 'risky-policy-conditions',
+  allResults.find(r => r.id === 'policy-any-any').category);
+check('while an un-overridden policy- check is hygiene',
+  allResults.find(r => r.id === 'policy-named').category === 'policy-attribute');
+// A check matching no prefix must resolve to null, not to a plausible bucket.
+check('an unrecognised id is uncategorised rather than misfiled',
+  checks.categoryFor({ id: 'zzz-something' }) === null);
+
+section('category scores use the same arithmetic as the overall score');
+
+const scoredAll = score.scoreResults(allResults);
+check('every category present is scored', scoredAll.byCategory.length > 0);
+check('and they come back in report order',
+  scoredAll.byCategory.every((c, i, arr) => i === 0 || arr[i - 1].order <= c.order));
+check('nothing is uncategorised in the rollup',
+  scoredAll.uncategorised.length === 0, scoredAll.uncategorised.join(','));
+
+/*
+ * The recursion that computes a category score must terminate. It did not, the
+ * first time: a single-category subset still matches its own category, so the
+ * inner call rolled up again forever.
+ */
+check('computing a category score does not recurse forever',
+  Array.isArray(scoredAll.byCategory));
+check('and the inner call does not roll up again',
+  scoredAll.byCategory.every(c => c.byCategory === undefined));
+
+// Same rule as the overall score: nothing assessable means null, not zero.
+const allNa = score.scoreResults([
+  { severity: 'high', status: 'not-assessable', category: 'risky-inbound-blanket' },
+]);
+check('a category with nothing assessable scores null, not 0',
+  allNa.byCategory[0].score === null, String(allNa.byCategory[0].score));
+check('and reports zero coverage rather than a clean result',
+  allNa.byCategory[0].coverage === 0);
+
+const catFail = score.scoreResults([
+  { severity: 'high', status: 'fail', category: 'risky-inbound-blanket' },
+  { severity: 'high', status: 'pass', category: 'risky-inbound-blanket' },
+]);
+check('a real 0 and a null are different states',
+  catFail.byCategory[0].score === 50 && allNa.byCategory[0].score === null);
+
+section('the category reaches storage and the screens');
+
+const catMigration = fs.readFileSync(
+  path.join(ROOT, 'db', 'migrate-firewall-categories.sql'), 'utf8');
+check('the column is added by a migration',
+  /ADD COLUMN IF NOT EXISTS category TEXT/.test(sqlOnly(catMigration)));
+/*
+ * Nullable and un-backfilled: a finding stored before categorisation was never
+ * categorised, and inventing a category for it would be inventing data about an
+ * audit nobody re-ran.
+ */
+check('and is nullable rather than back-filled with a guess',
+  !/category TEXT NOT NULL/.test(sqlOnly(catMigration)) &&
+  !/UPDATE firewall_findings/.test(sqlOnly(catMigration)));
+check('the insert only names the column where it exists',
+  /hasFirewallCategoryColumn/.test(srvCode) &&
+  /withCategory \? ', category' : ''/.test(serverJs));
+check('the column probe caches only a positive answer',
+  /_firewallCategoryColumn = true;[\s\S]{0,120}return false;/.test(srvCode));
+check('the rollup is recomputed on read, not frozen into the audit row',
+  /byCategory: fortigateScore\.scoreResults\(/.test(srvCode));
+check('the tab groups findings by category',
+  /groupByCategory/.test(codeOnly(tabJs)));
+check('and an uncategorised finding is labelled, not hidden',
+  /Not categorised/.test(tabJs));
+check('the report section carries a category table',
+  /Posture by category/.test(
+    fs.readFileSync(path.join(ROOT, 'public', 'js', 'report-sections.js'), 'utf8')));
+check('which prints "Not assessed" rather than 0 for an unscored category',
+  /r\.score == null[\s\S]{0,80}Not assessed/.test(
+    fs.readFileSync(path.join(ROOT, 'public', 'js', 'report-sections.js'), 'utf8')));
+
 let warnRan = false;
 process.on('exit', () => {
   if (!warnRan) {

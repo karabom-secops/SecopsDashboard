@@ -170,6 +170,67 @@ window.FirewallTab = (function () {
       '</div>';
   }
 
+  /**
+   * Per-category scorecards.
+   *
+   * The five policy categories mirror how a client-facing firewall assessment
+   * reports, so this page can sit beside one. A category with nothing
+   * assessable shows "n/a", NOT 0 — the difference between "we looked and the
+   * rulebase is bad" and "we could not look" is the whole point of the
+   * not-assessable outcome, and a zero here would erase it.
+   */
+  function categoryBlock(a) {
+    var cats = a.byCategory || [];
+    if (!cats.length) return '';
+
+    return '<h3 class="fw-h">By category</h3>' +
+      '<div class="fw-cats">' + cats.map(function (c) {
+        var score = c.score == null
+          ? '<span class="fw-nd">n/a</span>'
+          : esc(c.score) + '<span class="fw-of">/100</span>';
+        return '<div class="fw-cat fw-' + esc((c.band && c.band.key) || 'unknown') + '">' +
+            '<div class="fw-cat-top">' +
+              '<span class="fw-cat-l">' + esc(c.label) + '</span>' +
+              '<span class="fw-cat-v">' + score + '</span>' +
+            '</div>' +
+            '<div class="fw-cat-sub">' +
+              esc(c.failed) + ' finding' + (c.failed === 1 ? '' : 's') + ' &middot; ' +
+              esc(c.passed) + ' passed' +
+              (c.notAssessable
+                ? ' &middot; ' + esc(c.notAssessable) + ' not assessable' : '') +
+            '</div>' +
+            (c.blurb ? '<div class="fw-cat-b">' + esc(c.blurb) + '</div>' : '') +
+          '</div>';
+      }).join('') + '</div>';
+  }
+
+  /* Findings grouped under their category heading, in report order. */
+  function groupByCategory(list, cats) {
+    var order = (cats || []).map(function (c) { return c.key; });
+    var labels = {};
+    (cats || []).forEach(function (c) { labels[c.key] = c.label; });
+
+    var groups = [];
+    function bucket(key) {
+      var hit = groups.filter(function (g) { return g.key === key; })[0];
+      if (!hit) {
+        hit = { key: key, label: labels[key] || 'Not categorised', rows: [] };
+        groups.push(hit);
+      }
+      return hit;
+    }
+    list.forEach(function (f) { bucket(f.category || null).rows.push(f); });
+
+    // Uncategorised last, and named as such rather than folded into a real
+    // group — a finding from before categorisation is not a finding about
+    // nothing.
+    return groups.sort(function (x, y) {
+      var xi = x.key === null ? 999 : order.indexOf(x.key);
+      var yi = y.key === null ? 999 : order.indexOf(y.key);
+      return (xi < 0 ? 998 : xi) - (yi < 0 ? 998 : yi);
+    });
+  }
+
   function findingsBlock(a) {
     var all = a.findings || [];
     var fails = all.filter(function (f) { return f.status === 'fail'; });
@@ -180,8 +241,15 @@ window.FirewallTab = (function () {
       return SEV_ORDER.indexOf(x.severity) - SEV_ORDER.indexOf(y.severity);
     });
 
-    return '<h3 class="fw-h">Findings (' + esc(fails.length) + ')</h3>' +
-      (fails.length ? fails.map(findingRow).join('')
+    return categoryBlock(a) +
+
+      '<h3 class="fw-h">Findings (' + esc(fails.length) + ')</h3>' +
+      (fails.length
+        ? groupByCategory(fails, a.byCategory).map(function (g) {
+            return '<h4 class="fw-cat-h">' + esc(g.label) +
+              ' <span class="fw-cat-n">' + esc(g.rows.length) + '</span></h4>' +
+              g.rows.map(findingRow).join('');
+          }).join('')
         : '<div class="fw-note fw-good">Every check that could be evaluated passed.</div>') +
 
       /*

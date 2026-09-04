@@ -3343,6 +3343,21 @@ window.ReportSections = (function () {
    * and the whole operational point is knowing who to train. What is withheld
    * is the attacker's side of it, which is a working map of what gets through.
    */
+  /* A finding's category label, from the rollup the audit carries. */
+  function categoryLabelOf(key, audit) {
+    if (!key) return 'Not categorised';
+    var hit = (audit.byCategory || []).filter(function (c) { return c.key === key; })[0];
+    return hit ? hit.label : key;
+  }
+
+  /* Where a category sits in report order; uncategorised sorts last. */
+  function categoryRank(key, audit) {
+    if (!key) return 999;
+    var list = audit.byCategory || [];
+    for (var i = 0; i < list.length; i++) if (list[i].key === key) return i;
+    return 998;
+  }
+
   function renderEmailSecurity(ctx) {
     var payload = ctx.data.email;
     var s = payload && payload.summary;
@@ -3443,7 +3458,16 @@ window.ReportSections = (function () {
     var na    = findings.filter(function (f) { return f.status === 'not-assessable'; });
 
     var order = { critical: 0, high: 1, medium: 2, low: 3 };
-    fails.sort(function (x, y) { return (order[x.severity] || 9) - (order[y.severity] || 9); });
+    /*
+     * Severity first, then category, so the table opens with what matters most
+     * rather than with whichever category happens to sort first. A board reads
+     * the top three rows.
+     */
+    fails.sort(function (x, y) {
+      var d = (order[x.severity] || 9) - (order[y.severity] || 9);
+      if (d !== 0) return d;
+      return categoryRank(x.category, a) - categoryRank(y.category, a);
+    });
 
     var scoreLabel = a.score == null ? 'Not assessed' : a.score + '/100';
 
@@ -3467,6 +3491,48 @@ window.ReportSections = (function () {
       // The configuration is not kept, and the client should know that.
       ' The configuration file itself was not retained.</div>';
 
+    /*
+     * THE CATEGORY TABLE.
+     *
+     * This is what makes the section comparable with the firewall assessment
+     * reports a client may already hold: the same five policy categories, each
+     * with its own score, so the two documents can be read side by side.
+     *
+     * A category with nothing assessable prints "Not assessed", never 0. A zero
+     * says the rulebase failed every check in that area; "not assessed" says we
+     * could not look. Printing the first when the second is true is the single
+     * easiest way for this report to mislead a board.
+     */
+    var cats = a.byCategory || [];
+    var catTable = cats.length ? '<div class="sec-sub">Posture by category</div>' +
+      D.dataTable({
+        cols: [
+          { label: 'Category', key: 'label', width: '34%' },
+          { label: 'Score', key: 'score', width: '14%',
+            raw: function (r) {
+              return r.score == null
+                ? '<span class="nd">Not assessed</span>'
+                : esc(r.score) + '/100';
+            } },
+          { label: 'Findings', key: 'failed', width: '14%' },
+          { label: 'Assessed', key: 'assessed', width: '18%',
+            raw: function (r) {
+              return esc(r.assessed) + ' of ' + esc(r.total) +
+                (r.notAssessable
+                  ? ' <span class="sev-sla">' + esc(r.notAssessable) + ' not assessable</span>'
+                  : '');
+            } },
+          { label: 'What it covers', key: 'blurb', width: '20%',
+            raw: function (r) { return esc(r.blurb || ''); } },
+        ],
+        rows: cats,
+      }) + '<div class="rag-note" style="margin-bottom:4mm">Each category is ' +
+      'scored on the checks that could be evaluated within it, using the same ' +
+      'severity weighting as the overall score. A category showing ' +
+      '&ldquo;Not assessed&rdquo; had nothing this configuration could answer — ' +
+      'that is a gap in what we could see, not a clean result.</div>'
+      : '';
+
     var table = fails.length ? D.dataTable({
       cols: [
         { label: 'Severity', key: 'severity', width: '14%',
@@ -3475,12 +3541,14 @@ window.ReportSections = (function () {
               severityTone(r.severity.charAt(0).toUpperCase() + r.severity.slice(1)) +
               '"></span> ' + esc(r.severity.charAt(0).toUpperCase() + r.severity.slice(1));
           } },
-        { label: 'Finding', key: 'title', width: '40%',
+        { label: 'Finding', key: 'title', width: '32%',
           raw: function (r) {
             return esc(r.title) +
               (r.cis ? '<span class="sev-sla">CIS ' + esc(r.cis) + '</span>' : '');
           } },
-        { label: 'What to do', key: 'remediation', width: '46%',
+        { label: 'Category', key: 'category', width: '16%',
+          raw: function (r) { return esc(categoryLabelOf(r.category, a)); } },
+        { label: 'What to do', key: 'remediation', width: '38%',
           raw: function (r) { return esc(r.remediation || ''); } },
       ],
       rows: fails,
@@ -3508,7 +3576,8 @@ window.ReportSections = (function () {
         'section(s) were present but outside the scope of this review.</div>'
       : '';
 
-    return tiles + head + table + naNote + unreadNote + sectionComment(ctx, 'firewallAudit');
+    return tiles + head + catTable + table + naNote + unreadNote +
+      sectionComment(ctx, 'firewallAudit');
   }
 
   function renderCompliance(ctx) {
