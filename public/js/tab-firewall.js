@@ -25,6 +25,7 @@ window.FirewallTab = (function () {
   var _history = [];
   var _msg = null;
   var _view = 'current';
+  var _parseNote = null;
 
   function esc(s) {
     return String(s == null ? '' : s)
@@ -80,6 +81,7 @@ window.FirewallTab = (function () {
         '</div>' +
       '</div>' +
       maskNotice(a) +
+      parseNotice() +
       unreadNotice(a);
   }
 
@@ -103,6 +105,12 @@ window.FirewallTab = (function () {
     }
     return '<div class="fw-note">Whether this configuration was password-masked ' +
       'could not be determined.</div>';
+  }
+
+  /* Where the export was not valid YAML and had to be repaired to be read. */
+  function parseNotice() {
+    if (!_parseNote) return '';
+    return '<div class="fw-note">' + esc(_parseNote) + '</div>';
   }
 
   function unreadNotice(a) {
@@ -296,9 +304,12 @@ window.FirewallTab = (function () {
       _view = 'current';
       // The mask warning is the server's, shown verbatim — it is advice about a
       // file that has already left the client's hands, and softening it here
-      // would be the wrong kind of tidy.
+      // would be the wrong kind of tidy. It outranks the parse note: rotating
+      // exposed credentials matters more than a quoting quirk.
       _msg = j.maskWarning ? { text: j.maskWarning, bad: true }
-                           : { text: 'Configuration audited. The file was not stored.', bad: false };
+           : j.parseNote   ? { text: j.parseNote, bad: false }
+           : { text: 'Configuration audited. The file was not stored.', bad: false };
+      _parseNote = j.parseNote || null;
       loadHistory();
     } catch (err) {
       _msg = { text: 'Upload failed: ' + err.message, bad: true };

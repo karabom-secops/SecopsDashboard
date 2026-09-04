@@ -1708,6 +1708,19 @@ app.post('/api/firewall/audits', firewallUpload.single('configFile'), async (req
         cis_ref: r.cis, source: r.source,
         evidence: fortigateParser.redact(r.evidence),
       }))),
+      /*
+       * FortiOS emits YAML it cannot read back — unquoted `*.bat` keys and
+       * names containing " : ". Where a narrow repair pass made the file
+       * readable, say so: a repaired parse is a weaker claim than a clean one,
+       * and burying that would let an audit of a partially-guessed structure
+       * read exactly like an audit of a config we read perfectly.
+       */
+      parseNote: model.repaired && model.repaired.length
+        ? model.repaired.length + ' line(s) in this export are not valid YAML — ' +
+          'FortiOS writes file patterns and names containing ":" unquoted. They ' +
+          'were repaired to read the file. The findings are sound; if anything ' +
+          'looks wrong, check those lines in the original.'
+        : null,
       // Advice, never a score. See detectMasking() in lib/fortigate-parser.js.
       maskWarning: model.masked === false
         ? 'This configuration appears NOT to have been password-masked. It has not ' +
