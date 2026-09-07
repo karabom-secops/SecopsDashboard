@@ -147,8 +147,19 @@ check('JSON is accepted — the same tree, different notation',
  */
 section('the malformed lines a real FortiGate emits');
 
-const aliasKey = 'antivirus:\n  entries:\n    - *.bat:\n    - *.exe:\n';
-const colonKey = 'log:\n  fortianalyzer:\n    - FAZ : 100.71.0.161:\n';
+/*
+ * Both fixtures carry one recognisable section alongside the malformed lines.
+ *
+ * Not decoration. parseConfig now REFUSES a file in which not one section was
+ * recognised, because returning a model from such a file is exactly what
+ * produced 37 findings against a config nobody had read. What these fixtures
+ * exercise — repairing the malformed lines FortiOS emits — is unchanged; they
+ * simply have to be configs now, rather than two lines of YAML that happen to
+ * be broken.
+ */
+const stub = 'firewall_policy:\n  - 1:\n      name: stub\n      action: accept\n';
+const aliasKey = stub + 'antivirus:\n  entries:\n    - *.bat:\n    - *.exe:\n';
+const colonKey = stub + 'log:\n  fortianalyzer:\n    - FAZ : 100.71.0.161:\n';
 
 const fixedAlias = parser.parseConfig(aliasKey);
 check('a file-extension pattern key is read',
@@ -160,9 +171,13 @@ check('and is reported as a repair, not hidden',
 const fixedColon = parser.parseConfig(colonKey);
 check('a name containing " : " is read',
   fixedColon.repaired.length === 1, JSON.stringify(fixedColon.repaired));
+// Derived from the stub rather than hardcoded: the property is that the repair
+// reports the line it happened on, not that that line is number 3.
+const stubLines = stub.split('\n').length - 1;
 check('and reported with its line number',
-  fixedColon.repaired[0].kind === 'colon-in-key' && fixedColon.repaired[0].line === 3,
-  JSON.stringify(fixedColon.repaired));
+  fixedColon.repaired[0].kind === 'colon-in-key' &&
+  fixedColon.repaired[0].line === stubLines + 3,
+  JSON.stringify(fixedColon.repaired) + ' expected line ' + (stubLines + 3));
 
 // A clean file must be touched by none of this.
 check('a well-formed config is never "repaired"',
