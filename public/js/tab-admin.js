@@ -1043,6 +1043,27 @@
       keyLabel: 'Client Secret',
       keyHint:  'Paste the client secret shown once when the API client was created…',
     },
+    {
+      id:       'ms_graph',
+      name:     'Microsoft Graph',
+      icon:     '📈',
+      desc:     'Microsoft Secure Score — syncs the daily posture snapshot and the per-control remediation backlog every 24 hours.',
+      urlLabel: 'Graph Endpoint',
+      urlHint:  'https://graph.microsoft.com/v1.0',
+      // Prefilled rather than left to a placeholder: this value is the same for
+      // every commercial tenant, and a required field nobody can guess is a
+      // field everybody gets wrong once.
+      urlDefault: 'https://graph.microsoft.com/v1.0',
+      msGraphFields: true,
+      /*
+       * Client credentials again, so the generic key box is relabelled for the
+       * same reason it is for Acronis: a field marked "API Key / Token" is one
+       * somebody pastes the application ID into, and the resulting 401 names
+       * the client rather than the field, which sends people to the wrong half.
+       */
+      keyLabel: 'Client Secret',
+      keyHint:  'Paste the client secret VALUE (not the Secret ID) from the app registration…',
+    },
   ];
 
   // Last-rendered integration rows, keyed by provider.
@@ -1170,7 +1191,7 @@
             <div class="form-group">
               <label class="modal-label">${escHtmlInt(p.urlLabel || 'Base URL')}</label>
               <input type="url" class="int-url-input form-input" data-provider="${p.id}"
-                     placeholder="${escHtmlInt(p.urlHint || '')}" value="${cfg ? escHtmlInt(cfg.base_url) : ''}">
+                     placeholder="${escHtmlInt(p.urlHint || '')}" value="${cfg ? escHtmlInt(cfg.base_url) : escHtmlInt(p.urlDefault || '')}">
             </div>
             ${p.wazuhFields ? `
             <div class="form-group">
@@ -1223,7 +1244,36 @@
               <input type="text" class="int-tenant-uuid form-input" data-provider="${p.id}"
                      placeholder="The customer tenant this client's alerts belong to"
                      value="${escHtmlInt(cfgVal(cfg, 'tenant_uuid'))}">
-            </div>` : ''}`}
+            </div>` : ''}
+            ${p.msGraphFields ? `
+            <div class="form-group">
+              <label class="modal-label">Directory (tenant) ID</label>
+              <input type="text" class="int-azure-tenant form-input" data-provider="${p.id}"
+                     placeholder="The client's Microsoft 365 directory GUID"
+                     value="${escHtmlInt(cfgVal(cfg, 'azure_tenant_id'))}">
+            </div>
+            <div class="form-group">
+              <label class="modal-label">Application (client) ID</label>
+              <input type="text" class="int-app-id form-input" data-provider="${p.id}"
+                     placeholder="App registration GUID"
+                     value="${escHtmlInt(cfgVal(cfg, 'client_id'))}">
+            </div>
+            <div class="form-group">
+              <label class="modal-label">Authority <span class="int-optional">(optional)</span></label>
+              <input type="text" class="int-authority form-input" data-provider="${p.id}"
+                     placeholder="https://login.microsoftonline.com — change only for US Gov / China clouds"
+                     value="${escHtmlInt(cfgVal(cfg, 'authority_url'))}">
+            </div>
+            <p class="int-optional" style="margin:-.25rem 0 .75rem">
+              Requires <strong>SecurityEvents.Read.All</strong> as an
+              <strong>application</strong> permission with admin consent.
+              A delegated grant authenticates and then fails on every read.
+            </p>
+            ${cfgVal(cfg, 'verified_azure_tenant_id') ? `
+            <p class="int-optional" style="margin:-.25rem 0 .75rem">
+              Last verified against directory
+              <code>${escHtmlInt(cfgVal(cfg, 'verified_azure_tenant_id'))}</code>.
+            </p>` : ''}` : ''}`}
             <div class="form-group">
               <label class="modal-label">${escHtmlInt(p.keyLabel || 'API Key / Token')}</label>
               <div class="int-key-row">
@@ -1354,6 +1404,56 @@
       // server-side like every other provider's credential. config_json is
       // stored in the clear, so nothing secret may be put in it.
       body.configJson = { client_id: clientId, tenant_uuid: tenantUuid };
+    }
+
+    if (providerId === 'ms_graph') {
+      const get = sel => {
+        const el = container.querySelector(`${sel}[data-provider="${providerId}"]`);
+        return el ? el.value.trim() : '';
+      };
+      const azureTenantId = get('.int-azure-tenant');
+      const appId         = get('.int-app-id');
+      const authority     = get('.int-authority');
+
+      /*
+       * Both are REQUIRED. The directory ID is not merely a scope hint — it is
+       * a path segment of the token endpoint, so an absent one cannot be
+       * defaulted to "everything this credential can see" the way SentinelOne's
+       * site IDs can. There is nothing sensible to fall back to.
+       */
+      if (!azureTenantId) {
+        setIntFeedback(providerId,
+          'Directory (tenant) ID is required — it forms part of the Microsoft token endpoint.', true);
+        return;
+      }
+      if (!appId) {
+        setIntFeedback(providerId, 'Application (client) ID is required for Microsoft Graph.', true);
+        return;
+      }
+
+      // Preserve verified_azure_tenant_id, which the server writes on a
+      // successful Test. It is a probe result, not a form field, and dropping
+      // it here would silently disarm the directory-mismatch check the sync
+      // relies on.
+      const existing = (configMapCache[providerId] && configMapCache[providerId].config_json) || {};
+      body.configJson = Object.assign({}, existing, {
+        azure_tenant_id: azureTenantId,
+        client_id: appId,
+      });
+      // Blank means "commercial cloud". Storing an empty string instead of
+      // omitting it would defeat the adapter's default.
+      if (authority) body.configJson.authority_url = authority;
+      else delete body.configJson.authority_url;
+
+      /*
+       * Changing the directory invalidates the earlier verification: the stored
+       * "verified" id would then belong to a different client, and the sync's
+       * mismatch warning would fire on every run against the new, correct one.
+       */
+      if (existing.azure_tenant_id &&
+          existing.azure_tenant_id.toLowerCase() !== azureTenantId.toLowerCase()) {
+        delete body.configJson.verified_azure_tenant_id;
+      }
     }
 
     if (providerId === 'wazuh') {

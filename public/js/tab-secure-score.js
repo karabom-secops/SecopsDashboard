@@ -818,6 +818,7 @@ const SecureScoreTab = (() => {
           <h3 class="secure-score-section-title">Improvement Recommendations</h3>
           <div id="secure-score-recommendations" class="recommendations-container"></div>
         </div>
+        <div id="ms-secure-score" class="secure-score-section"></div>
       `;
 
       document.getElementById('secure-score-refresh').addEventListener('click', loadAndRender);
@@ -904,19 +905,31 @@ const SecureScoreTab = (() => {
     const recommendationContainer = document.getElementById('secure-score-recommendations');
     renderRecommendations(recommendationContainer, scoreData.recommendations);
 
-    // Render data age
+    /*
+     * Render data age.
+     *
+     * `dataAge` is defaulted and each field escaped, matching buildAppendix()
+     * further down — which already guarded and so kept working while this copy
+     * did not. An unguarded read here threw mid-render, after the gauge had
+     * drawn and before the GRC indicator, leaving a half-built screen with no
+     * error on it. That is the same failure the history payload caused earlier
+     * in this function, and it is guarded for the same reason.
+     */
     const dataAgeContainer = document.getElementById('secure-score-data-age');
-    const dataAgeHtml = `
-      <div class="data-age">
-        <small>
-          <strong>Last Updated:</strong><br>
-          Vulnerabilities: ${scoreData.dataAge.vulns}<br>
-          Awareness: ${scoreData.dataAge.awareness}<br>
-          Incidents: ${scoreData.dataAge.mdr}
-        </small>
-      </div>
-    `;
-    dataAgeContainer.innerHTML = dataAgeHtml;
+    if (dataAgeContainer) {
+      const da = scoreData.dataAge || {};
+      const age = v => escHtml(v === null || v === undefined ? 'Unknown' : v);
+      dataAgeContainer.innerHTML = `
+        <div class="data-age">
+          <small>
+            <strong>Last Updated:</strong><br>
+            Vulnerabilities: ${age(da.vulns)}<br>
+            Awareness: ${age(da.awareness)}<br>
+            Incidents: ${age(da.mdr)}
+          </small>
+        </div>
+      `;
+    }
 
     // Cache for report generation
     _cachedHistory = history;
@@ -928,7 +941,18 @@ const SecureScoreTab = (() => {
       const grcAsmt = grcData && grcData.assessment;
       if (grcAsmt) {
         const grcScore = grcAsmt.grc_score || 0;
-        const grcColor = grcScore >= 80 ? '#27ae60' : grcScore >= 60 ? '#f39c12' : grcScore >= 40 ? '#e67e22' : '#e74c3c';
+        /*
+         * One colour scale for the whole screen.
+         *
+         * This used to band at 80/60/40 while getScoreColor() — which paints
+         * the gauge, the component cards and the trend directly above it —
+         * bands at 80/70/50. Two 0-100 security scores sat side by side in the
+         * same four colours meaning different things: a GRC score of 65 read
+         * amber, a composite of 65 read dark orange, and nothing on screen said
+         * the scales differed. Whichever banding is right, the answer cannot be
+         * "both on one screen".
+         */
+        const grcColor = getScoreColor(grcScore);
         const grcDate  = new Date(grcAsmt.assessed_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
         grcEl.innerHTML = `
           <div class="grc-indicator-card">
@@ -945,6 +969,23 @@ const SecureScoreTab = (() => {
             <a class="grc-indicator-link" href="#" onclick="event.preventDefault();window.switchTab('grc')">Start assessment →</a>
           </div>`;
       }
+    }
+
+    /*
+     * Microsoft Secure Score, last and deliberately unawaited.
+     *
+     * Unawaited because it is an independent panel that renders its own empty
+     * and error states — blocking the client's own posture report on a second
+     * round trip would make our score slower to appear for the benefit of a
+     * number that is explicitly not part of it.
+     *
+     * The optional-chain guard is not defensive padding: the module is a
+     * separate script tag, and a deployment that ships this file without it
+     * must degrade to "no Microsoft panel", not to a tab that throws on load.
+     */
+    const msEl = document.getElementById('ms-secure-score');
+    if (msEl && window.MsSecureScorePanel) {
+      window.MsSecureScorePanel.render(msEl);
     }
   }
 

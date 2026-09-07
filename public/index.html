@@ -646,33 +646,25 @@
   <section id="tab-secure-score" class="tab-panel" hidden role="tabpanel">
     <div class="section-header">
       <h2 class="section-title">Security Posture</h2>
-      <p class="section-subtitle">Comprehensive security score based on vulnerabilities, awareness training, and incident response</p>
+      <p class="section-subtitle">Composite score, cyber insurability and GRC standing &middot; with Microsoft&rsquo;s own Secure Score reported alongside</p>
     </div>
 
-    <div id="secure-score-container" class="secure-score-wrapper">
-      
-      <!-- Main Score Gauge -->
-      <div class="secure-score-main">
-        <div id="secure-score-gauge" class="score-gauge-container"></div>
-        <div id="secure-score-data-age" class="data-age-info"></div>
-      </div>
+    <!--
+      Intentionally empty. SecureScoreTab.loadAndRender() replaces this
+      container's innerHTML wholesale on every render, so any markup here is
+      overwritten before it is ever seen.
 
-      <!-- Component Scores -->
-      <div id="secure-score-components" class="secure-score-section"></div>
+      There used to be a static skeleton of gauge/components/trend/recommendation
+      mounts. It was not a fallback — it was a SECOND copy of the layout that
+      nothing rendered into, and it had already drifted: the tab builds ten
+      mounts and the skeleton listed four, missing the scope strip, the
+      unmeasured and estate notes, the insurability panel, the GRC indicator and
+      the Microsoft Secure Score panel. A copy nobody renders is a copy nobody
+      updates, and reading it gives a false picture of what the screen contains.
 
-      <!-- Trend Chart -->
-      <div class="secure-score-section">
-        <h3 class="secure-score-section-title">6-Month Trend</h3>
-        <div id="secure-score-trend" class="trend-chart-container"></div>
-      </div>
-
-      <!-- Recommendations -->
-      <div class="secure-score-section">
-        <h3 class="secure-score-section-title">Improvement Recommendations</h3>
-        <div id="secure-score-recommendations" class="recommendations-container"></div>
-      </div>
-
-    </div>
+      The tab owns this DOM. Edit public/js/tab-secure-score.js.
+    -->
+    <div id="secure-score-container" class="secure-score-wrapper"></div>
   </section>
 
   <!-- ── GRC & Insurability Tab Panel ─────────────────────────────────────── -->
@@ -2364,6 +2356,7 @@
   <script src="js/tab-incidents.js"></script>
   <script src="js/tab-awareness.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="js/ms-secure-score.js"></script>
   <script src="js/tab-secure-score.js"></script>
   <script src="js/tab-grc.js"></script>
   <script src="js/tab-redteam.js"></script>

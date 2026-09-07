@@ -363,8 +363,15 @@ check('a fetch failure is recorded on the integration row',
  * runTicketIntegrationSync, which calls adapter.fetchTickets — a method this
  * adapter does not have, so inclusion would be a crash every 24 hours.
  */
+/*
+ * Matched on the exclusion list CONTAINING EMAIL_PROVIDER rather than on the
+ * exact array literal. The literal spelling broke the moment a fifth
+ * non-ticket provider was added (ms_graph), which is a false failure: the
+ * property being protected is that Acronis is not swept, not that exactly three
+ * other providers are also not swept.
+ */
 check('acronis is excluded from the ticket-shaped scheduled sweep',
-  /\[\[EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER\]\]/.test(srvCode));
+  /provider <> ALL\(\$1::text\[\]\)'[\s\S]{0,200}EMAIL_PROVIDER/.test(srvCode));
 check('and has its own scheduler', /runEmailSyncs/.test(srvCode));
 check('which does not stack overlapping runs',
   /if \(emailSyncRunning\)[\s\S]{0,200}return;/.test(srvCode));

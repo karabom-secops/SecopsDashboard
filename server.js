@@ -45,6 +45,7 @@ const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics
 const sentinelOneAdapter = require('./lib/integrations/sentinelone');
 const wazuhAdapter = require('./lib/integrations/wazuh-indexer');
 const acronisAdapter = require('./lib/integrations/acronis');
+const msGraphAdapter = require('./lib/integrations/ms-graph');
 const { computeEdrSummary } = require('./lib/edr-metrics');
 const { computeEmailSummary } = require('./lib/email-metrics');
 const wazuhMetrics = require('./lib/wazuh-metrics');
@@ -2755,7 +2756,23 @@ const WAZUH_PROVIDER = 'wazuh';
  */
 const EMAIL_PROVIDER = 'acronis';
 
-const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER]);
+/*
+ * Microsoft Graph backs Microsoft Secure Score.
+ *
+ * Distinct from WAZUH_PROVIDER even though both surface Microsoft data. Wazuh
+ * forwards Graph EVENTS (alerts, risky users, sign-ins) into its index; Secure
+ * Score is a daily posture snapshot that the Wazuh ms-graph wodle does not
+ * carry and cannot, so it is pulled from Graph directly. A tenant will commonly
+ * have both configured, and they are not redundant.
+ *
+ * Like Acronis, it authenticates with OAuth client credentials rather than an
+ * API key: config_json holds the application (client) ID and the Azure
+ * directory (tenant) ID, and the client SECRET goes in the encrypted api_key
+ * column with every other credential.
+ */
+const MSGRAPH_PROVIDER = 'ms_graph';
+
+const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER]);
 
 /*
  * Degrade-open probe for the email-security tables, matching hasFirewallTables.
@@ -2771,6 +2788,21 @@ async function hasEmailTables() {
   try {
     await pool.query('SELECT 1 FROM email_alerts LIMIT 1');
     _hasEmailTables = true;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Same degrade-open probe for the Microsoft Secure Score tables, and cached on
+// a positive answer only for the same reason: a false must stay re-checkable,
+// or running the migration would need a restart to take effect.
+let _hasMsScoreTables = false;
+async function hasMsScoreTables() {
+  if (_hasMsScoreTables) return true;
+  try {
+    await pool.query('SELECT 1 FROM ms_secure_scores LIMIT 1');
+    _hasMsScoreTables = true;
     return true;
   } catch (_) {
     return false;
@@ -2920,6 +2952,41 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
         ok: true,
         message: 'Connection successful.' + note + disabledNote,
         typesSeen: types,
+        isEnabled: is_enabled,
+      });
+    } else if (provider === MSGRAPH_PROVIDER) {
+      /*
+       * As with Acronis, a bare tick is not enough — but the failure being
+       * guarded against here is different and worse. Graph credentials that
+       * authenticate perfectly can still be pointed at the WRONG DIRECTORY
+       * (a partner app registration, a test tenant), in which case the
+       * dashboard fills with a real, plausible, entirely unrelated client's
+       * posture. Nothing downstream can detect that.
+       *
+       * So the directory id Microsoft answered with is echoed back for the
+       * operator to check by eye, along with the score actually read.
+       */
+      const probe = await msGraphAdapter.testConnection({
+        base_url, api_key, ...(config_json || {}),
+      });
+
+      // Record the directory we saw. It is not a secret, and having it stored
+      // lets the sync notice later if the credential starts answering for a
+      // different tenant than the one that was verified here.
+      if (probe.azureTenantId) {
+        const merged = Object.assign({}, config_json || {},
+          { verified_azure_tenant_id: probe.azureTenantId });
+        await pool.query(
+          'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
+          [JSON.stringify(merged), tenantId, provider]
+        );
+      }
+
+      return res.json({
+        ok: true,
+        message: probe.message + disabledNote,
+        latest: probe.latest,
+        azureTenantId: probe.azureTenantId || null,
         isEnabled: is_enabled,
       });
     } else if (provider === WAZUH_PROVIDER) {
@@ -3418,6 +3485,208 @@ async function runAcronisSync(tenantId) {
   }
 }
 
+/**
+ * Microsoft Secure Score sync.
+ *
+ * Writes up to ~90 daily snapshots (Graph's own retention) plus the per-control
+ * detail for the NEWEST snapshot only — see db/migrate-ms-secure-score.sql for
+ * why per-control history is not kept.
+ *
+ * There is no watermark here, unlike the Acronis sync. Microsoft RESTATES
+ * history: maxScore changes when controls are published, and an already-stored
+ * day's snapshot legitimately comes back different. Resuming from the newest
+ * date we hold would pin every earlier day to whatever it was on first sync,
+ * so every returned snapshot is upserted every time. Ninety small rows a day is
+ * a price worth paying for a trend that stays true.
+ */
+async function runMsGraphSync(tenantId) {
+  const provider = MSGRAPH_PROVIDER;
+
+  if (!await hasMsScoreTables()) {
+    const err = new Error('Microsoft Secure Score tables are not present — run db/migrate-ms-secure-score.sql.');
+    err.httpStatus = 503;
+    throw err;
+  }
+
+  const intRow = await pool.query(
+    'SELECT base_url, api_key_enc, api_key_iv, config_json FROM integrations WHERE tenant_id = $1 AND provider = $2 AND is_enabled = TRUE',
+    [tenantId, provider]
+  );
+  if (!intRow.rows.length) {
+    const err = new Error('Integration not configured or disabled.');
+    err.httpStatus = 404;
+    throw err;
+  }
+
+  const { base_url, api_key_enc, api_key_iv, config_json } = intRow.rows[0];
+  const cfg = config_json || {};
+  const config = { base_url, api_key: decryptKey(api_key_enc, api_key_iv), ...cfg };
+
+  let result;
+  try {
+    result = await msGraphAdapter.fetchAll(config, {});
+  } catch (fetchErr) {
+    await pool.query(
+      `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1
+       WHERE tenant_id = $2 AND provider = $3`,
+      [fetchErr.message, tenantId, provider]
+    );
+    fetchErr.httpStatus = 502;
+    throw fetchErr;
+  }
+
+  const { snapshots, latest, controls, truncated } = result;
+  const warnings = [...(result.warnings || [])];
+
+  if (!snapshots.length) {
+    const message = 'Connected, but Microsoft has published no Secure Score snapshots for this tenant.';
+    await pool.query(
+      `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = 'no_data', last_sync_message = $1
+       WHERE tenant_id = $2 AND provider = $3`,
+      [message, tenantId, provider]
+    );
+    return { ok: true, synced: 0, snapshots: 0, controls: 0, message, warnings };
+  }
+
+  /*
+   * The directory check promised by the Test button.
+   *
+   * A credential that starts answering for a different Azure directory than the
+   * one an operator verified is either a rotated app registration or a
+   * misconfiguration, and the data it returns is some other organisation's
+   * posture. Warn loudly and keep going — refusing to sync would strand a
+   * client whose directory id legitimately changed (a tenant migration), and
+   * this is a claim for a human to adjudicate, not for the sync to enforce.
+   */
+  const seenDirectory = latest && latest.azureTenantId;
+  if (cfg.verified_azure_tenant_id && seenDirectory &&
+      String(cfg.verified_azure_tenant_id).toLowerCase() !== String(seenDirectory).toLowerCase()) {
+    warnings.push('DIRECTORY MISMATCH — this credential now answers for Azure directory ' +
+      seenDirectory + ', not the ' + cfg.verified_azure_tenant_id +
+      ' that was verified. Confirm the app registration before trusting these figures.');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    for (const s of snapshots) {
+      await client.query(
+        `INSERT INTO ms_secure_scores (
+           tenant_id, score_date, current_score, max_score, azure_tenant_id,
+           active_user_count, licensed_user_count, enabled_services,
+           comparative_json, raw_json, synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+         ON CONFLICT (tenant_id, score_date) DO UPDATE SET
+           current_score       = EXCLUDED.current_score,
+           max_score           = EXCLUDED.max_score,
+           azure_tenant_id     = EXCLUDED.azure_tenant_id,
+           active_user_count   = EXCLUDED.active_user_count,
+           licensed_user_count = EXCLUDED.licensed_user_count,
+           enabled_services    = EXCLUDED.enabled_services,
+           comparative_json    = EXCLUDED.comparative_json,
+           raw_json            = EXCLUDED.raw_json,
+           synced_at           = NOW()`,
+        [tenantId, s.scoreDate, s.currentScore, s.maxScore, s.azureTenantId,
+         s.activeUserCount, s.licensedUserCount,
+         JSON.stringify(s.enabledServices || []),
+         JSON.stringify(s.comparative || []),
+         JSON.stringify(s.raw)]);
+    }
+
+    /*
+     * Controls are REPLACED for the day being written, not merged.
+     *
+     * A control that disappears from Microsoft's snapshot — retired, or no
+     * longer applicable after a licence change — must disappear from the
+     * remediation list too. An upsert-only pass would leave it sitting there
+     * forever at its last known score, and a stale control is worse than a
+     * missing one: somebody works the item and nothing moves.
+     */
+    if (latest && controls.length) {
+      await client.query(
+        'DELETE FROM ms_secure_score_controls WHERE tenant_id = $1 AND score_date = $2',
+        [tenantId, latest.scoreDate]);
+
+      for (const c of controls) {
+        await client.query(
+          `INSERT INTO ms_secure_score_controls (
+             tenant_id, score_date, control_name, control_category, score,
+             score_in_percentage, implementation_status, description,
+             title, max_score, rank, tier, service, action_type, action_url,
+             remediation, remediation_impact, user_impact, implementation_cost,
+             threats, deprecated, control_state, raw_json, synced_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,NOW())
+           ON CONFLICT (tenant_id, score_date, control_name) DO UPDATE SET
+             control_category      = EXCLUDED.control_category,
+             score                 = EXCLUDED.score,
+             score_in_percentage   = EXCLUDED.score_in_percentage,
+             implementation_status = EXCLUDED.implementation_status,
+             description           = EXCLUDED.description,
+             title                 = EXCLUDED.title,
+             max_score             = EXCLUDED.max_score,
+             rank                  = EXCLUDED.rank,
+             tier                  = EXCLUDED.tier,
+             service               = EXCLUDED.service,
+             action_type           = EXCLUDED.action_type,
+             action_url            = EXCLUDED.action_url,
+             remediation           = EXCLUDED.remediation,
+             remediation_impact    = EXCLUDED.remediation_impact,
+             user_impact           = EXCLUDED.user_impact,
+             implementation_cost   = EXCLUDED.implementation_cost,
+             threats               = EXCLUDED.threats,
+             deprecated            = EXCLUDED.deprecated,
+             control_state         = EXCLUDED.control_state,
+             raw_json              = EXCLUDED.raw_json,
+             synced_at             = NOW()`,
+          [tenantId, latest.scoreDate, c.controlName, c.controlCategory, c.score,
+           c.scoreInPercentage, c.implementationStatus, c.description,
+           c.title, c.maxScore, c.rank, c.tier, c.service, c.actionType, c.actionUrl,
+           c.remediation, c.remediationImpact, c.userImpact, c.implementationCost,
+           JSON.stringify(c.threats || []), c.deprecated, c.controlState,
+           JSON.stringify(c.raw)]);
+      }
+    }
+
+    const pct = msGraphAdapter.percentage(latest.currentScore, latest.maxScore);
+    let message = `Synced ${snapshots.length} snapshot(s) and ${controls.length} control(s);`
+      + ` latest ${latest.scoreDate} = ${latest.currentScore ?? '?'}/${latest.maxScore ?? '?'}`
+      + (pct === null ? '' : ` (${pct}%)`);
+    if (warnings.length) message += '. ' + warnings.join(' ');
+
+    // A partial pull is reported as partial, and a warning is not an "ok".
+    const status = truncated ? 'partial' : (warnings.length ? 'partial' : 'ok');
+
+    await client.query(
+      `UPDATE integrations SET last_synced_at = NOW(),
+              last_sync_status = $1, last_sync_message = $2
+       WHERE tenant_id = $3 AND provider = $4`,
+      [status, message, tenantId, provider]
+    );
+
+    await client.query('COMMIT');
+    console.log(`[integrations] ${provider} sync: ${message} for tenant ${tenantId}`);
+    return {
+      ok: true,
+      synced: snapshots.length,
+      snapshots: snapshots.length,
+      controls: controls.length,
+      latest: {
+        scoreDate: latest.scoreDate,
+        currentScore: latest.currentScore,
+        maxScore: latest.maxScore,
+        percentage: pct,
+      },
+      truncated, warnings, message,
+    };
+  } catch (dbErr) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw dbErr;
+  } finally {
+    client.release();
+  }
+}
+
 /** Load an enabled Wazuh integration row with its key decrypted, or throw.
  *  The thrown error carries `.reason` so callers can tell a missing integration
  *  apart from one that exists but is switched off — those need completely
@@ -3508,6 +3777,7 @@ app.post('/api/integrations/:provider/sync', async (req, res) => {
     else if (provider === EDR_PROVIDER)    result = await runSentinelOneSync(tenantId);
     else if (provider === WAZUH_PROVIDER)  result = await runWazuhRollupSync(tenantId);
     else if (provider === EMAIL_PROVIDER)  result = await runAcronisSync(tenantId);
+    else if (provider === MSGRAPH_PROVIDER) result = await runMsGraphSync(tenantId);
     else                                   result = await runTicketIntegrationSync(provider, tenantId, req.session.userId);
     return res.json(result);
   } catch (err) {
@@ -3528,13 +3798,13 @@ const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 async function runScheduledSyncs() {
   let rows;
   try {
-    // SentinelOne, Wazuh and Acronis are excluded — each runs on its own cadence
-    // below. A provider missing from this list would be swept into
-    // runTicketIntegrationSync, which would call fetchTickets on an adapter that
-    // has no such method.
+    // SentinelOne, Wazuh, Acronis and Microsoft Graph are excluded — each runs
+    // on its own cadence below. A provider missing from this list would be
+    // swept into runTicketIntegrationSync, which would call fetchTickets on an
+    // adapter that has no such method.
     rows = (await pool.query(
       'SELECT tenant_id, provider FROM integrations WHERE is_enabled = TRUE AND provider <> ALL($1::text[])',
-      [[EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER]]
+      [[EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER]]
     )).rows;
   } catch (err) {
     console.error('[integrations] scheduled sync: failed to load integrations —', err.message);
@@ -3690,6 +3960,63 @@ async function runEmailSyncs() {
 
 setTimeout(() => { runEmailSyncs().catch(err => console.error('[integrations] acronis sync crashed —', err.message)); }, 75 * 1000);
 setInterval(() => { runEmailSyncs().catch(err => console.error('[integrations] acronis sync crashed —', err.message)); }, EMAIL_SYNC_INTERVAL_MS);
+
+// ── Microsoft Secure Score sync (daily) ────────────────────────────────────
+//
+// Daily, not six-hourly like the operational feeds: Microsoft recomputes Secure
+// Score roughly once every 24 hours, so a shorter interval spends Graph request
+// quota re-reading a number that has not moved. Quota matters here because this
+// app registration is usually shared with whatever else the client has
+// integrated against their directory.
+
+const MSGRAPH_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let msGraphSyncRunning = false;
+
+async function runMsGraphSyncs() {
+  // A first pull is ~90 snapshots plus the full control catalogue across
+  // several pages; overlapping runs would fight over the same upsert keys and
+  // double the API load for nothing.
+  if (msGraphSyncRunning) {
+    console.log('[integrations] ms_graph sync still running — skipping this tick');
+    return;
+  }
+  msGraphSyncRunning = true;
+
+  try {
+    // No tables, no sync — and no error every day on a database where the
+    // migration has not been run.
+    if (!await hasMsScoreTables()) return;
+
+    let rows;
+    try {
+      rows = (await pool.query(
+        'SELECT tenant_id FROM integrations WHERE is_enabled = TRUE AND provider = $1',
+        [MSGRAPH_PROVIDER]
+      )).rows;
+    } catch (err) {
+      console.error('[integrations] ms_graph sync: failed to load integrations —', err.message);
+      return;
+    }
+
+    for (const row of rows) {
+      try {
+        const result = await runMsGraphSync(row.tenant_id);
+        console.log(`[integrations] ms_graph sync ok: tenant ${row.tenant_id} (${result.snapshots} snapshot(s), ${result.controls} control(s))`);
+        // Warnings are the point of this integration degrading honestly — a
+        // directory mismatch or a missing control catalogue must not be
+        // visible only in a database column nobody tails.
+        (result.warnings || []).forEach(w => console.warn(`[integrations] ms_graph tenant ${row.tenant_id}: ${w}`));
+      } catch (err) {
+        console.error(`[integrations] ms_graph sync failed: tenant ${row.tenant_id} — ${err.message}`);
+      }
+    }
+  } finally {
+    msGraphSyncRunning = false;
+  }
+}
+
+setTimeout(() => { runMsGraphSyncs().catch(err => console.error('[integrations] ms_graph sync crashed —', err.message)); }, 105 * 1000);
+setInterval(() => { runMsGraphSyncs().catch(err => console.error('[integrations] ms_graph sync crashed —', err.message)); }, MSGRAPH_SYNC_INTERVAL_MS);
 
 // ── Wazuh daily rollups (hourly tick, snapshots complete days) ──────────────
 // The Managed NDR and Managed Identity tabs read the indexer live for short ranges,
@@ -7126,6 +7453,218 @@ async function compositeScoreFor(tenantId) {
     return null;
   }
 }
+
+/**
+ * GET /api/ms-secure-score — Microsoft's Secure Score for this tenant.
+ *
+ * ══ WHY THIS IS NOT PART OF /api/secure-score ══
+ *
+ * Microsoft's number is NOT folded into our composite, and this separate route
+ * is how that stays true. Two reasons, both of which would show up on a client's
+ * board pack as a lie:
+ *
+ *   * the denominator moves. maxScore rises whenever Microsoft publishes a new
+ *     control, so a client who changed nothing loses percentage overnight. Fold
+ *     that into our composite and a Microsoft product decision reads as the
+ *     client's posture degrading — with no way to show otherwise.
+ *
+ *   * it is not ours to defend. Every component of lib/secure-score.js can be
+ *     explained control by control to a client who disputes it. Microsoft's
+ *     weighting cannot, because we do not know it.
+ *
+ * So it is reported ALONGSIDE, clearly attributed, and the two are allowed to
+ * disagree. A client whose Microsoft score is 71% and whose composite is 48% is
+ * being told something true and useful: their Microsoft tenancy is in better
+ * shape than the rest of their estate.
+ */
+app.get('/api/ms-secure-score', requireAuth, async (req, res) => {
+  try {
+    const tenantId = resolveScoreTenant(req);
+    if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
+
+    // Degrade open, exactly like the email tab: an unrun migration must read as
+    // "not set up" rather than as a 500.
+    if (!await hasMsScoreTables()) {
+      return res.json({
+        available: false,
+        reason: 'not_migrated',
+        message: 'Microsoft Secure Score storage is not set up — run db/migrate-ms-secure-score.sql.',
+      });
+    }
+
+    const intRow = await pool.query(
+      `SELECT is_enabled, last_synced_at, last_sync_status, last_sync_message
+         FROM integrations WHERE tenant_id = $1 AND provider = $2`,
+      [tenantId, MSGRAPH_PROVIDER]
+    );
+    const integration = intRow.rows[0] || null;
+
+    const snapRes = await pool.query(
+      `SELECT score_date, current_score, max_score, azure_tenant_id,
+              active_user_count, licensed_user_count, enabled_services,
+              comparative_json, synced_at
+         FROM ms_secure_scores
+        WHERE tenant_id = $1
+        ORDER BY score_date DESC
+        LIMIT 90`,
+      [tenantId]
+    );
+
+    if (!snapRes.rows.length) {
+      /*
+       * Three different nothings, told apart. "Not configured", "configured but
+       * never synced" and "synced but Microsoft published nothing" need
+       * completely different actions from whoever reads the tab, and collapsing
+       * them into an empty panel sends people hunting for the wrong problem.
+       */
+      const reason = !integration ? 'not_configured'
+        : !integration.last_synced_at ? 'never_synced'
+        : 'no_snapshots';
+      return res.json({
+        available: false,
+        reason,
+        isEnabled: integration ? integration.is_enabled : false,
+        lastSyncedAt: integration ? integration.last_synced_at : null,
+        lastSyncStatus: integration ? integration.last_sync_status : null,
+        lastSyncMessage: integration ? integration.last_sync_message : null,
+      });
+    }
+
+    const rows = snapRes.rows;
+    const latest = rows[0];
+
+    const ctlRes = await pool.query(
+      `SELECT control_name, control_category, score, max_score, score_in_percentage,
+              implementation_status, title, rank, tier, service, action_type, action_url,
+              remediation, remediation_impact, user_impact, implementation_cost,
+              threats, deprecated, control_state, description
+         FROM ms_secure_score_controls
+        WHERE tenant_id = $1 AND score_date = $2`,
+      [tenantId, latest.score_date]
+    );
+
+    const pctOf = (c, m) => msGraphAdapter.percentage(c, m);
+
+    const controls = ctlRes.rows.map(r => {
+      const score = r.score === null ? null : Number(r.score);
+      const max   = r.max_score === null ? null : Number(r.max_score);
+      return {
+        controlName: r.control_name,
+        title: r.title,
+        category: r.control_category,
+        score, maxScore: max,
+        // Null, not zero, when either half is unknown — "no gap" and "gap
+        // unknown" must not sort together in a remediation list.
+        gap: (score !== null && max !== null) ? Math.max(0, Math.round((max - score) * 1000) / 1000) : null,
+        scoreInPercentage: r.score_in_percentage === null ? null : Number(r.score_in_percentage),
+        implementationStatus: r.implementation_status,
+        description: r.description,
+        rank: r.rank,
+        tier: r.tier,
+        service: r.service,
+        actionType: r.action_type,
+        actionUrl: r.action_url,
+        remediation: r.remediation,
+        remediationImpact: r.remediation_impact,
+        userImpact: r.user_impact,
+        implementationCost: r.implementation_cost,
+        threats: r.threats || [],
+        deprecated: r.deprecated === true,
+        controlState: r.control_state,
+      };
+    });
+
+    /*
+     * The remediation list: real, actionable gaps only.
+     *
+     * Excluded, and each for a reason that costs credibility if got wrong:
+     *   deprecated            Microsoft has retired it; nobody can action it.
+     *   controlState ThirdParty  the client covers this with a non-Microsoft
+     *                         product. Microsoft still scores it zero. Telling
+     *                         them to remediate it is telling them to buy
+     *                         something they already own.
+     *   controlState Ignored  a recorded risk ACCEPTANCE. It belongs in the
+     *                         risk register, not in a to-do list — but it is
+     *                         returned separately below rather than hidden,
+     *                         because an acceptance nobody revisits is a risk
+     *                         nobody owns.
+     *   gap === null          we could not measure it; see above.
+     */
+    const isExcluded = c => c.deprecated ||
+      c.controlState === 'ThirdParty' || c.controlState === 'Ignored';
+
+    const gaps = controls
+      .filter(c => !isExcluded(c) && c.gap !== null && c.gap > 0)
+      .sort((a, b) => (b.gap - a.gap) ||
+        // Microsoft's own rank breaks ties: equal points, their priority wins.
+        ((a.rank === null ? 1e9 : a.rank) - (b.rank === null ? 1e9 : b.rank)));
+
+    const accepted = controls.filter(c => c.controlState === 'Ignored');
+    const thirdParty = controls.filter(c => c.controlState === 'ThirdParty');
+
+    // Per-category rollup, so the panel can say WHERE the points are missing.
+    const byCategory = {};
+    for (const c of controls) {
+      if (isExcluded(c)) continue;
+      const key = c.category || 'Uncategorised';
+      const b = byCategory[key] || (byCategory[key] = { category: key, score: 0, maxScore: 0, controls: 0, unmeasured: 0 });
+      b.controls++;
+      // Only fully-measured controls contribute to a category total. A category
+      // whose numerator counted a control its denominator skipped would report
+      // a percentage no set of controls could produce.
+      if (c.score === null || c.maxScore === null) { b.unmeasured++; continue; }
+      b.score += c.score;
+      b.maxScore += c.maxScore;
+    }
+    const categories = Object.values(byCategory).map(b => ({
+      ...b,
+      percentage: pctOf(b.score, b.maxScore),
+    })).sort((a, b) => (a.category < b.category ? -1 : 1));
+
+    const trend = rows.map(r => ({
+      date: r.score_date instanceof Date ? r.score_date.toISOString().slice(0, 10) : String(r.score_date),
+      currentScore: r.current_score === null ? null : Number(r.current_score),
+      maxScore: r.max_score === null ? null : Number(r.max_score),
+      percentage: pctOf(r.current_score, r.max_score),
+    })).reverse();   // oldest first, for plotting
+
+    res.json({
+      available: true,
+      isEnabled: integration ? integration.is_enabled : null,
+      lastSyncedAt: integration ? integration.last_synced_at : null,
+      lastSyncStatus: integration ? integration.last_sync_status : null,
+      lastSyncMessage: integration ? integration.last_sync_message : null,
+
+      latest: {
+        date: latest.score_date instanceof Date ? latest.score_date.toISOString().slice(0, 10) : String(latest.score_date),
+        currentScore: latest.current_score === null ? null : Number(latest.current_score),
+        maxScore: latest.max_score === null ? null : Number(latest.max_score),
+        percentage: pctOf(latest.current_score, latest.max_score),
+        azureTenantId: latest.azure_tenant_id,
+        activeUserCount: latest.active_user_count,
+        licensedUserCount: latest.licensed_user_count,
+        enabledServices: latest.enabled_services || [],
+        comparative: latest.comparative_json || [],
+        syncedAt: latest.synced_at,
+      },
+
+      /*
+       * The staleness caveat is DATA, not a UI nicety. Microsoft publishes one
+       * snapshot a day; if the newest is a fortnight old the integration is
+       * broken and the gauge on screen is a fortnight-old claim about a live
+       * tenancy. The tab must be able to say so without recomputing this.
+       */
+      ageDays: Math.floor((Date.now() - new Date(latest.score_date).getTime()) / 86400000),
+
+      trend,
+      categories,
+      gaps,
+      accepted,
+      thirdParty,
+      controlCount: controls.length,
+    });
+  } catch (err) { return serverError(res, err); }
+});
 
 app.get('/api/secure-score', requireAuth, async (req, res) => {
   try {

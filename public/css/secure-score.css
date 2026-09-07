@@ -635,3 +635,128 @@
 @media (max-width: 640px) {
   .ss-scope-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Microsoft Secure Score panel ──────────────────────────────────────────
+   Visually separated from the panels above it on purpose. This is somebody
+   else's number, reported alongside ours and not folded into it, and the
+   border is the cheapest way to keep a reader from attributing Microsoft's
+   weighting to us. See public/js/ms-secure-score.js. */
+
+.ms-ss-panel {
+  border: 1px solid var(--card-edge, var(--border));
+  border-radius: var(--radius-card, 10px);
+  background: var(--card-bg, var(--surface));
+  padding: 1.1rem 1.25rem 1.25rem;
+}
+
+.ms-ss-head { margin-bottom: 0.9rem; }
+
+.ms-ss-attrib {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.ms-ss-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem 1.6rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--separator, var(--border));
+}
+
+/* Points first and largest: the percentage moves when Microsoft publishes new
+   controls, so it must not be the number that dominates the panel. */
+.ms-ss-points-val { font-size: 2.1rem; font-weight: 700; }
+.ms-ss-points-max { font-size: 0.95rem; color: var(--muted); margin-left: 0.25rem; }
+.ms-ss-pct { font-size: 1.15rem; font-weight: 600; }
+
+.ms-ss-meta {
+  margin-left: auto;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--muted);
+  text-align: right;
+}
+.ms-ss-meta code { font-size: 0.72rem; }
+
+.ms-ss-warn  { color: var(--amber, #e67e22); font-weight: 600; }
+.ms-ss-error {
+  margin: 0.7rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--danger, #c0392b);
+}
+
+.ms-ss-comps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 1.1rem;
+  margin-top: 0.9rem;
+  font-size: 0.78rem;
+}
+.ms-ss-comps-label { color: var(--muted); }
+.ms-ss-comp-label  { color: var(--muted); margin-right: 0.3rem; }
+.ms-ss-comp-val    { font-weight: 600; }
+
+.ms-ss-cats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+.ms-ss-cat {
+  border: 1px solid var(--separator, var(--border));
+  border-radius: var(--radius-sm, 6px);
+  padding: 0.6rem 0.7rem;
+}
+.ms-ss-cat-name  { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.ms-ss-cat-score { font-size: 1.35rem; font-weight: 700; line-height: 1.25; }
+.ms-ss-cat-sub   { font-size: 0.72rem; color: var(--muted); }
+
+.ms-ss-subhead {
+  margin: 1.3rem 0 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Wide tables scroll inside their own box rather than widening the report. */
+.ms-ss-table-wrap { overflow-x: auto; }
+.ms-ss-table { width: 100%; border-collapse: collapse; font-size: 0.79rem; }
+.ms-ss-table th {
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ms-ss-table td {
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid var(--separator, var(--border));
+  vertical-align: top;
+}
+.ms-ss-gap-title  { font-weight: 600; line-height: 1.35; }
+.ms-ss-gap-rem    { margin-top: 0.2rem; font-size: 0.74rem; line-height: 1.45; color: var(--muted); }
+.ms-ss-gap-points { white-space: nowrap; text-align: right; }
+.ms-ss-of         { font-size: 0.72rem; color: var(--muted); }
+
+.ms-ss-exclusions {
+  margin: 0.8rem 0 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.ms-ss-empty-title { margin: 0.4rem 0 0.2rem; font-weight: 600; }
+.ms-ss-empty-body  { margin: 0; font-size: 0.8rem; line-height: 1.55; color: var(--muted); }
+.ms-ss-loading     { color: var(--muted); font-size: 0.82rem; }
+
+@media (max-width: 640px) {
+  .ms-ss-meta { margin-left: 0; text-align: left; }
+}
