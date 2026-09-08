@@ -862,6 +862,115 @@ const allTiles = tileLabels(execSec.render(execCtx(['vuln', 'mdr', 'awareness', 
 check('a full-service client still gets everything',
   allTiles.length >= 6, allTiles.join(' | '));
 
+/* ── The drafted prose and the tiles above it are the same report ──────────
+ *
+ * draftExecSummary() writes the paragraphs an analyst edits before generation.
+ * It was reading the OVERALL composite while the tile beside it printed
+ * headlineScore(), so a scoped client's slide carried two different Secure
+ * Scores with nothing saying which was which — measured on the real fixtures,
+ * awareness-only printed 60 in the tile and 37 in the sentence beneath it, and
+ * MDR-only printed 0 against 22.
+ *
+ * This is the same defect the Overview tile had, one layer down. Asserting the
+ * prose against a literal would let both drift together, so every check here
+ * compares the prose to the tile rendered from the SAME ctx.
+ */
+section('the drafted prose reports the same score as the tile');
+
+const proseScore = (text) => (String(text).match(/stands at (\d+)/) || [])[1];
+const tileScore  = (html) => (String(html).match(/(\d+)\/100/) || [])[1];
+
+[['awareness'], ['mdr'], ['vuln', 'mdr', 'awareness'], null].forEach(function (svc) {
+  const c = execCtx(svc);
+  const label = svc ? svc.join('+') : 'no mix recorded';
+  check('prose and tile agree for ' + label,
+    proseScore(S.draftExecSummary(c)) === tileScore(execSec.render(c)),
+    'prose=' + proseScore(S.draftExecSummary(c)) +
+    ' tile=' + tileScore(execSec.render(c)));
+});
+
+const awProse = S.draftExecSummary(execCtx(['awareness']));
+check('a scoped client is told the figure covers the services in scope',
+  /across the services in scope/.test(awProse), awProse.split('\n')[0]);
+
+/*
+ * The stored history holds COMPOSITES. Claiming the in-scope score "improved
+ * from 37 the previous month" compares two different measures and calls the
+ * difference progress — the same reason the renderer drops the trend arrow on
+ * a scoped tile.
+ */
+check('and is given no month-on-month movement claim against a different measure',
+  !/(improved|declined|held steady)/.test(awProse.split('\n')[0]),
+  awProse.split('\n')[0]);
+
+const plainProse = S.draftExecSummary(execCtx(null));
+check('but an unscoped client keeps the trend sentence',
+  /(improved|declined|held steady)/.test(plainProse), plainProse.split('\n')[0]);
+
+section('the drafted prose counts incidents the way the tile does');
+
+/*
+ * The tile counted logged incidents PLUS MDR tickets; the prose counted only
+ * the logged ones. A client with a month of MDR activity read "2 Security
+ * incidents this period" in the tile and "No security incidents were recorded"
+ * in the sentence below it.
+ */
+const mdrCtx = execCtx(['mdr']);
+const mdrProse = S.draftExecSummary(mdrCtx);
+const mdrHtml  = execSec.render(mdrCtx);
+const tileIncidents = (mdrHtml.match(/>(\d+)<\/div><div class="bi-l">Security incidents/) || [])[1];
+check('an MDR ticket is an incident in the prose too',
+  new RegExp('\\b' + tileIncidents + ' security incident').test(mdrProse),
+  'tile=' + tileIncidents + '  prose=' +
+  (mdrProse.match(/(\d+) security incident|No security incidents/) || [])[0]);
+check('there is one incident counter, not two',
+  /function incidentCount\(/.test(srcCode) &&
+  (srcCode.match(/incidentCount\(ctx\)/g) || []).length >= 2,
+  (srcCode.match(/incidentCount\(ctx\)/g) || []).length + ' call sites');
+
+section('the prose never names a control the client did not buy');
+
+/*
+ * A component the client does not buy scores 0 because nobody was engaged to
+ * manage it. "The principal exposure remains vulnerability management" on an
+ * awareness-only client's board pack is a statement about our order book
+ * dressed as a finding about them — and it was being printed.
+ */
+check('an awareness-only client is not told vulnerability management is their exposure',
+  !/vulnerability management/.test(awProse), awProse);
+check('nor incident response',
+  !/incident response/.test(awProse), awProse);
+// The awareness-only fixture completes its training, so nothing is below target
+// and the paragraph is correctly silent. Drop the score to prove the gate lets a
+// genuine shortfall THROUGH — a check that only ever proves silence would pass
+// just as well if the paragraph had been deleted.
+const awBehindCtx = execCtx(['awareness']);
+awBehindCtx.data.secureScore.components.awareness = { score: 50, measured: true };
+check('but a genuine shortfall in the service they DO buy is still named',
+  /security awareness/.test(S.draftExecSummary(awBehindCtx)),
+  S.draftExecSummary(awBehindCtx));
+
+/*
+ * Unmeasured is not zero. A component with no evidence behind it cannot be
+ * called weak — the gap is in our data, and it is reported as a data gap
+ * elsewhere.
+ */
+const unmeasuredCtx = execCtx(['vuln', 'mdr', 'awareness']);
+unmeasuredCtx.data.secureScore.components.awareness =
+  { score: 0, measured: false };
+check('an unmeasured control is not reported as an exposure',
+  !/security awareness/.test(S.draftExecSummary(unmeasuredCtx)),
+  S.draftExecSummary(unmeasuredCtx));
+
+/*
+ * The risk register is a vISO deliverable. The all-clear is a claim, and only
+ * ours to make where we hold the register.
+ */
+check('no appetite claim for a client whose register we do not hold',
+  !/appetite/.test(awProse), awProse);
+check('but a vISO client gets one',
+  /appetite/.test(S.draftExecSummary(execCtx(['vuln', 'mdr', 'awareness', 'viso']))));
+
 /* ── The Executive Summary no longer grades resolution ────────────────────
  *
  * A "Resolution SLA met" tile sat beside the incident count and was removed on

@@ -797,6 +797,41 @@ window.ReportSections = (function () {
     return isNaN(n) ? null : n;
   }
 
+  /**
+   * Incidents in the reporting period. ONE definition, used by both the
+   * Executive Summary tile and the prose drafted above it.
+   *
+   * Two feeds with no shared key: incidents logged on the Incident Response tab,
+   * and the MDR tickets the Operations tab raises. An event escalated from a
+   * ticket into a logged incident appears in both, so `total` is a sum and not a
+   * deduplicated count — the section footnote says so rather than implying a
+   * precision the data does not have.
+   *
+   * WHY IT IS A FUNCTION. The tile counted both feeds; the drafted paragraph
+   * counted only the logged ones. A client with a month of MDR activity and no
+   * separately-logged incident read "2 Security incidents this period" in the
+   * tile and "No security incidents were recorded" in the sentence beneath it.
+   * Two answers to one question on one slide, and the analyst's only recourse is
+   * to retype the prose — which is how a hand-written number reaches a board.
+   */
+  function incidentCount(ctx) {
+    var ir = (((ctx.data || {}).vulnFindings || {}).incidents || []).filter(function (i) {
+      return monthOf(i.opened_at) === ctx.period;
+    }).length;
+    /*
+     * MDR tickets count only for a client who buys MDR — the same gate the tile
+     * applies. Incidents logged on the Incident Response tab always count:
+     * those are recorded against the client directly and belong to them
+     * whatever they buy from us.
+     */
+    var mdr = serviceInScope(ctx, 'mdr')
+      ? (((ctx.data || {}).mdr || {}).tickets || []).filter(function (t) {
+          return monthOf(t.createdAt) === ctx.period;
+        }).length
+      : 0;
+    return { ir: ir, mdr: mdr, total: ir + mdr };
+  }
+
   /** Component scores from /api/secure-score, rounded. */
   function componentScores(ctx) {
     var c = (ctx.data.secureScore || {}).components || {};
@@ -1823,31 +1858,63 @@ window.ReportSections = (function () {
     var prev   = previousScores(ctx);
     var paras  = [];
 
-    // 1. Where the posture stands and which way it is moving.
-    if (now.overall != null) {
-      var t = trendFor(now.overall, prev.overall);
+    /*
+     * 1. Where the posture stands and which way it is moving.
+     *
+     * THE SAME NUMBER THE TILE SHOWS. This paragraph used to report
+     * `now.overall` — the composite — while the tile directly above it printed
+     * headlineScore(), which is the in-scope score for any client with a
+     * recorded service mix. An awareness-only client read "Secure Score
+     * 60/100 · services in scope" and, immediately beneath, "the overall
+     * security posture stands at 37 out of 100". An MDR-only client got 0
+     * against 22. Neither figure was wrong; printing both without saying which
+     * was which is what made the slide indefensible in the room.
+     *
+     * headlineScore() is the single copy of the rule and this asks it, exactly
+     * as renderExecSummary does.
+     */
+    var head     = headlineScore(ctx.data.secureScore || {});
+    var headline = head.score != null ? head.score : now.overall;
+
+    if (headline != null) {
+      /*
+       * The trend compares against stored history, which holds COMPOSITES. For
+       * a scoped client the headline is a different measure, so the movement
+       * clause is dropped rather than comparing two unlike numbers and calling
+       * the difference progress. Same decision the renderer makes when it
+       * suppresses the trend arrow on a scoped tile.
+       */
+      var t = head.scoped ? { label: null } : trendFor(now.overall, prev.overall);
       var dir = t.label === 'Improving' ? 'improved'
               : t.label === 'Increasing' ? 'declined' : 'held steady';
-      paras.push('The overall security posture for ' + client + ' stands at ' + now.overall +
-        ' out of 100 for ' + label + ', having ' + dir +
-        (prev.overall != null ? ' from ' + prev.overall + ' the previous month' : '') + '. ' +
-        (now.overall >= MATURITY_TARGETS.overall
+
+      paras.push(
+        (head.scoped
+          ? 'The security posture for ' + client + ' across the services in scope stands at ' +
+            headline + ' out of 100 for ' + label + '. '
+          : 'The overall security posture for ' + client + ' stands at ' + headline +
+            ' out of 100 for ' + label + ', having ' + dir +
+            (prev.overall != null ? ' from ' + prev.overall + ' the previous month' : '') + '. ') +
+        (headline >= MATURITY_TARGETS.overall
           ? 'This is at or above the agreed target of ' + MATURITY_TARGETS.overall + '.'
           : 'The agreed target is ' + MATURITY_TARGETS.overall + '.'));
     }
 
-    // 2. What actually happened to the business.
-    var incidents = ((ctx.data.vulnFindings || {}).incidents || []).filter(function (i) {
-      return monthOf(i.opened_at) === ctx.period;
-    });
-    var material = incidents.filter(function (i) {
+    // 2. What actually happened to the business. Both feeds, via the helper the
+    //    tile uses — counting only the logged incidents told a client with a
+    //    month of MDR activity that nothing had happened.
+    var inc = incidentCount(ctx);
+    var material = (((ctx.data.vulnFindings || {}).incidents) || []).filter(function (i) {
+      if (monthOf(i.opened_at) !== ctx.period) return false;
       var s = String(i.severity || '').toLowerCase();
       return s === 'critical' || s === 'high';
     }).length;
 
-    if (incidents.length) {
-      paras.push(incidents.length + ' security incident' + (incidents.length === 1 ? ' was' : 's were') +
-        ' recorded during the period, of which ' + material +
+    if (inc.total) {
+      paras.push(inc.total + ' security incident' + (inc.total === 1 ? ' was' : 's were') +
+        ' recorded during the period' +
+        (inc.mdr && inc.ir ? ' (' + inc.mdr + ' raised by MDR, ' + inc.ir + ' logged)' : '') +
+        ', of which ' + material +
         (material === 1 ? ' was' : ' were') + ' of critical or high severity. ' +
         (material ? 'Each was investigated and worked to closure.'
                   : 'None met the threshold for material business impact.'));
@@ -1855,15 +1922,52 @@ window.ReportSections = (function () {
       paras.push('No security incidents were recorded for ' + client + ' during ' + label + '.');
     }
 
-    // 3. The dominant exposure, named rather than implied.
+    /*
+     * 3. The dominant exposure, named rather than implied.
+     *
+     * TWO THINGS THIS MUST NOT CALL AN EXPOSURE.
+     *
+     *   a control the client does not buy   Its component scores 0 because
+     *                                       nobody was engaged to manage it.
+     *                                       Naming it as "the principal
+     *                                       exposure" on their board pack is a
+     *                                       statement about our order book
+     *                                       dressed up as a finding about them.
+     *
+     *   a control with no evidence behind   measured === false means unmeasured,
+     *                                       and unmeasured is not zero. The gap
+     *                                       is in our data, and it is reported
+     *                                       as such elsewhere; asserting the
+     *                                       control is weak is a claim we cannot
+     *                                       support if asked.
+     *
+     * Both gates default to permissive when no service mix is recorded, so a
+     * client nobody has configured reads exactly what they read before.
+     */
     var behind = [];
-    if (now.vulnerabilities  != null && now.vulnerabilities  < MATURITY_TARGETS.vulnerabilities)  behind.push('vulnerability management');
-    if (now.awareness        != null && now.awareness        < MATURITY_TARGETS.awareness)        behind.push('security awareness');
-    if (now.incidentResponse != null && now.incidentResponse < MATURITY_TARGETS.incidentResponse) behind.push('incident response');
+    function trailing(key, phrase) {
+      if (now[key] == null) return;                       // never scored
+      if (!now.measured[key]) return;                     // unmeasured is not zero
+      if (!componentInScope(ctx, key)) return;            // not bought, not theirs
+      if (now[key] < MATURITY_TARGETS[key]) behind.push(phrase);
+    }
+    trailing('vulnerabilities',  'vulnerability management');
+    trailing('awareness',        'security awareness');
+    trailing('incidentResponse', 'incident response');
 
-    var above = ((ctx.data.vulnFindings || {}).risks || []).filter(function (r) {
-      return r.stage !== 'closed' && Number(r.risk_score) >= RISK_APPETITE_SCORE;
-    }).length;
+    /*
+     * The risk register is a vISO deliverable, and "requires a funded decision
+     * from the board" is vISO language. Gated exactly as the tile above it is,
+     * so the prose and the tiles make the same claim about what we were engaged
+     * to do. Ungated for a client with no recorded mix, like every other gate
+     * here.
+     */
+    var visoScoped = serviceInScope(ctx, 'viso');
+    var above = visoScoped
+      ? ((ctx.data.vulnFindings || {}).risks || []).filter(function (r) {
+          return r.stage !== 'closed' && Number(r.risk_score) >= RISK_APPETITE_SCORE;
+        }).length
+      : 0;
 
     if (behind.length || above) {
       paras.push(
@@ -1871,11 +1975,15 @@ window.ReportSections = (function () {
           ? 'The principal exposure remains ' + listPhrase(behind) + ', which ' +
             (behind.length === 1 ? 'sits' : 'sit') + ' below target. '
           : '') +
-        (above
-          ? above + ' open risk' + (above === 1 ? '' : 's') + ' currently sit' +
-            (above === 1 ? 's' : '') + ' above the agreed appetite and require a funded ' +
-            'decision from the board.'
-          : 'No open risk currently sits above the agreed appetite.'));
+        // The all-clear is itself a claim, and only ours to make where we hold
+        // the register. Silence beats asserting a clean appetite position for a
+        // client whose risks we were never engaged to track.
+        (!visoScoped ? ''
+          : above
+            ? above + ' open risk' + (above === 1 ? '' : 's') + ' currently sit' +
+              (above === 1 ? 's' : '') + ' above the agreed appetite and require a funded ' +
+              'decision from the board.'
+            : 'No open risk currently sits above the agreed appetite.'));
     }
 
     return paras.join('\n\n');
@@ -2627,19 +2735,11 @@ window.ReportSections = (function () {
     var risks = (data.risks || []).filter(function (r) { return r.stage !== 'closed'; });
     var sum   = vulnSummaryFor(ctx);
 
-    // Incidents logged on the Incident Response tab PLUS the MDR tickets the
-    // Operations tab counts as incidents — previously only the former, so a
-    // month of MDR activity could read as zero incidents.
-    // These are separate systems with no shared key, so an event escalated
-    // from a ticket into a logged incident is counted in both; the footnote
-    // says so rather than pretending the total is deduplicated.
-    var irIncidents = (data.incidents || []).filter(function (i) {
-      return monthOf(i.opened_at) === ctx.period;
-    }).length;
-    var mdrRaised = ((ctx.data.mdr || {}).tickets || []).filter(function (t2) {
-      return monthOf(t2.createdAt) === ctx.period;
-    }).length;
-    var incidents = irIncidents + mdrRaised;
+    // Both feeds, counted once, by the helper the drafted prose also calls.
+    var inc         = incidentCount(ctx);
+    var irIncidents = inc.ir;
+    var mdrRaised   = inc.mdr;
+    var incidents   = inc.total;
 
     var crit = sum ? (Number(sum.critical) || 0) + (Number(sum.high) || 0) : null;
     var above = risks.filter(function (r) {
