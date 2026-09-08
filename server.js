@@ -2219,13 +2219,86 @@ app.delete('/api/vulns/:monthKey', async (req, res) => {
   }
 });
 
+/**
+ * Every status a vulnerability finding can hold. One list, used by both update
+ * endpoints and asserted against the CHECK constraint in the test suite, so a
+ * status can never be accepted by the API and rejected by the database.
+ */
+const VULN_STATUSES = ['open', 'in-progress', 'fixed', 'accepted', 'false-positive'];
+
+/**
+ * Recompute and store a scan's summary from the CURRENT status of its findings.
+ *
+ * ══ WHY THIS EXISTS ══
+ *
+ * `vuln_scans.summary` is what the Secure Score reads — loadScoreInputs selects
+ * it and hands it straight to calculateVulnScore. It was written ONCE, at
+ * upload, and never again.
+ *
+ * So marking a finding fixed, accepted or false-positive updated
+ * `vuln_findings.status`, moved the item in the remediation tracker, stopped
+ * its SLA clock — and left the score exactly where it was. An analyst could
+ * spend a week closing findings and watch the number not move, which reads as
+ * the tracker being decorative. The correct arithmetic was already in
+ * computeVulnSummary(); nothing ever re-ran it.
+ *
+ * That mattered most for the caps. One open critical holds the vulnerability
+ * score at 65 (CRITICAL_CAPS in lib/secure-score.js). Classify that single
+ * finding as a false positive and the cap should lift immediately — under the
+ * old behaviour it held until somebody uploaded a new scan, possibly a month
+ * away.
+ *
+ * ══ WHAT IT DOES NOT DO ══
+ *
+ * It does not re-parse or re-classify anything. The findings are read back
+ * exactly as stored and passed through the same computeVulnSummary() the upload
+ * path uses, so a summary written here and a summary written at upload are
+ * produced by one function and cannot drift.
+ *
+ * @param {Object} client   a pg client or pool — the caller decides whether
+ *                          this shares their transaction
+ * @param {number} scanId
+ * @returns {Object|null}   the stored summary, or null if the scan vanished
+ */
+async function resyncVulnSummary(client, scanId) {
+  const rows = await client.query(
+    `SELECT plugin_id, name, risk, host, port, protocol, cve, cvss_v2, cvss_v3,
+            synopsis, solution, status
+       FROM vuln_findings WHERE scan_id = $1 ORDER BY finding_index`,
+    [scanId]
+  );
+  if (!rows.rows.length) return null;
+
+  // Mapped back to the shape the parser produces, because computeVulnSummary is
+  // the upload path's function and must stay the only implementation.
+  const findings = rows.rows.map(r => ({
+    pluginId: r.plugin_id,
+    name:     r.name,
+    risk:     r.risk,
+    host:     r.host,
+    port:     r.port,
+    protocol: r.protocol,
+    cve:      r.cve,
+    cvssV2:   r.cvss_v2,
+    cvssV3:   r.cvss_v3,
+    synopsis: r.synopsis,
+    solution: r.solution,
+    status:   r.status,
+  }));
+
+  const summary = computeVulnSummary(findings);
+  await client.query('UPDATE vuln_scans SET summary = $1 WHERE id = $2',
+    [JSON.stringify(summary), scanId]);
+  return summary;
+}
+
 // ── Bulk status update ────────────────────────────────────────────────────
 app.patch('/api/vulns/:monthKey/findings/bulk-status', async (req, res) => {
   try {
     const { monthKey } = req.params;
     const { status, indices } = req.body;
 
-    if (!['open', 'in-progress', 'fixed', 'accepted'].includes(status)) {
+    if (!VULN_STATUSES.includes(status)) {
       return res.status(400).json({ error: 'Invalid status.' });
     }
     if (!Array.isArray(indices) || indices.length === 0) {
@@ -2244,13 +2317,34 @@ app.patch('/api/vulns/:monthKey/findings/bulk-status', async (req, res) => {
     if (scanResult.rows.length === 0) return res.status(404).json({ error: 'Scan not found.' });
     const scanId = scanResult.rows[0].id;
 
-    await pool.query(
-      `UPDATE vuln_findings SET status = $1, status_updated_at = NOW()
-       WHERE scan_id = $2 AND finding_index = ANY($3::int[])`,
-      [status, scanId, idxList]
-    );
+    /*
+      * The status change and the summary rebuild are ONE transaction.
+      *
+      * Split, a crash between them leaves the findings saying one thing and the
+      * score reading another, with nothing to reconcile them until the next
+      * upload — which is precisely the drift this rebuild exists to end.
+      */
+    const client = await pool.connect();
+    let summary = null;
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `UPDATE vuln_findings SET status = $1, status_updated_at = NOW()
+         WHERE scan_id = $2 AND finding_index = ANY($3::int[])`,
+        [status, scanId, idxList]
+      );
+      summary = await resyncVulnSummary(client, scanId);
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
-    res.json({ ok: true, updated: idxList.length });
+    // Returned so the page can refresh the counts without a second round trip,
+    // and so a caller can see the score inputs actually moved.
+    res.json({ ok: true, updated: idxList.length, summary });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2261,8 +2355,8 @@ app.patch('/api/vulns/:monthKey/finding/:index', async (req, res) => {
     const { monthKey, index } = req.params;
     const { status, notes }   = req.body;
 
-    if (!['open', 'in-progress', 'fixed', 'accepted'].includes(status)) {
-      return res.status(400).json({ error: 'status must be open, in-progress, fixed, or accepted.' });
+    if (!VULN_STATUSES.includes(status)) {
+      return res.status(400).json({ error: 'status must be one of: ' + VULN_STATUSES.join(', ') + '.' });
     }
 
     const idx = parseInt(index, 10);
@@ -2282,23 +2376,40 @@ app.patch('/api/vulns/:monthKey/finding/:index', async (req, res) => {
 
     const now = new Date();
     let result;
+    let summary = null;
 
-    if (notes !== undefined) {
-      result = await pool.query(
-        `UPDATE vuln_findings
-         SET status = $1, notes = $2, status_updated_at = $3
-         WHERE scan_id = $4 AND finding_index = $5
-         RETURNING status, status_updated_at AS "statusUpdatedAt"`,
-        [status, String(notes).slice(0, 500), now, scanId, idx]
-      );
-    } else {
-      result = await pool.query(
-        `UPDATE vuln_findings
-         SET status = $1, status_updated_at = $2
-         WHERE scan_id = $3 AND finding_index = $4
-         RETURNING status, status_updated_at AS "statusUpdatedAt"`,
-        [status, now, scanId, idx]
-      );
+    // One transaction, for the same reason as the bulk endpoint above: the
+    // finding statuses and the summary the Secure Score reads must never be
+    // able to disagree.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      if (notes !== undefined) {
+        result = await client.query(
+          `UPDATE vuln_findings
+           SET status = $1, notes = $2, status_updated_at = $3
+           WHERE scan_id = $4 AND finding_index = $5
+           RETURNING status, status_updated_at AS "statusUpdatedAt"`,
+          [status, String(notes).slice(0, 500), now, scanId, idx]
+        );
+      } else {
+        result = await client.query(
+          `UPDATE vuln_findings
+           SET status = $1, status_updated_at = $2
+           WHERE scan_id = $3 AND finding_index = $4
+           RETURNING status, status_updated_at AS "statusUpdatedAt"`,
+          [status, now, scanId, idx]
+        );
+      }
+
+      if (result.rows.length) summary = await resyncVulnSummary(client, scanId);
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      client.release();
     }
 
     if (result.rows.length === 0) {
@@ -2310,6 +2421,9 @@ app.patch('/api/vulns/:monthKey/finding/:index', async (req, res) => {
       ok:              true,
       status:          row.status,
       statusUpdatedAt: row.statusUpdatedAt.toISOString(),
+      // The rebuilt counts, so the page can show the score inputs moving in the
+      // same response that recorded the change.
+      summary,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

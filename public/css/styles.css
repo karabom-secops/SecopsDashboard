@@ -1376,6 +1376,8 @@ input[type="file"] {
 .status-pill.accepted    { background: var(--green-dim);  color: var(--green-text);  border: 1px solid var(--green); }
 .status-pill.in-progress { background: var(--blue-dim);   color: var(--blue-text);   border: 1px solid var(--blue); }
 .status-pill.fixed       { background: var(--green-dim);  color: var(--green-text);  border: 1px solid var(--green); }
+/* Neutral, for the same reason as the chip above. */
+.status-pill.false-positive { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
 
 /* Remediation Tracker — source badges */
 .badge-source-vuln     { background: var(--orange-dim); color: var(--orange-text); }
@@ -1868,6 +1870,11 @@ input[type="file"] {
 .chip-st-fixed.active { background: #e7f8ea !important; }
 .chip-st-accepted        { border-color: #6ee7b7 !important; color: #059669 !important; }
 .chip-st-accepted.active { background: #ecfdf5 !important; }
+/* A false positive is not a remediation and not an acceptance — it is a
+   correction to the data. Deliberately neutral rather than green: nothing
+   about the estate improved, so it must not read like a win. */
+.chip-st-false-positive        { border-color: #b8bfc9 !important; color: #5a6472 !important; }
+.chip-st-false-positive.active { background: #eef1f5 !important; }
 
 /* ── Notes column ─────────────────────────────────────────────────────────── */
 .notes-cell { cursor: pointer; max-width: 200px; font-size: 0.82rem; color: var(--muted); }

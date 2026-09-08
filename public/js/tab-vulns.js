@@ -19,6 +19,9 @@
     'in-progress': 'In Progress',
     fixed:         'Fixed',
     accepted:      'Accepted Risk',
+    // Not a risk that was closed — one that was never real. Labelled distinctly
+    // so nobody reads it as a remediation.
+    'false-positive': 'False Positive',
   };
 
   // ── XSS helper ─────────────────────────────────────────────────────────────
@@ -406,6 +409,7 @@
         { key: 'in-progress', label: 'In Progress' },
         { key: 'fixed',       label: 'Fixed' },
         { key: 'accepted',    label: 'Accepted Risk' },
+        { key: 'false-positive', label: 'False Positive' },
       ];
       statusEl.innerHTML = statuses.map(s => `
         <button class="chip${_statusFilter === s.key ? ' active' : ''}${s.key !== 'All' ? ' chip-st-' + escHtml(s.key) : ''}" data-status="${escHtml(s.key)}">${escHtml(s.label)}</button>

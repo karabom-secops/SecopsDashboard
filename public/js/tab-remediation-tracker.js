@@ -28,7 +28,7 @@ const RemediationTrackerTab = (() => {
   }
 
   const STATUS_OPTIONS = {
-    vuln:     [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted']],
+    vuln:     [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted'], ['false-positive', 'False Positive']],
     risk:     [['identified', 'Identified'], ['assessing', 'Assessing'], ['mitigating', 'Mitigating'], ['monitoring', 'Monitoring'], ['closed', 'Closed']],
     pentest:  [['open', 'Open'], ['in-progress', 'In Progress'], ['fixed', 'Fixed'], ['accepted', 'Accepted'], ['risk-accepted', 'Risk Accepted']],
     incident: [['open', 'Open'], ['contained', 'Contained'], ['remediating', 'Remediating'], ['resolved', 'Resolved'], ['closed', 'Closed']],
