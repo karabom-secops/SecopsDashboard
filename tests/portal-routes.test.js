@@ -363,6 +363,15 @@ function request(server, url, tenant, role) {
     check('no exposure points', !/exposure/i.test(raw));
     check('no estate detail', !/estate|patchCoverage|unscannable/i.test(raw));
     check('no staff recommendations', !/recommendation/i.test(raw));
+    /*
+     * The scoring payload now carries `scope.unpurchased` — every service the
+     * client is not on — so the board report can recommend them. That is a
+     * sales list. It belongs in a report an account manager walks a client
+     * through, not pushed unprompted into the portal the client logs into
+     * themselves.
+     */
+    check('and no list of services they have not bought',
+      !/unpurchased/i.test(raw) && !/Penetration Testing/i.test(raw), raw.slice(0, 120));
   }
 
   section('a tenant with no data gets a reason, not an empty shell');

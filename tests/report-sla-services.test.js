@@ -1227,6 +1227,139 @@ check('the gauge shows the in-scope score when scoped',
 check('and drops the trend delta rather than comparing two measures',
   /renderScoreGauge\(gaugeContainer, gaugeValue, scoped \? null : delta\)/.test(tabSrc));
 
+/* ── The maturity table names the service, and shows its working ───────────
+ *
+ * The row read "Incident Response" — our internal name for the score
+ * component. The client buys Managed Detection and Response, their invoice
+ * says Managed Detection and Response, and the score is computed from the MDR
+ * ticket feed. A board pack should use the name on the contract.
+ *
+ * The table also printed 70 against a target of 90 and said nothing about
+ * where 70 came from, which invites exactly one question in the room.
+ */
+section('the maturity table names the service and explains the measure');
+
+const dashSec = S.filter(x => x.id === 'assuranceDashboard')[0];
+const matHtml = dashSec.render(execCtx(['vuln', 'mdr', 'awareness']));
+
+check('the domain is named for the service the client buys',
+  /Managed Detection and Response/.test(matHtml));
+check('and no longer by our internal component name',
+  !/>\s*Incident Response\s*</.test(matHtml),
+  (matHtml.match(/>[^<]*Incident Response[^<]*</) || ['(absent)'])[0]);
+
+check('the table says how each domain is measured',
+  /How each domain is measured/.test(matHtml));
+
+/*
+ * The wording has to match what lib/secure-score.js actually computes. These
+ * pin the arithmetic named in the note: change calculateMdrScore() and this
+ * fails, which is the point — a methodology note that drifts from the code is
+ * worse than none, because a client will quote it back.
+ */
+check('the MDR measure names resolution share and the speed penalty',
+  /share of MDR tickets resolved/.test(matHtml) &&
+  /20 points/.test(matHtml) && /24 hours/.test(matHtml), 'stated');
+check('the awareness measure names training completion',
+  /share of assigned training that has been completed/.test(matHtml));
+check('the vulnerability measure names density and both caps',
+  /density per asset scanned/.test(matHtml) &&
+  /capped by open criticals/.test(matHtml) &&
+  /the scan actually reached/.test(matHtml));
+
+// A client reads the methodology only for the domains in THEIR table.
+const awMat = dashSec.render(execCtx(['awareness']));
+check('an awareness-only client is not told how MDR is scored',
+  !/share of MDR tickets resolved/.test(awMat), 'withheld');
+check('nor how vulnerability scanning is scored',
+  !/density per asset scanned/.test(awMat), 'withheld');
+check('but is told how their own domain is scored',
+  /share of assigned training that has been completed/.test(awMat));
+// "All four" was wrong the moment the row list is filtered by service.
+check('and the closing sentence does not count rows that are not there',
+  !/All four/.test(awMat) && /Each is scored out of 100/.test(awMat));
+
+/* ── The investment section names what the client is NOT buying ────────────
+ *
+ * `scope.uncovered` only ever holds the three SCORED components, so a report
+ * built from it could recommend Vulnerability Management, Security Awareness
+ * and MDR and nothing else — penetration testing, firewall review, email
+ * security and vISO cover no scored component by design and were therefore
+ * invisible to the board pack entirely.
+ */
+section('the investment section lists every service not consumed');
+
+const decSec = S.filter(x => x.id === 'recommendations')[0];
+
+function decisions(services) {
+  const c = execCtx(services);
+  const html = decSec.render(c);
+  return (Array.isArray(html) ? html.join('') : String(html || ''));
+}
+
+const mdrDec = decisions(['mdr']);
+check('the entry appears for a client with gaps in the catalogue',
+  /Services not currently consumed/.test(mdrDec));
+check('naming a scored service they do not buy',
+  /Vulnerability Management/.test(mdrDec));
+check('and one that carries no score at all',
+  /Penetration Testing/.test(mdrDec) && /Firewall Configuration Review/.test(mdrDec),
+  'the catalogue, not just the scored three');
+check('and the governance offering',
+  /vISO/.test(mdrDec));
+
+/*
+ * MDR includes Managed EDR, NDR and Identity. Recommending a client buy what
+ * they already pay for is the fastest way to have a report disbelieved.
+ */
+check('but never a service the one they buy already includes',
+  !/Managed EDR/.test(mdrDec) && !/Managed NDR/.test(mdrDec) &&
+  !/Managed Identity/.test(mdrDec), 'implied services withheld');
+
+/*
+ * THE CASE THAT MATTERS MOST. An unconfigured client has not been asked what
+ * they buy. Inferring "consumes nothing" would print the entire price list
+ * into their board pack as recommendations.
+ */
+const plainDec = decisions(null);
+check('a client with no recorded mix gets no upsell at all',
+  !/Services not currently consumed/.test(plainDec), 'not recorded is not none');
+
+const fullDec = decisions(['mdr', 'vuln', 'awareness', 'edr', 'ndr', 'identity',
+                           'email', 'pentest', 'firewall', 'viso']);
+check('and neither does a client who already buys everything',
+  !/Services not currently consumed/.test(fullDec));
+
+/*
+ * Commercial, not a control failure. A board that reads an upsell as a red
+ * finding stops trusting the red findings.
+ */
+check('it is chipped as an option, not a decision',
+  /Option/.test(mdrDec), 'chip');
+check('and the note says an untaken option is not a failure',
+  /commercial choices, not/.test(mdrDec) && /nothing is failing/.test(mdrDec));
+check('while genuine decisions keep their own chip',
+  /Decision/.test(mdrDec));
+
+/*
+ * The catalogue has ONE owner. A second copy in the browser would be wrong the
+ * first time somebody added a service and updated only one of them.
+ */
+check('the list comes from the payload, not a copy of the catalogue',
+  /scope \|\| \{\}\)\.unpurchased/.test(srcCode) &&
+  !/Penetration Testing/.test(srcCode),
+  'lib/services.js stays the owner');
+
+/*
+ * "Below target" and "not bought" are different budget conversations, and
+ * merging them lets one stand in for the other. An unbought or unmeasured
+ * component must not appear as a domain that is underperforming.
+ */
+const awDec = decisions(['awareness']);
+check('a service they do not buy is not also reported as below target',
+  !/vulnerability management is below/.test(awDec) &&
+  !/vulnerability management are below/.test(awDec), awDec.slice(0, 0) || 'gated');
+
 section('no section anywhere in the deck shows an unbought service');
 
 /*

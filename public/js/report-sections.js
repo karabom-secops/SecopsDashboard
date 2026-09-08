@@ -164,7 +164,12 @@ window.ReportSections = (function () {
   var COMPONENTS = [
     { key: 'vulnerabilities',  label: 'Vulnerabilities',   desc: 'Based on critical, high, medium, and low findings' },
     { key: 'awareness',        label: 'Security Awareness', desc: 'Training completion rate' },
-    { key: 'incidentResponse', label: 'Incident Response',  desc: 'Ticket resolution & speed' },
+    // Named for the SERVICE, not the internal component key. "Incident
+    // Response" is what we call the field; "Managed Detection and Response" is
+    // what the client buys, what their invoice says, and what the score is
+    // actually computed from — the MDR ticket feed. The key stays
+    // `incidentResponse` because that is the payload's name for it.
+    { key: 'incidentResponse', label: 'Managed Detection and Response', desc: 'Ticket resolution & speed' },
   ];
 
   /**
@@ -1704,11 +1709,29 @@ window.ReportSections = (function () {
      * any contracted service, so it does not belong in a client report at all;
      * the row is dropped rather than renamed.
      */
+    /*
+     * `how` is the measurement basis, in one sentence a board can read without
+     * asking a follow-up question. A maturity table that prints 70 against a
+     * target of 90 and says nothing about where 70 came from invites exactly
+     * one question, and the answer should not depend on who is in the room.
+     *
+     * Each sentence describes what lib/secure-score.js actually computes. If a
+     * scoring function changes, this text is wrong and must change with it —
+     * tests/report-sla-services.test.js pins the arithmetic named here.
+     */
     var domains = [
-      { label: 'Vulnerability Management', key: 'vulnerabilities',  target: MATURITY_TARGETS.vulnerabilities },
-      { label: 'Security Awareness',       key: 'awareness',        target: MATURITY_TARGETS.awareness },
-      { label: 'Incident Response',        key: 'incidentResponse', target: MATURITY_TARGETS.incidentResponse },
-      { label: 'Secure Score',             key: 'overall',          target: MATURITY_TARGETS.overall },
+      { label: 'Vulnerability Management', key: 'vulnerabilities',  target: MATURITY_TARGETS.vulnerabilities,
+        how: 'weighted finding density per asset scanned (critical findings ' +
+             'count ten times a low one), capped by open criticals and by how ' +
+             'much of the external estate the scan actually reached' },
+      { label: 'Security Awareness',       key: 'awareness',        target: MATURITY_TARGETS.awareness,
+        how: 'the share of assigned training that has been completed' },
+      { label: 'Managed Detection and Response', key: 'incidentResponse', target: MATURITY_TARGETS.incidentResponse,
+        how: 'the share of MDR tickets resolved, less up to 20 points where ' +
+             'average resolution time runs beyond 24 hours' },
+      { label: 'Secure Score',             key: 'overall',          target: MATURITY_TARGETS.overall,
+        how: 'the domains above combined at the weights set by the services ' +
+             'in scope' },
     ].filter(function (d) {
       if (d.key === 'overall') return !scoped;
       return componentInScope(ctx, d.key);
@@ -1722,6 +1745,7 @@ window.ReportSections = (function () {
       var t = trendFor(cur, was);
       return {
         domain: d.label, key: d.key, prev: was, cur: cur, target: d.target, trend: t,
+        how: d.how,
         gap: cur == null ? null : cur - d.target,
         measured: measured[d.key] !== false,
       };
@@ -1764,6 +1788,20 @@ window.ReportSections = (function () {
       ],
       rows: rows,
     }) +
+    /*
+     * How each score was arrived at, listed under the table it explains.
+     *
+     * Built from the rows actually shown, so a client never reads the
+     * methodology for a domain that is not in their table — which would be a
+     * description of a service they do not buy.
+     */
+    '<div class="rag-note"><strong>How each domain is measured.</strong> ' +
+      rows.map(function (r) {
+        return esc(r.domain) + ': ' + esc(r.how) + '.';
+      }).join(' ') +
+      // "All four" would be wrong the moment a client buys fewer services, and
+      // the row list is already filtered by what they buy.
+      ' Each is scored out of 100.</div>' +
     '<div class="rag-note">Gap is the distance from the agreed target score. ' +
       'A positive gap means the domain is at or above target.' +
       // Naming this is not optional on a client-facing page: a zero from an
@@ -2687,16 +2725,74 @@ window.ReportSections = (function () {
               'window or accept the residual exposure.' });
     }
 
+    /*
+     * TWO DIFFERENT INVESTMENT DECISIONS, KEPT APART.
+     *
+     *   below target      a service they DO buy is underperforming. Spend to
+     *                     fix what is already in place.
+     *   not consumed      a service they do NOT buy at all. Spend to acquire a
+     *                     capability they have never had.
+     *
+     * Merging them would ask a board to approve one budget for two unrelated
+     * things, and would let "vulnerability management is below target" stand in
+     * for "you have no vulnerability management", which are not the same
+     * sentence and do not have the same answer.
+     */
     var now    = componentScores(ctx);
     var behind = [];
-    if (now.vulnerabilities  != null && now.vulnerabilities  < MATURITY_TARGETS.vulnerabilities)  behind.push('vulnerability management');
-    if (now.awareness        != null && now.awareness        < MATURITY_TARGETS.awareness)        behind.push('security awareness');
-    if (now.incidentResponse != null && now.incidentResponse < MATURITY_TARGETS.incidentResponse) behind.push('incident response');
+    /*
+     * Same three gates as the Executive Summary prose: a control they never
+     * bought scores 0 because nobody was engaged to manage it, and an
+     * unmeasured one is a gap in our evidence rather than a weak result.
+     * Neither is "below the agreed target" in any sense a board can act on —
+     * and the unbought ones are covered by the recommendation below, where
+     * they belong.
+     */
+    function trailingDomain(key, phrase) {
+      if (now[key] == null) return;
+      if (!(now.measured || {})[key]) return;
+      if (!componentInScope(ctx, key)) return;
+      if (now[key] < MATURITY_TARGETS[key]) behind.push(phrase);
+    }
+    trailingDomain('vulnerabilities',  'vulnerability management');
+    trailingDomain('awareness',        'security awareness');
+    trailingDomain('incidentResponse', 'managed detection and response');
     if (behind.length) {
       out.push({ area: 'Investment to reach target', tone: 'medium', impact: 'Moderate',
         text: listPhrase(behind) + ' ' + (behind.length === 1 ? 'is' : 'are') +
               ' below the agreed target score. Approve the investment needed to close ' +
               'the gap, or agree a revised target.' });
+    }
+
+    /*
+     * Services the client does not consume, named individually.
+     *
+     * The list comes from the scoring payload (lib/services.js is its owner) so
+     * a service added to the catalogue appears here without this file being
+     * touched — the alternative was a second copy of the catalogue in the
+     * browser, which would have been wrong the first time somebody added a
+     * service and updated only one of them.
+     *
+     * `unpurchased` is null when no service mix is recorded, and this entry is
+     * then omitted entirely. That is deliberate and it is the important case:
+     * an unconfigured client has not been asked what they buy, and inferring
+     * "they consume nothing" would print our entire price list into their board
+     * pack as a set of recommendations.
+     */
+    var unpurchased = (((ctx.data || {}).secureScore || {}).scope || {}).unpurchased;
+    if (Array.isArray(unpurchased) && unpurchased.length) {
+      out.push({
+        area: 'Services not currently consumed',
+        // Commercial, not a control failure. A board that reads an upsell as a
+        // red finding stops trusting the red findings.
+        tone: 'info', impact: 'Commercial', chip: 'Option',
+        text: 'The following are not part of the current engagement: ' +
+              unpurchased.map(function (s) { return s.label; }).join('; ') +
+              '. Each is available under the existing agreement and would extend ' +
+              'coverage beyond what is reported here. This is a commercial ' +
+              'option for consideration, not a finding against the controls in ' +
+              'place.',
+      });
     }
 
     var unowned = risks.filter(function (r) { return !String(r.owner || '').trim(); });
@@ -3804,14 +3900,25 @@ window.ReportSections = (function () {
                 '<div class="rec-text">' + esc(d.text) + '</div>' +
               '</div>' +
               '<div class="rec-meta">' +
-                '<span class="rec-chip" style="background:' + tone + '">Decision</span>' +
+                // Not everything here is a decision the board is OBLIGED to
+                // take. A service they do not buy is an option to consider;
+                // labelling it "Decision" beside an overdue risk remediation
+                // puts a commercial suggestion and a control failure in the
+                // same category, which is how a board learns to skim both.
+                '<span class="rec-chip" style="background:' + tone + '">' +
+                  esc(d.chip || 'Decision') + '</span>' +
                 (d.impact ? '<span class="rec-impact">' + esc(d.impact) + '</span>' : '') +
               '</div>' +
             '</div>';
         }).join('') +
       '</div>' +
-      '<div class="rag-note">Each item above needs a board decision: fund it, accept ' +
-        'the risk, or revise the target.</div>');
+      '<div class="rag-note">Each item marked <strong>Decision</strong> needs a board ' +
+        'decision: fund it, accept the risk, or revise the target.' +
+        (decisions.some(function (d) { return d.chip === 'Option'; })
+          ? ' Items marked <strong>Option</strong> are commercial choices, not ' +
+            'findings — nothing is failing because they have not been taken up.'
+          : '') +
+      '</div>');
     }
 
     if (recs) bodies.push(subHead('Recommended actions') + recs);
