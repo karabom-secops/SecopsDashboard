@@ -121,3 +121,15 @@
   .cp-h-row { flex-wrap: wrap; gap: 0.25rem 0.6rem; }
   .cp-h-when { flex-basis: 100%; }
 }
+
+/* Inline note under a profile field: what the value currently resolves to.
+   Advisory only — nothing here moves a score. */
+.cp-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.cp-hint code { font-size: 0.72rem; }
+/* A value that will not resolve, and therefore silently buys nothing. */
+.cp-hint-warn { color: var(--amber, #e67e22); }

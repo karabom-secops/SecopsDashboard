@@ -52,6 +52,7 @@ const wazuhMetrics = require('./lib/wazuh-metrics');
 const { buildPentestReport, imageDimensions, DEFAULT_OWASP } = require('./lib/report-docx');
 const pptxRoute = require('./lib/report-pptx-route');
 const estateLib = require('./lib/estate');
+const awCoverageLib = require('./lib/arctic-wolf-coverage');
 const trainingLib = require('./lib/training');
 const fortigateParser = require('./lib/fortigate-parser');
 const fortigateChecks = require('./lib/fortigate-checks');
@@ -881,6 +882,30 @@ async function hasEstateReviewedColumn() {
       `SELECT 1 FROM information_schema.columns
         WHERE table_name = 'tenant_estate' AND column_name = 'reviewed_at' LIMIT 1`);
     if (r.rows.length) _estateReviewedColumn = true;
+    return r.rows.length > 0;
+  } catch (_) { return false; }
+}
+
+/*
+ * Probe for db/migrate-arctic-wolf-org.sql.
+ *
+ * NOT OPTIONAL, and the reason is worth stating: loadEstate() wraps its SELECT
+ * in a catch that degrades to "no estate declared", which zeroes the
+ * vulnerability component for EVERY client. Naming an unmigrated column in that
+ * query would therefore not fail loudly — it would quietly take a third of the
+ * Secure Score off every tenant in the system until somebody noticed.
+ *
+ * Cached on a POSITIVE answer only, like every other probe here, so running the
+ * migration takes effect without a restart.
+ */
+let _estateArcticWolfColumn = null;
+async function hasEstateArcticWolfColumn() {
+  if (_estateArcticWolfColumn) return true;
+  try {
+    const r = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tenant_estate' AND column_name = 'arctic_wolf_org' LIMIT 1`);
+    if (r.rows.length) _estateArcticWolfColumn = true;
     return r.rows.length > 0;
   } catch (_) { return false; }
 }
@@ -6533,9 +6558,11 @@ async function buildClientProfile(tenantId) {
   try {
     const reviewedCol = await hasEstateReviewedColumn()
       ? 'reviewed_at' : 'NULL::timestamptz AS reviewed_at';
+    const awOrgCol = await hasEstateArcticWolfColumn()
+      ? 'arctic_wolf_org' : 'NULL::text AS arctic_wolf_org';
     const r = await pool.query(
       `SELECT servers, public_assets, endpoints, cloud_tenancies, users,
-              servers_patched, awareness_program, notes, updated_at, ${reviewedCol}
+              servers_patched, awareness_program, notes, updated_at, ${reviewedCol}, ${awOrgCol}
        FROM tenant_estate WHERE tenant_id = $1`, [tenantId]);
     if (r.rows.length) declared = r.rows[0];
   } catch (_) { estateAvailable = false; }
@@ -6554,7 +6581,27 @@ async function buildClientProfile(tenantId) {
       estate:   estateAvailable,
       services: await hasTenantServicesColumn(),
       history:  await hasProfileEventsTable(),
+      arcticWolfOrg: await hasEstateArcticWolfColumn(),
     },
+
+    /*
+     * The Arctic Wolf link, resolved AT EDIT TIME.
+     *
+     * `arcticWolfOrgs` fills a datalist so the name can be picked rather than
+     * typed, and `arcticWolfCoverage` reports what the stored name currently
+     * resolves to. A typo otherwise costs the client their MDR reach discount
+     * silently — the failure surfaces weeks later on a board pack, if at all.
+     * Showing the match here makes it a save-time correction instead.
+     */
+    arcticWolfOrgs: awCoverageLib.orgNamesInLatest(readData(WEEKS_FILE)),
+    arcticWolfCoverage: (function () {
+      const cov = awCoverageLib.coverageForOrg(
+        readData(WEEKS_FILE), declared && declared.arctic_wolf_org);
+      // The sentence is written once, in the module that knows the reasons, so
+      // the form and the Secure Score tile cannot describe the same state
+      // differently.
+      return Object.assign({}, cov, { message: awCoverageLib.describe(cov) });
+    })(),
 
     declared: declared ? {
       servers:          declared.servers,
@@ -6564,6 +6611,7 @@ async function buildClientProfile(tenantId) {
       users:            declared.users,
       serversPatched:   declared.servers_patched,
       awarenessProgram: declared.awareness_program,
+      arcticWolfOrg:    declared.arctic_wolf_org,
       notes:            declared.notes || '',
       updatedAt:        declared.updated_at,
       reviewedAt:       declared.reviewed_at,
@@ -6948,7 +6996,7 @@ app.get('/api/client-profile/history', requireAuth, async (req, res) => {
 function diffProfile(before, after) {
   const diff = {};
 
-  estateLib.DECLARED_FIELDS.concat(['awarenessProgram', 'notes']).forEach((f) => {
+  estateLib.DECLARED_FIELDS.concat(['awarenessProgram', 'arcticWolfOrg', 'notes']).forEach((f) => {
     const from = before[f] === undefined ? null : before[f];
     const to   = after[f]  === undefined ? null : after[f];
     if (from !== to) diff[f] = { from, to };
@@ -7012,6 +7060,34 @@ app.put('/api/client-profile', requireAuth, async (req, res) => {
       }
     }
 
+    /*
+     * The Arctic Wolf organisation name.
+     *
+     * NOT checked against the weekly report. A client can legitimately be
+     * linked before their first report lands, and rejecting an unrecognised
+     * name would make the field unusable during onboarding. The consequence of
+     * a typo — no discount — is made VISIBLE instead: the profile form and the
+     * Secure Score tile both report 'org_not_found' with near-miss candidates,
+     * which is a better place to catch it than a save-time error that also
+     * blocks the legitimate case.
+     */
+    let awOrg = null;
+    if (body.arcticWolfOrg !== null && body.arcticWolfOrg !== undefined &&
+        String(body.arcticWolfOrg).trim() !== '') {
+      awOrg = estateLib.arcticWolfOrg(body.arcticWolfOrg);
+      if (awOrg === null) {
+        return res.status(400).json({
+          error: estateLib.FIELD_LABELS.arcticWolfOrg + ' must be ' +
+                 estateLib.MAX_AW_ORG + ' characters or fewer.',
+        });
+      }
+      if (!await hasEstateArcticWolfColumn()) {
+        return res.status(503).json({
+          error: 'Arctic Wolf linking is not available yet. Run db/migrate-arctic-wolf-org.sql.',
+        });
+      }
+    }
+
     const notes = typeof body.notes === 'string' ? body.notes.slice(0, 2000) : null;
 
     // `services` is optional in the body. ABSENT means "leave alone"; an
@@ -7030,6 +7106,7 @@ app.put('/api/client-profile', requireAuth, async (req, res) => {
     const before = await buildClientProfile(tenantId);
     const after = Object.assign({}, vals, {
       awarenessProgram: program,
+      arcticWolfOrg: awOrg,
       notes: notes || '',
       services: servicesGiven ? services : before.services,
     });
@@ -7044,6 +7121,9 @@ app.put('/api/client-profile', requireAuth, async (req, res) => {
       return res.json({ ok: true, changed: false, profile: before });
     }
 
+    // Probed once, outside the transaction, and used by both branches below.
+    const awColumn = await hasEstateArcticWolfColumn();
+
     const scoreBefore = await compositeScoreFor(tenantId);
 
     const client = await pool.connect();
@@ -7051,10 +7131,21 @@ app.put('/api/client-profile', requireAuth, async (req, res) => {
       await client.query('BEGIN');
 
       await client.query(
+        /*
+         * The Arctic Wolf column is written only where it EXISTS, as two
+         * fragments spliced into one statement rather than two whole copies of
+         * it — a second copy of an upsert is a second thing to forget to edit.
+         *
+         * An unmigrated deployment still saves every other field rather than
+         * failing the whole upsert, the same degrade-open rule the two estate
+         * SELECTs follow. A caller that actually supplied a name on an
+         * unmigrated database was already turned away with a 503 above, so
+         * nothing is silently dropped here.
+         */
         `INSERT INTO tenant_estate
            (tenant_id, servers, public_assets, endpoints, cloud_tenancies, users,
-            servers_patched, awareness_program, notes, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+            servers_patched, awareness_program, notes, updated_by${awColumn ? ', arctic_wolf_org' : ''}, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10${awColumn ? ', $11' : ''}, NOW())
          ON CONFLICT (tenant_id) DO UPDATE SET
            servers           = EXCLUDED.servers,
            public_assets     = EXCLUDED.public_assets,
@@ -7065,10 +7156,12 @@ app.put('/api/client-profile', requireAuth, async (req, res) => {
            awareness_program = EXCLUDED.awareness_program,
            notes             = EXCLUDED.notes,
            updated_by        = EXCLUDED.updated_by,
+           ${awColumn ? 'arctic_wolf_org   = EXCLUDED.arctic_wolf_org,' : ''}
            updated_at        = NOW()`,
         [tenantId, vals.servers, vals.publicAssets, vals.endpoints,
          vals.cloudTenancies, vals.users, vals.serversPatched,
          program, notes, req.session.userId || null]
+          .concat(awColumn ? [awOrg] : [])
       );
 
       if (servicesGiven) {
@@ -7188,10 +7281,13 @@ async function loadEstate(tenantId, scanId, trainedUsers) {
      */
     const reviewedCol = await hasEstateReviewedColumn()
       ? 'reviewed_at' : 'NULL::timestamptz AS reviewed_at';
+    // Same rule, same reason — see db/migrate-arctic-wolf-org.sql.
+    const awOrgCol = await hasEstateArcticWolfColumn()
+      ? 'arctic_wolf_org' : 'NULL::text AS arctic_wolf_org';
 
     const r = await pool.query(
       `SELECT servers, public_assets, endpoints, cloud_tenancies, users,
-              servers_patched, awareness_program, updated_at, ${reviewedCol}
+              servers_patched, awareness_program, updated_at, ${reviewedCol}, ${awOrgCol}
        FROM tenant_estate WHERE tenant_id = $1`,
       [tenantId]
     );
@@ -7199,6 +7295,9 @@ async function loadEstate(tenantId, scanId, trainedUsers) {
       const row = r.rows[0];
       declared = {
         awarenessProgram: row.awareness_program,
+        // Scores nothing on its own — it names which Arctic Wolf org's Coverage
+        // Score belongs to this client. See lib/arctic-wolf-coverage.js.
+        arcticWolfOrg:    row.arctic_wolf_org,
         servers:          row.servers,
         publicAssets:     row.public_assets,
         endpoints:        row.endpoints,
@@ -7425,9 +7524,23 @@ async function loadScoreInputs(tenantId) {
     // before service scoping existed.
     const tenantServices = await loadTenantServices(tenantId);
 
+    /*
+     * How much of the estate the MDR service actually reaches, from Arctic
+     * Wolf's own per-org Coverage Score in the weekly report.
+     *
+     * READ-ONLY, STAFF-ONLY, AND FROM A FILE. The weekly report is a global
+     * data/weeks.json holding every org's figures — it is deliberately not
+     * migrated into Postgres — so this read is server-side and is never
+     * reached through lib/portal-routes.js. readData() already returns {} on
+     * any failure, which the helper reports as 'no_report'; a missing file must
+     * never be able to fail a client's Secure Score.
+     */
+    const mdrCoverage = awCoverageLib.coverageForOrg(
+      readData(WEEKS_FILE), estate && estate.arcticWolfOrg);
+
     return {
       vulnData, scanId, edrHealth, awarenessData, mdrData, mdrUploadId,
-      incidentRate, trainedUsers, estate, tenantServices,
+      incidentRate, trainedUsers, estate, tenantServices, mdrCoverage,
     };
   }
 }
@@ -7445,7 +7558,7 @@ async function compositeScoreFor(tenantId) {
     const i = await loadScoreInputs(tenantId);
     const r = calculateSecureScore(i.vulnData, i.awarenessData, i.mdrData, {
       estate: i.estate, edr: i.edrHealth, incidentRate: i.incidentRate,
-      services: i.tenantServices,
+      services: i.tenantServices, mdrCoverage: i.mdrCoverage,
     });
     return typeof r.composite === 'number' ? r.composite : null;
   } catch (err) {
@@ -7675,16 +7788,16 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
 
     const {
       vulnData, edrHealth, awarenessData, mdrData,
-      incidentRate, estate, tenantServices,
+      incidentRate, estate, tenantServices, mdrCoverage,
     } = await loadScoreInputs(tenantId);
 
     const {
       composite, vulnScore, awarenessScore, mdrScore,
       measured, unmeasured, maxAchievable, vulnDetail, weights,
-      serviceScore, coverage, scope, overall,
+      serviceScore, coverage, coverageNominal, scope, overall,
     } = calculateSecureScore(vulnData, awarenessData, mdrData,
                              { estate, edr: edrHealth, incidentRate,
-                               services: tenantServices });
+                               services: tenantServices, mdrCoverage });
     // Services passed through: advice about a control the client does not buy
     // reads on their board pack as a failing of theirs.
     const recommendations = generateRecommendations(
@@ -7724,6 +7837,11 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       serviceScore,
       serviceRating,
       coverage,
+      // Coverage before the Arctic Wolf reach discount. Returned beside the
+      // headline so the page can show the arithmetic rather than a figure that
+      // moved for reasons the reader cannot see. `scope` already carries the
+      // discount detail and the vendor result.
+      coverageNominal,
       scope,
       // Weights come from `weights`, not the flat WEIGHTS table: they follow the
       // client's exposure. Anything that reports a weight must read the same
@@ -7825,6 +7943,24 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'No tenant context.' });
     }
 
+    /*
+     * ONE WEIGHTING FUNCTION FOR THE TREND AND THE HEADLINE.
+     *
+     * This route used to reconstruct months with a hardcoded 0.40/0.35/0.25
+     * while the live score used estate-driven weights. Nothing asserted the two
+     * agreed, and for most clients they did not — so a client's trend changed
+     * methodology at the boundary between a stored snapshot and a reconstructed
+     * month, and the step was invisible.
+     *
+     * CAVEAT THAT MUST REACH THE PAGE: tenants.services is a single CURRENT
+     * value, not a dated one. Restating an old month therefore applies the mix
+     * the client is on TODAY. If they bought Vulnerability Management in June,
+     * March is restated as though they always had it. The response carries
+     * mixAsOf so no consumer can render the trend without being able to say so.
+     */
+    const historyServices = await loadTenantServices(tenantId);
+    const historyWeights  = secureScore.resolveWeights(historyServices);
+
     // Get monthly vuln data (last 6 months for trend)
     let vulnTrendRows = [];
     try {
@@ -7883,10 +8019,13 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
       if (!scan && rec.awarenessScore == null && rec.mdrScore == null) return;
 
       const vulnScore = scan ? calculateVulnScore({ summary: scan.summary }) : null;
+      // The same weights the live score uses — see the note at the top of this
+      // route. Renormalised over the components that actually exist, so a month
+      // missing one is not scored as though that component were zero.
       const parts = [
-        { v: vulnScore,          w: 0.40 },
-        { v: rec.awarenessScore, w: 0.35 },
-        { v: rec.mdrScore,       w: 0.25 },
+        { v: vulnScore,          w: historyWeights.vulnerabilities },
+        { v: rec.awarenessScore, w: historyWeights.awareness },
+        { v: rec.mdrScore,       w: historyWeights.incidentResponse },
       ].filter(p => p.v != null);
       const den = parts.reduce((a, p) => a + p.w, 0);
 
@@ -7916,7 +8055,23 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
       .sort((a, b) => (a.monthKey < b.monthKey ? 1 : -1))
       .slice(0, 12);
 
-    res.json({ tenantId, history });
+    res.json({
+      tenantId,
+      history,
+      /*
+       * The weighting the whole series was computed on, and the caveat that
+       * comes with it. Returned as DATA rather than left to the page to infer,
+       * so nothing can render this trend without being able to state that
+       * earlier months are restated on today's service mix.
+       */
+      weights: historyWeights,
+      weightsBasis: historyWeights.basis,
+      mixAsOf: 'current',
+      restatedNote: 'Earlier months are restated on the current weighting so the ' +
+        'trend is comparable end to end. Weights follow the service mix, and the ' +
+        'mix is not dated — if it changed during this period, earlier months are ' +
+        'shown as if the current contract had always applied.',
+    });
   } catch (err) {
     return serverError(res, err);
   }

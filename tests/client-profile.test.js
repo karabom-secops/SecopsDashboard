@@ -81,10 +81,19 @@ check('the migration drops the column',
   /ALTER TABLE tenant_estate\s+DROP COLUMN IF EXISTS endpoints_patched/i
     .test(sqlCodeOnly(migration)));
 
-// The weights object still explains server patching, which IS wired in. If this
-// went too, the removal would have taken a working control with it.
+/*
+ * Server patch coverage survives — it was never the dead one.
+ *
+ * It USED to be greped for in lib/secure-score.js, where resolveWeights
+ * reported it to explain the exposure relief. Weights now follow the service
+ * mix and the estate scores nothing, so it no longer appears there — but
+ * patchCoverage() itself is still exported and still shown on the Client
+ * Profile, which is the control this check exists to protect. The grep moved
+ * with it; deleting the check would have let a genuinely working feature go
+ * silently.
+ */
 check('server patch coverage survives — it was never the dead one',
-  /serverPatchCoverage/.test(codeOnly(scoreJs)));
+  /function patchCoverage/.test(codeOnly(estateJs)));
 
 /* ══ NULL vs 0 ══════════════════════════════════════════════════════════════ */
 

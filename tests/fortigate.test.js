@@ -977,7 +977,18 @@ const customRdp = cfgWith({
         'Remote-Desktop': { name: 'Remote-Desktop', protocol: 'TCP', 'tcp-portrange': '3389' },
         Web: { name: 'Web', protocol: 'TCP', 'tcp-portrange': '80 443' },
       },
-      group: { Publish: { name: 'Publish', member: 'Remote-Desktop Web' } },
+      /*
+       * A LIST, not the space-separated scalar this fixture used to carry.
+       *
+       * A bare scalar is now exactly one reference however much punctuation it
+       * contains, because FortiGate object names routinely contain spaces —
+       * "SHARED SERVERS : 100.71.0.1" is one object, and splitting it produced
+       * four fragments that resolved to nothing. Multiplicity comes from a YAML
+       * list, or from FortiOS's own quoted form ("a" "b"); an unquoted
+       * `Remote-Desktop Web` is indistinguishable from a genuine name and is
+       * read as one. This fixture now uses the shape a real export writes.
+       */
+      group: { Publish: { name: 'Publish', member: ['Remote-Desktop', 'Web'] } },
     },
   },
 });

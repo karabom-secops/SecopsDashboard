@@ -555,12 +555,29 @@ section('a client is not scored on services they never bought');
 const awarenessOnly = score(['awareness']);
 check('their awareness result is intact',
   awarenessOnly.awarenessScore === 100, awarenessOnly.awarenessScore);
-// This is the whole point. The composite says 35 because two controls they do
-// not buy score zero; the in-scope score says they are doing what they pay for.
+// This is the whole point. The composite sits well below 100 because two
+// controls they do not buy score zero; the in-scope score says they are doing
+// what they pay for.
 check('the in-scope score reflects what they buy',
   awarenessOnly.serviceScore === 100, awarenessOnly.serviceScore);
+/*
+ * EXACTLY 50, and the arithmetic is worth writing down because the number moved
+ * with the weighting change: an awareness-only client now weights awareness at
+ * 0.50 (it was 0.35 under the estate-driven curve, which is why this used to
+ * read 35 and the check was "< 50").
+ *
+ *   awareness      100 x 0.50 = 50
+ *   vulnerabilities  0 x 0.25 =  0   (not bought, unmeasured)
+ *   incident resp.   0 x 0.25 =  0   (not bought, unmeasured)
+ *
+ * Asserted as an equality rather than a threshold so a future weighting change
+ * has to come back through this comment instead of sliding under an inequality.
+ */
 check('while the overall still counts the gaps',
-  awarenessOnly.overall < 50, awarenessOnly.overall);
+  awarenessOnly.overall === 50, awarenessOnly.overall);
+check('and the overall is below the in-scope score, which is the gap',
+  awarenessOnly.overall < awarenessOnly.serviceScore,
+  awarenessOnly.overall + ' < ' + awarenessOnly.serviceScore);
 check('and the two are reported separately, not merged',
   awarenessOnly.serviceScore !== awarenessOnly.overall);
 
@@ -583,13 +600,24 @@ const sheltered = SS.calculateSecureScore(null, awarenessData, null, {
     cloudTenancies: 0, users: 242, trainedUsers: 242, awarenessProgram: 'platform' }),
   services: ['awareness'],
 });
-// Guard against the fixture silently losing its exposure again: if both fall
-// back to the default weights the comparison below is vacuous.
-check('the two estates really do weight differently',
-  exposed.weights.vulnerabilities !== sheltered.weights.vulnerabilities,
+/*
+ * THESE TWO ASSERTIONS INVERTED, AND THAT IS THE POINT OF THE CHANGE.
+ *
+ * They used to check that a big estate and a small one weighted DIFFERENTLY —
+ * the estate-driven exposure curve. That curve is gone: it meant a typed number
+ * moved a board-reported score by up to fourteen points, and merely starting to
+ * fill the form moved it nine. Weights now follow the SERVICE MIX, so two
+ * clients on the same services weight identically however different their
+ * estates, and that is the property worth pinning.
+ *
+ * Reframed rather than deleted: the fixtures still differ by a lot of estate,
+ * so a regression that reintroduced estate-driven weighting would fail here.
+ */
+check('two estates on the same services weight IDENTICALLY',
+  JSON.stringify(exposed.weights) === JSON.stringify(sheltered.weights),
   exposed.weights.vulnerabilities.toFixed(3) + ' vs ' + sheltered.weights.vulnerabilities.toFixed(3));
-check('an exposed client loses more coverage to a missing vuln service',
-  exposed.coverage < sheltered.coverage,
+check('and their coverage is identical too — it follows the mix, not the estate',
+  exposed.coverage === sheltered.coverage && exposed.coverage === 50,
   'exposed ' + exposed.coverage + '% vs sheltered ' + sheltered.coverage + '%');
 
 check('full service cover reaches 100%',

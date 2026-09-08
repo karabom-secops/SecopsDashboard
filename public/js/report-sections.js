@@ -175,16 +175,22 @@ window.ReportSections = (function () {
    * assessment that never happened.
    */
   function componentCaption(c, comp, score) {
-    // Awareness run by the client, with no figures recorded, is weighted down
-    // rather than treated as absent. "Training completion rate" beside a zero
-    // would describe a measurement nobody took, and would read to a board as a
+    // Awareness run by the client, with no figures recorded, is NAMED rather
+    // than treated as absent. "Training completion rate" beside a zero would
+    // describe a measurement nobody took, and would read to a board as a
     // programme that failed rather than one we have not been shown.
+    //
+    // It used to say "weighted down", because an unevidenced internal
+    // programme halved the awareness weight. That relief is gone — weights now
+    // follow the service mix and a dropdown must not move one — so the copy
+    // says what is true: the figures are missing, and the zero is a gap in
+    // evidence rather than a verdict.
     if (c.key === 'awareness') {
       var w = (score && score.weights) || {};
       if (comp.measured === false && w.awarenessProgram === 'internal') {
         return {
           label: c.label,
-          desc: 'Client-run programme — no completion figures recorded, weighted down',
+          desc: 'Client-run programme — no completion figures recorded',
         };
       }
       if (comp.measured === false && w.awarenessProgram === 'none') {
@@ -1689,8 +1695,9 @@ window.ReportSections = (function () {
 
     // "No data has been supplied" is true but incomplete for a client who runs
     // their own awareness programme: the control exists, we have simply not been
-    // shown it, and the weighting already reflects that. A board reading the
-    // unqualified sentence would conclude their people are untrained.
+    // shown it. A board reading the unqualified sentence would conclude their
+    // people are untrained. (This used to add "and the weighting already
+    // reflects that" — it no longer does, and the sentence below says so.)
     var w = (ctx.data.secureScore || {}).weights || {};
     var ownProgramme = !!(w.awarenessProgram === 'internal' &&
       rows.some(function (r) { return r.key === 'awareness' && !r.measured; }));
@@ -1737,9 +1744,9 @@ window.ReportSections = (function () {
       (ownProgramme
         ? ' Security awareness training is run internally rather than through this ' +
           'platform, and no completion figures have been recorded. That component ' +
-          'is therefore weighted below its usual share rather than assessed as ' +
-          'absent — recording the completion figures would have it scored on its ' +
-          'own merits.'
+          'therefore scores zero for want of evidence rather than for want of a ' +
+          'programme — recording the completion figures would have it scored on ' +
+          'its own merits.'
         : '') +
       (prev.source === 'reconstructed'
         ? ' Prior-month figures are reconstructed from dated scan, training and ' +
@@ -2867,6 +2874,24 @@ window.ReportSections = (function () {
         ok: ss.overall != null && ss.overall >= 70 },
     ];
 
+    /*
+     * ARCTIC WOLF SENSOR REACH — shown only when there IS a figure.
+     *
+     * Asymmetric with the staff tab on purpose, and worth stating so it is not
+     * later "tidied up" into consistency: the tab tells a staff member when the
+     * org is not linked, because a staff member is the person who can fix it. A
+     * client's board does not need to read that we have not finished
+     * configuring an internal mapping — and printing "no discount applied"
+     * implies a discount was expected, which is a claim about their service
+     * rather than about our records.
+     */
+    var awc = scope.mdrCoverage;
+    var awApplied = !!(awc && awc.available && (scope.discountedPoints || 0) > 0);
+    if (awApplied) {
+      tiles.push({ v: awc.score + ' %', l: 'Arctic Wolf MDR coverage',
+                   ok: awc.score >= 90 });
+    }
+
     var grid = '<div class="bi-grid tight">' +
       tiles.map(function (t) {
         return '<div class="bi-cell' + (t.ok ? ' ok' : '') + '">' +
@@ -2874,6 +2899,18 @@ window.ReportSections = (function () {
             '<div class="bi-l">' + esc(t.l) + '</div>' +
           '</div>';
       }).join('') + '</div>';
+
+    // The arithmetic, attributed and dated. class="coverage-note" already maps
+    // to a note block in lib/report-pptx.js, so the deck carries it unchanged.
+    if (awApplied) {
+      grid += '<p class="coverage-note">Service coverage of ' + esc(String(ss.coverage)) +
+        '% is ' + esc(String(scope.coverageNominal)) + '% covered by the services in ' +
+        'scope, less ' + esc(String(scope.discountedPoints)) + ' points because ' +
+        'Arctic Wolf reports ' + esc(String(awc.score)) + '% sensor coverage of the estate' +
+        (awc.weekCommencing ? ' (week commencing ' + esc(awc.weekCommencing) + ')' : '') +
+        '. This reflects how much of the estate the service reaches; it does not ' +
+        'change the Overall Secure Score.</p>';
+    }
 
     var gaps = '';
     if ((scope.uncovered || []).length) {

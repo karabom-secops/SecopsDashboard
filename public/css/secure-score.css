@@ -760,3 +760,19 @@
 @media (max-width: 640px) {
   .ms-ss-meta { margin-left: 0; text-align: left; }
 }
+
+/* A fourth cell for the vendor reach figure. The base grid is a hard 3, so the
+   modifier is added only when the Arctic Wolf tile is actually rendered. */
+.ss-scope-grid.has-vendor { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) {
+  .ss-scope-grid.has-vendor { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* The discount arithmetic, written out. Deliberately quiet type: it explains a
+   number above it rather than competing with it. */
+.ss-scope-discount {
+  margin: 0.7rem 0 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--muted);
+}

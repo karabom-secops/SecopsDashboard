@@ -143,8 +143,36 @@ const SecureScoreTab = (() => {
     const gaps = (scope.uncovered || []);
     const blind = scope.blindSpotPoints || 0;
 
+    /*
+     * ── ARCTIC WOLF SENSOR REACH ───────────────────────────────────────────
+     *
+     * Somebody else's number, so it is labelled with their name, dated, and
+     * kept in its own cell. It adjusts how much of the posture the MDR service
+     * is credited with REACHING; it changes no score, and the sentence below
+     * the grid says so outright.
+     *
+     * The cell is shown to an MDR client even when the link is missing —
+     * "not linked" is the actionable state, and a tile that silently vanished
+     * would hide the one thing a staff member can fix.
+     */
+    const mdrCov = scope.mdrCoverage || null;
+    const discounted = scope.discountedPoints || 0;
+    const nominal = scope.coverageNominal;
+    const showVendor = !!mdrCov &&
+      (mdrCov.linked || (scope.covered || []).indexOf('incidentResponse') >= 0);
+
+    const REASON_TEXT = {
+      not_linked:         'Not linked to an Arctic Wolf organisation — no discount applied.',
+      org_not_found:      'Name on file is not in the report — no discount applied.',
+      no_score_in_report: 'Report carries no Coverage Score — no discount applied.',
+      no_report:          'No weekly report on file — no discount applied.',
+    };
+
+    const bandTone = (bnd) =>
+      bnd === 'good' ? '#27ae60' : bnd === 'fair' ? '#f39c12' : '#e74c3c';
+
     el.innerHTML =
-      '<div class="ss-scope-grid">' +
+      '<div class="ss-scope-grid' + (showVendor ? ' has-vendor' : '') + '">' +
         cell(svc == null ? 'n/a' : String(svc), 'Secure Score — services in scope',
              svc == null ? 'No scored service consumed' : getScoreRating(svc),
              svc == null ? null : getScoreColor(svc)) +
@@ -154,7 +182,31 @@ const SecureScoreTab = (() => {
         cell(all == null ? '—' : String(all), 'Overall Secure Score',
              blind ? blind + ' points not measured by anyone' : 'Counting every control that applies',
              all == null ? null : getScoreColor(all)) +
+        (showVendor
+          ? cell(mdrCov.available ? mdrCov.score + '%' : '—',
+                 'Arctic Wolf MDR coverage',
+                 mdrCov.available
+                   ? mdrCov.matchedOrg + ' · w/c ' + (mdrCov.weekCommencing || mdrCov.weekKey) +
+                     (mdrCov.stale ? ' · ' + mdrCov.ageDays + ' days old' : '')
+                   : (REASON_TEXT[mdrCov.reason] || 'Unavailable — no discount applied.'),
+                 mdrCov.available ? bandTone(mdrCov.band) : null)
+          : '') +
       '</div>' +
+      /*
+       * The arithmetic, spelled out. A coverage figure that moved for reasons a
+       * reader cannot reconstruct is one they are entitled to dispute — and the
+       * last clause is there because the commonest question about any vendor
+       * number on this page is "did this change our score?".
+       */
+      (discounted > 0 && nominal != null && mdrCov && mdrCov.available
+        ? '<p class="ss-scope-discount">Coverage ' + escHtml(String(cov)) + '% is ' +
+            escHtml(String(nominal)) + '% of weighted posture covered by the services ' +
+            'in scope, less ' + escHtml(String(discounted)) + ' points for Arctic Wolf ' +
+            'MDR coverage of ' + escHtml(String(mdrCov.score)) + '%' +
+            (mdrCov.matchedOrg ? ' (' + escHtml(mdrCov.matchedOrg) + ', w/c ' +
+              escHtml(String(mdrCov.weekCommencing || mdrCov.weekKey)) + ')' : '') +
+            '. The Overall Secure Score is unaffected.</p>'
+        : '') +
       (gaps.length
         ? '<ul class="ss-scope-gaps">' + gaps.map(u =>
             `<li><strong>${escHtml(u.label)}</strong> — ${escHtml(String(u.pointsForfeited))} points, ` +
@@ -331,11 +383,15 @@ const SecureScoreTab = (() => {
     // declared nothing else — and that is exactly when it needs explaining.
     const w = scoreData.weights;
     let awareness = '';
-    if (w && w.awarenessRelief != null && w.awarenessRelief < 1) {
-      awareness = ' Awareness is weighted <strong>' +
-        Math.round((1 - w.awarenessRelief) * 100) + '% below</strong> its usual share ' +
-        'because the client runs their own programme and no completion figures ' +
-        'have been recorded — the control is not scored, only weighted down.';
+    if (w && w.awarenessProgram === 'internal') {
+      // No longer a weighting claim. The relief that used to halve the
+      // awareness weight is gone — a dropdown must not move a weight — so this
+      // says what is actually true: we have no figures, and that is a gap in
+      // evidence rather than a finding about their training.
+      awareness = ' This client runs their <strong>own awareness programme</strong> ' +
+        'and no completion figures have been recorded, so it scores zero at full ' +
+        'weight. That is a gap in evidence, not a verdict on their training — ' +
+        'record their figures to recover the points.';
     }
 
     if (!parts.length) {
@@ -390,34 +446,40 @@ const SecureScoreTab = (() => {
     }
 
     // The weighting is the part a client is most likely to challenge, so state
-    // it plainly: what the vulnerability component is worth, and on what basis.
+    // it plainly: what each component is worth, and on what basis.
+    //
+    // It used to describe an exposure figure, a headcount split, a managed-
+    // patching relief and a ticket-load pull — four moving parts, all driven by
+    // numbers typed into the Client Profile, any of which could move the
+    // composite by double digits. There is now one thing to say, and a client
+    // can check it against their own contract.
     let weighting = '';
-    if (w && w.basis === 'exposure') {
-      const vw = Math.round(w.vulnerabilities * 100);
-      // Managed patching lowers the exposure that produced the weight, so say
-      // so — otherwise the figure looks arbitrary to anyone who checks it.
-      const relief = (w.serverPatchCoverage != null && w.serverPatchCoverage > 0)
-        ? ', reduced by managed patching on ' +
-          Math.round(w.serverPatchCoverage * 100) + '% of servers'
-        : '';
-      // Incident response is no longer the leftover: it has its own driver, so
-      // say what moved it. A client whose IR weight has risen from 17% to 25%
-      // is entitled to know it was their own ticket volume that did it.
-      const load = (w.incidentRate != null && w.incidentPull > 1)
-        ? ' Incident response is weighted up on a load of <strong>' +
-          w.incidentRate + '</strong> MDR tickets a month.'
-        : '';
+    if (w && w.basis) {
+      const trio = Math.round(w.vulnerabilities * 100) + '% vulnerability management / ' +
+        Math.round(w.awareness * 100) + '% security awareness / ' +
+        Math.round(w.incidentResponse * 100) + '% incident response';
 
-      const scale = w.users != null
-        ? ' Across <strong>' + w.users + '</strong> users, human risk takes ' +
-          Math.round(w.awareness * 100) + '% and incident response ' +
-          Math.round(w.incidentResponse * 100) + '%.' + load
-        : ' The remainder splits ' + Math.round(w.awareness * 100) + '% awareness / ' +
-          Math.round(w.incidentResponse * 100) + '% incident response.' + load;
-
-      weighting = ' Vulnerability management is weighted <strong>' + vw + '%</strong> ' +
-        'for this client, from an internet-reachable exposure of <strong>' + w.exposure +
-        '</strong>' + relief + '.' + scale;
+      if (w.basis === 'services') {
+        const names = {
+          vuln: 'Vulnerability Management',
+          awareness: 'Security Awareness Training',
+          mdr: 'Managed Detection &amp; Response',
+        };
+        const bought = (w.weightedServices || []).map(function (k) { return names[k] || k; });
+        const list = bought.length > 1
+          ? bought.slice(0, -1).join(', ') + ' and ' + bought[bought.length - 1]
+          : (bought[0] || '');
+        weighting = ' Weighted for a client on <strong>' + escHtml(list) + '</strong>: ' +
+          trio + '. These weights follow the service mix and do not move with the estate.';
+      } else if (w.basis === 'none') {
+        weighting = ' This client is recorded as buying none of the three scored ' +
+          'services, so the standard ' + trio + ' applies and service coverage is 0%.';
+      } else {
+        // 'not-recorded' — the default, and NOT a claim that they buy nothing.
+        weighting = ' No service mix is recorded, so the standard ' + trio +
+          ' applies. That is the default, not a statement that this client buys ' +
+          'nothing — <strong>record the mix on the Client Profile.</strong>';
+      }
     }
 
     /*
@@ -462,10 +524,11 @@ const SecureScoreTab = (() => {
   function awarenessMissingText(comp, weights) {
     const pts = ptsOf(comp, 35);
     if (weights && weights.awarenessProgram === 'internal') {
-      return 'This client runs their own awareness programme, so this component is ' +
-             'weighted at half pending evidence rather than treated as absent — ' +
-             'but it still scores zero until figures exist. Record their completion ' +
-             'figures on the Awareness tab to recover up to ' + pts + ' points.';
+      return 'This client runs their own awareness programme, and no completion ' +
+             'figures have been recorded, so this component scores zero at full ' +
+             'weight. That is a gap in evidence, not a verdict on their training. ' +
+             'Record their completion figures on the Awareness tab to recover up ' +
+             'to ' + pts + ' points.';
     }
     if (weights && weights.awarenessProgram === 'none') {
       return 'No awareness programme is in place, so this scores zero at full ' +

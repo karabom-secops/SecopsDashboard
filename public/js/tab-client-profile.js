@@ -335,6 +335,7 @@ window.ClientProfileTab = (function () {
             '<label class="modal-label" for="cp-awarenessProgram">Security awareness programme</label>' +
             awarenessSelect(d) +
           '</div>' +
+          arcticWolfField(d) +
           '<div class="form-group" style="grid-column: span 2">' +
             '<label class="modal-label" for="cp-notes">Notes</label>' +
             '<input id="cp-notes" type="text" class="modal-status-select" maxlength="2000" ' +
@@ -364,6 +365,67 @@ window.ClientProfileTab = (function () {
       '</div>';
 
     wire();
+  }
+
+  /**
+   * The Arctic Wolf organisation link.
+   *
+   * A datalist rather than a select: the client may legitimately be linked
+   * before their first weekly report lands, so an unlisted name must remain
+   * typeable. What stops that becoming a silent mistake is the note below it,
+   * which reports what the CURRENT value actually resolves to — a typo shows up
+   * here, at save time, instead of as a missing discount on a board pack weeks
+   * later.
+   */
+  function arcticWolfField(d) {
+    if (d.available && d.available.arcticWolfOrg === false) {
+      return '<div class="form-group" style="grid-column: span 2">' +
+        '<label class="modal-label">Arctic Wolf organisation name</label>' +
+        '<p class="cp-hint">Not available yet — run ' +
+        '<code>db/migrate-arctic-wolf-org.sql</code>.</p></div>';
+    }
+
+    var v = (d.declared || {}).arcticWolfOrg || '';
+    var names = d.arcticWolfOrgs || [];
+
+    return '<div class="form-group" style="grid-column: span 2">' +
+      '<label class="modal-label" for="cp-arcticWolfOrg">Arctic Wolf organisation name</label>' +
+      '<input id="cp-arcticWolfOrg" list="cp-aw-orgs" class="modal-status-select" ' +
+        'maxlength="200" autocomplete="off" ' +
+        'placeholder="Exactly as it appears in the weekly report" ' +
+        (canWriteProfile() ? '' : 'disabled ') +
+        'value="' + esc(v) + '">' +
+      '<datalist id="cp-aw-orgs">' +
+        names.map(function (n) { return '<option value="' + esc(n) + '">'; }).join('') +
+      '</datalist>' +
+      arcticWolfNote(d) +
+    '</div>';
+  }
+
+  /** What the stored name resolves to right now, in one sentence. */
+  function arcticWolfNote(d) {
+    var c = d.arcticWolfCoverage;
+    if (!c) return '';
+
+    if (c.available) {
+      return '<p class="cp-hint">Matched <strong>' + esc(c.matchedOrg) + '</strong> — ' +
+        'Coverage Score ' + esc(String(c.score)) + '% from w/c ' +
+        esc(c.weekCommencing || c.weekKey) + '. This discounts the MDR share of ' +
+        'the Secure Score coverage figure; it does not change any score.</p>';
+    }
+
+    // Not linked is the ordinary state, not an error — say what it costs and
+    // nothing more.
+    if (c.reason === 'not_linked') {
+      return '<p class="cp-hint">Not linked. No MDR coverage discount is applied ' +
+        'to the Secure Score.</p>';
+    }
+
+    // Candidates are already named inside describe()'s sentence.
+    var extra = '';
+    return '<p class="cp-hint cp-hint-warn">' +
+      esc(c.message || 'No Coverage Score could be matched for this name.') +
+      esc(extra) + '</p>';
   }
 
   function awarenessSelect(d) {
@@ -411,6 +473,12 @@ window.ClientProfileTab = (function () {
 
     var prog = document.getElementById('cp-awarenessProgram');
     body.awarenessProgram = (prog && prog.value) ? prog.value : null;
+
+    // null, not '', when blank — "not linked" has exactly one representation
+    // and an empty string in the column would look like a link resolving to
+    // nothing. Same rule the count fields follow.
+    var awOrg = document.getElementById('cp-arcticWolfOrg');
+    body.arcticWolfOrg = (awOrg && awOrg.value.trim()) ? awOrg.value.trim() : null;
 
     var notes = document.getElementById('cp-notes');
     body.notes = notes ? notes.value : '';
