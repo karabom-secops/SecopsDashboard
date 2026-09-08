@@ -156,8 +156,6 @@ const SecureScoreTab = (() => {
      * would hide the one thing a staff member can fix.
      */
     const mdrCov = scope.mdrCoverage || null;
-    const discounted = scope.discountedPoints || 0;
-    const nominal = scope.coverageNominal;
     const showVendor = !!mdrCov &&
       (mdrCov.linked || (scope.covered || []).indexOf('incidentResponse') >= 0);
 
@@ -191,7 +189,37 @@ const SecureScoreTab = (() => {
                    : (REASON_TEXT[mdrCov.reason] || 'Unavailable — no discount applied.'),
                  mdrCov.available ? bandTone(mdrCov.band) : null)
           : '') +
-      '</div>' +
+      '</div>';
+
+    el.hidden = false;
+  }
+
+  /**
+   * The prose that qualifies the coverage figure: the vendor-discount
+   * arithmetic, and which controls sit outside the services in scope.
+   *
+   * SEPARATED FROM THE STRIP ON PURPOSE. These lines used to sit directly under
+   * the four tiles, inside a flex row that also held the unmeasured banner, the
+   * estate note and the data-age box — six blocks of prose in narrow columns
+   * either side of the gauge, none of them readable and the screen unusable.
+   * The tiles are the answer; this is the working, and the working belongs
+   * behind the explain panel where somebody who wants it can read it at a
+   * sensible width.
+   *
+   * Returns a string so the caller decides where it goes — the strip renders
+   * the same either way, which is what keeps this splittable at all.
+   */
+  function scopeDetailHtml(scoreData) {
+    const scope = scoreData && scoreData.scope;
+    if (!scope || !scope.recorded) return '';
+
+    const cov = scoreData.coverage;
+    const gaps = scope.uncovered || [];
+    const mdrCov = scope.mdrCoverage || null;
+    const discounted = scope.discountedPoints || 0;
+    const nominal = scope.coverageNominal;
+
+    return (
       /*
        * The arithmetic, spelled out. A coverage figure that moved for reasons a
        * reader cannot reconstruct is one they are entitled to dispute — and the
@@ -216,9 +244,7 @@ const SecureScoreTab = (() => {
             (u.closedBy && u.closedBy.length
               ? '. Covered by ' + escHtml(u.closedBy.join(' or ')) + '.' : '.') +
             '</li>').join('') + '</ul>'
-        : '');
-
-    el.hidden = false;
+        : ''));
   }
 
   /**
@@ -460,10 +486,13 @@ const SecureScoreTab = (() => {
         Math.round(w.incidentResponse * 100) + '% incident response';
 
       if (w.basis === 'services') {
+        // Plain text, NOT pre-escaped: the list goes through escHtml() below, so
+        // an "&amp;" here was escaped a second time and printed literally as
+        // "Managed Detection &amp;amp; Response" on the client's screen.
         const names = {
           vuln: 'Vulnerability Management',
           awareness: 'Security Awareness Training',
-          mdr: 'Managed Detection &amp; Response',
+          mdr: 'Managed Detection & Response',
         };
         const bought = (w.weightedServices || []).map(function (k) { return names[k] || k; });
         const list = bought.length > 1
@@ -863,12 +892,36 @@ const SecureScoreTab = (() => {
           <button id="secure-score-report" class="score-action-btn score-report-btn" title="Generate Exco report">&#128196; Generate Report</button>
           <button id="secure-score-print" class="score-action-btn" title="Print or save as PDF">&#x2399; Export</button>
         </div>
+        <!--
+          THE SCREEN IS THE FIGURES; THE WORKING IS ONE HOVER AWAY.
+
+          This row previously held the gauge, the scope tiles, the unmeasured
+          banner, the estate-and-weighting note and the data-age box as six
+          flex children. On any real screen that squeezed four paragraphs of
+          prose into columns a few words wide beside the gauge — unreadable,
+          and it pushed the component cards below the fold.
+
+          None of that prose was deleted: every client-facing number on this
+          page still has to be explainable line by line, and it all moved into
+          #secure-score-explain, which opens on hover or focus and prints
+          expanded. What changed is that you now choose when to read it.
+        -->
         <div class="secure-score-main">
-          <div id="secure-score-gauge" class="score-gauge-container"></div>
+          <div class="ss-headline">
+            <div class="ss-explain-wrap">
+              <div id="secure-score-gauge" class="score-gauge-container"></div>
+              <button id="secure-score-explain-btn" class="ss-explain-btn"
+                      type="button" aria-expanded="false"
+                      aria-controls="secure-score-explain">How this score is calculated</button>
+              <div id="secure-score-explain" class="ss-explain" role="tooltip">
+                <div id="secure-score-unmeasured" class="score-unmeasured-note" hidden></div>
+                <div id="secure-score-scope-detail" class="ss-scope-detail"></div>
+                <div id="secure-score-estate" class="score-estate-note" hidden></div>
+                <div id="secure-score-data-age" class="data-age-info"></div>
+              </div>
+            </div>
+          </div>
           <div id="secure-score-scope" class="ss-scope" hidden></div>
-          <div id="secure-score-unmeasured" class="score-unmeasured-note" hidden></div>
-          <div id="secure-score-estate" class="score-estate-note" hidden></div>
-          <div id="secure-score-data-age" class="data-age-info"></div>
           <div id="secure-score-grc-indicator"></div>
         </div>
         <div id="secure-score-insurability" class="secure-score-section"></div>
@@ -907,6 +960,31 @@ const SecureScoreTab = (() => {
         }
         await generateExcoReport(_handle, data, hist || [], grc);
       });
+      /*
+       * The explain panel opens on hover through CSS alone, which covers the
+       * mouse. This is the keyboard and touch path: hover does not exist on a
+       * phone, and a pointer-driven-only disclosure would put the entire
+       * explanation of a client-facing score out of reach for anyone not using
+       * a mouse. `aria-expanded` drives a class so the CSS has one selector to
+       * honour for both routes.
+       */
+      const explainBtn = document.getElementById('secure-score-explain-btn');
+      if (explainBtn) {
+        const wrap = explainBtn.closest('.ss-explain-wrap');
+        explainBtn.addEventListener('click', () => {
+          const open = explainBtn.getAttribute('aria-expanded') === 'true';
+          explainBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+          if (wrap) wrap.classList.toggle('is-open', !open);
+        });
+        // Escape closes it, because a panel this tall can cover the tiles
+        // beneath it and a keyboard user needs a way out that is not a click.
+        explainBtn.addEventListener('keydown', (ev) => {
+          if (ev.key !== 'Escape') return;
+          explainBtn.setAttribute('aria-expanded', 'false');
+          if (wrap) wrap.classList.remove('is-open');
+        });
+      }
+
       document.getElementById('secure-score-print').addEventListener('click', () => {
         // Temporarily remove hidden attribute so CSS can show the panel even if another tab is active
         const panel = document.getElementById('tab-secure-score');
@@ -944,6 +1022,10 @@ const SecureScoreTab = (() => {
     renderScoreGauge(gaugeContainer, gaugeValue, scoped ? null : delta);
 
     renderScopeStrip(document.getElementById('secure-score-scope'), scoreData);
+
+    // The coverage working, behind the explain panel with the rest of the prose.
+    const scopeDetailEl = document.getElementById('secure-score-scope-detail');
+    if (scopeDetailEl) scopeDetailEl.innerHTML = scopeDetailHtml(scoreData);
 
     // State the ceiling explicitly when components have no data behind them.
     // Without this the score looks like a verdict on the client's security,
@@ -1581,6 +1663,11 @@ const SecureScoreTab = (() => {
     // harness without standing up the whole tab. Pure function of its
     // arguments; nothing else in the module depends on it being public.
     renderScopeStrip,
+    // The coverage working that used to sit under the strip. Split out when it
+    // moved into the explain panel, and exported for the same reason the strip
+    // is: the gaps list is client-facing prose, and a test has to be able to
+    // read it back rather than grep for the string that produces it.
+    scopeDetailHtml,
     // Likewise. The estate note carries the staleness and conflict caveats,
     // and a source-level grep for its wording cannot tell whether the branch
     // that emits it still runs — deleting the condition left the string in the

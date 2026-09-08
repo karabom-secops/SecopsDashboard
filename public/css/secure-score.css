@@ -7,17 +7,39 @@
   padding: 1rem;
 }
 
-/* Main Score Display */
+/* ── Main Score Display ────────────────────────────────────────────────────
+ *
+ * A COLUMN, NOT A ROW.
+ *
+ * This was `display:flex` across a row holding the gauge, the scope tiles, the
+ * unmeasured banner, the estate note and the data-age box. Five flex children,
+ * four of them paragraphs, sharing the width of one card: the prose collapsed
+ * into columns a few words wide running hundreds of pixels down the page, and
+ * the component cards were pushed off the bottom of the screen.
+ *
+ * The gauge and the scope tiles are the figures, and they stack. Everything
+ * that explains them moved into .ss-explain.
+ */
 .secure-score-main {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 3rem;
+  gap: 1.75rem;
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 2rem;
   box-shadow: var(--shadow-sm);
+}
+
+/* The scope tiles get the card's full width instead of a flex share of it. */
+.secure-score-main > .ss-scope { align-self: stretch; }
+
+.ss-headline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
 }
 
 .score-gauge-container {
@@ -31,8 +53,92 @@
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
 }
 
+/* ── The explain panel ─────────────────────────────────────────────────────
+ *
+ * Every line of prose this page used to print inline. It is not decoration:
+ * a client-facing score has to be explainable figure by figure, and the
+ * unmeasured ceiling, the estate the score was sized against, the weighting
+ * basis and the age of the data are the explanation. Hover, focus or tap to
+ * read it; it prints expanded, so nothing is lost from an exported PDF.
+ */
+.ss-explain-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.ss-explain-btn {
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 0.3rem 0.85rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.ss-explain-btn::before {
+  content: 'ⓘ';
+  margin-right: 0.35rem;
+  opacity: 0.75;
+}
+
+.ss-explain-btn:hover,
+.ss-explain-btn:focus-visible,
+.ss-explain-wrap.is-open .ss-explain-btn {
+  color: var(--logo-cyan);
+  border-color: var(--logo-cyan);
+  background: var(--card-bg);
+  outline: none;
+}
+
+.ss-explain {
+  display: none;
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  /* Wide enough to read a paragraph at, capped so it never exceeds the
+     viewport on a laptop — the failure this whole change is fixing was prose
+     rendered too narrow to read. */
+  width: min(680px, 88vw);
+  max-height: 62vh;
+  overflow-y: auto;
+  text-align: left;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  z-index: 120;
+}
+
+/* Hover for the mouse, focus-within for the keyboard, .is-open for the click
+   and touch path the script sets. All three land on the same rule so none of
+   them can drift out of step with the others. */
+.ss-explain-wrap:hover .ss-explain,
+.ss-explain-wrap:focus-within .ss-explain,
+.ss-explain-wrap.is-open .ss-explain {
+  display: block;
+}
+
+/* Inside the panel these blocks are stacked sections, not free-floating notes:
+   drop the centring and the width cap they carry for inline use. */
+.ss-explain > * { max-width: none; margin-left: 0; margin-right: 0; }
+.ss-explain > *:first-child { margin-top: 0; }
+.ss-explain > *:empty { display: none; }
+
+.ss-explain .ss-scope-detail:not(:empty),
+.ss-explain .data-age-info {
+  margin-top: var(--space-3);
+}
+
 .data-age-info {
-  flex: 1;
   padding: 1rem;
   background: var(--surface2);
   border-radius: var(--radius-sm);
@@ -568,6 +674,34 @@
     pointer-events: none;
   }
   .score-tooltip::after { display: none; }
+
+  /*
+   * The explain panel prints EXPANDED, in the flow, always.
+   *
+   * On screen it is a disclosure; on paper it is the methodology, and a board
+   * pack that shows "Overall Secure Score 35" without the sentence explaining
+   * that 50 of those points are unmeasured rather than failed is the exact
+   * document this repo exists to stop producing. Hiding it in print would have
+   * been a silent regression of the page's whole purpose, so it is stated here
+   * rather than left to the absence of a :hover.
+   */
+  .ss-explain-wrap { position: static; display: block; }
+  .ss-explain-btn { display: none; }
+  .ss-explain {
+    display: block !important;
+    position: static;
+    transform: none;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    box-shadow: none;
+    border: 1px solid #ddd;
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .secure-score-main { align-items: stretch; }
 
   /* Page-break control */
   .component-card,

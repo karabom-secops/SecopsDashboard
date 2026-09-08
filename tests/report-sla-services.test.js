@@ -1159,16 +1159,61 @@ check('it renders for a scoped client', stripAware.hidden === false);
 check('showing the in-scope score', /Secure Score — services in scope/.test(stripAware.innerHTML));
 check('the coverage score', /Service coverage of posture/.test(stripAware.innerHTML));
 check('and the overall score', /Overall Secure Score/.test(stripAware.innerHTML));
-check('with the gaps named', /Vulnerability management/.test(stripAware.innerHTML));
+/*
+ * The gaps list and the discount arithmetic moved OUT of the strip and into
+ * the explain panel — six blocks of prose in the same flex row as the gauge
+ * squeezed every one of them into a column a few words wide. The content is
+ * unchanged and still client-facing, so it is still asserted; only the seam
+ * that produces it has moved.
+ */
+function detail(services) {
+  const s = SS.calculateSecureScore(null, awarenessData, null, { estate, services });
+  return Tab.scopeDetailHtml({
+    score: s.composite, overall: s.overall,
+    serviceScore: s.serviceScore, coverage: s.coverage, scope: s.scope,
+  });
+}
+
+check('the tab exposes the coverage detail', typeof Tab.scopeDetailHtml === 'function');
+
+const detailAware = detail(['awareness']);
+check('with the gaps named', /Vulnerability management/.test(detailAware), detailAware);
 check('and what would close them',
-  /Covered by Vulnerability Management/.test(stripAware.innerHTML));
+  /Covered by Vulnerability Management/.test(detailAware));
+check('and the strip itself is now just the figures',
+  !/ss-scope-gaps/.test(stripAware.innerHTML), stripAware.innerHTML.slice(0, 120));
 
 // A control the client runs themselves is a commercial gap, not a blind spot.
-const stripMdr = strip(['mdr']);
+const detailMdr = detail(['mdr']);
 check('a measured-but-uncovered control is not called a blind spot',
-  /measured, outside this engagement/.test(stripMdr.innerHTML));
+  /measured, outside this engagement/.test(detailMdr));
 check('while an unmeasured one is',
-  /ss-scope-blind/.test(stripMdr.innerHTML));
+  /ss-scope-blind/.test(detailMdr));
+check('an unrecorded client gets no coverage detail either',
+  detail(null) === '', detail(null));
+
+/*
+ * The prose has to remain REACHABLE. Moving it behind a hover would be a
+ * regression if the panel were mouse-only or dropped from the printed report —
+ * the page exists to make a client-facing score explainable line by line.
+ */
+const tabSrcPanel = fs.readFileSync(path.join(ROOT, 'public', 'js', 'tab-secure-score.js'), 'utf8');
+const ssCss = fs.readFileSync(path.join(ROOT, 'public', 'css', 'secure-score.css'), 'utf8');
+
+check('the explanations render into the explain panel, not the main row',
+  /id="secure-score-explain"[\s\S]{0,600}id="secure-score-estate"/.test(tabSrcPanel));
+check('the coverage detail is written into it',
+  /secure-score-scope-detail[\s\S]{0,200}scopeDetailHtml\(scoreData\)/.test(tabSrcPanel));
+check('it opens on hover', /\.ss-explain-wrap:hover \.ss-explain/.test(ssCss));
+check('and on keyboard focus', /\.ss-explain-wrap:focus-within \.ss-explain/.test(ssCss));
+check('and on click, for touch devices with no hover at all',
+  /\.ss-explain-wrap\.is-open \.ss-explain/.test(ssCss) &&
+  /classList\.toggle\('is-open'/.test(tabSrcPanel));
+check('the toggle reports its state to assistive tech',
+  /aria-expanded/.test(tabSrcPanel));
+check('and the panel prints expanded, so an exported PDF keeps the methodology',
+  /\.ss-explain \{[^}]*display: block !important/.test(
+    ssCss.slice(ssCss.indexOf('@media print'))));
 
 // The regression that would hit every unconfigured client.
 const stripNone = strip(null);

@@ -627,15 +627,35 @@ vm.createContext(ssBox);
 vm.runInContext(ssJs, ssBox);
 const SST = ssBox.window.SecureScoreTab;
 
-function estateNoteHtml(estatePayload) {
+function estateNoteHtml(estatePayload, weights) {
   const el = { hidden: true, className: '', innerHTML: '' };
   SST.renderEstateNote(el, {
     estate: estatePayload,
-    weights: {},
+    weights: weights || {},
     components: {},
   });
   return el.hidden ? '' : el.innerHTML;
 }
+
+/*
+ * The service names in the weighting sentence are escaped by the renderer, so
+ * they must be authored as PLAIN TEXT. "Managed Detection &amp; Response" was
+ * escaped a second time and reached the client's screen as
+ * "Managed Detection &amp;amp; Response" — visible in the weighting line of
+ * every MDR client's Secure Score tab.
+ */
+const mdrWeighting = estateNoteHtml(
+  { servers: 4, users: 100, recorded: true, sources: { servers: 'declared' },
+    age: { days: 3, stale: false }, conflicts: [] },
+  { basis: 'services', weightedServices: ['mdr', 'vuln'],
+    vulnerabilities: 0.35, awareness: 0.20, incidentResponse: 0.45 });
+
+check('the service mix is named in the weighting sentence',
+  /Managed Detection/.test(mdrWeighting), mdrWeighting.slice(-200));
+check('and its ampersand is not double-escaped',
+  /Managed Detection &amp; Response/.test(mdrWeighting) &&
+  !/&amp;amp;/.test(mdrWeighting),
+  (mdrWeighting.match(/Managed Detection[^<,.]*/) || [])[0]);
 
 const staleNote = estateNoteHtml({
   servers: 4, users: 100, recorded: true, sources: { servers: 'declared' },
