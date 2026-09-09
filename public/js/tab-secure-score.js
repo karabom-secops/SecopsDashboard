@@ -586,13 +586,23 @@ const SecureScoreTab = (() => {
     if (!c.period || !d) return 'Ticket resolution & speed';
 
     const when = monthLabel(c.period);
+    // An untyped feed cannot be filtered to incidents, so it is not claimed to
+    // be. Dormant with the Arctic Wolf integration, which always sets a type.
+    const noun = d.typeFiltered === false ? 'ticket' : 'incident';
+    // Support and administrative tickets set aside, named so the denominator
+    // can be checked against the ticket list rather than taken on trust.
+    const aside = d.excluded
+      ? ' (' + d.excluded + ' non-incident ticket' + (d.excluded === 1 ? '' : 's') +
+        ' excluded)'
+      : '';
+
     if (!d.raised) {
       // Not a gap in the data — a month in which nothing needed responding to.
-      // Saying "no tickets" beside a score of 100 stops it reading as a fault.
-      return 'No tickets raised in ' + when + ' — nothing to respond to';
+      // Saying so beside a score of 100 stops it reading as a fault.
+      return 'No ' + noun + 's raised in ' + when + ' — nothing to respond to' + aside;
     }
-    return d.resolved + ' of ' + d.raised + ' ticket' + (d.raised === 1 ? '' : 's') +
-           ' raised in ' + when + ' resolved';
+    return d.resolved + ' of ' + d.raised + ' ' + noun + (d.raised === 1 ? '' : 's') +
+           ' raised in ' + when + ' resolved' + aside;
   }
 
   /** 'YYYY-MM' as a readable month. Returns the key itself if it is malformed. */
@@ -628,10 +638,13 @@ const SecureScoreTab = (() => {
         desc: mdrCohortText(components.incidentResponse),
         missing: 'No MDR or incident data available — connect the MDR feed to ' +
                  'recover up to ' + ptsOf(components.incidentResponse, 25) + ' points.',
-        tooltip: 'Scored on the tickets <strong>raised in the last complete ' +
-                 'calendar month</strong>, followed through to whenever they ' +
-                 'were resolved — one cohort, so the resolution rate cannot ' +
-                 'exceed 100%.<br>• Resolution rate forms the base score.<br>' +
+        tooltip: 'Scored on the tickets typed <strong>incident</strong> that ' +
+                 'were <strong>raised in the last complete calendar ' +
+                 'month</strong>, followed through to whenever they were ' +
+                 'resolved — one cohort, so the resolution rate cannot exceed ' +
+                 '100%.<br>• Support and administrative tickets are excluded: ' +
+                 'a support request answered in a week is not a slow incident ' +
+                 'response.<br>• Resolution rate forms the base score.<br>' +
                  '• Avg resolution &gt; 24 hrs deducts up to 20 pts.<br>' +
                  '• A month with no tickets scores 100 — nothing needed doing.' +
                  '<br><br>This used to score the <em>whole uploaded feed</em>, ' +

@@ -173,6 +173,102 @@ check('and so do real Date objects, which is what pg returns',
 check('junk in the feed is skipped rather than thrown on',
   M.cohortStats([null, 'x', 42, {}, ...FEED], '2026-08').raised === 4);
 
+// ── Incidents only ─────────────────────────────────────────────────────────
+
+section('only tickets typed "incident" are measured');
+
+/*
+ * The feed carries more than incidents — ticket_type is documented as
+ * "incident, info, support, etc." and IRIS adds 'dfir_case'. A support request
+ * answered in a week is not a slow incident response, and the 168-hour one
+ * below is there to prove it cannot reach the mean.
+ */
+const MIXED = [
+  { createdAt: '2026-08-03T08:00:00Z', resolvedAt: '2026-08-04T08:00:00Z', ticketType: 'incident' },
+  { createdAt: '2026-08-10T08:00:00Z', resolvedAt: '2026-08-11T08:00:00Z', ticketType: 'Incident' },
+  { createdAt: '2026-08-12T08:00:00Z', resolvedAt: '2026-08-19T08:00:00Z', ticketType: 'support' },
+  { createdAt: '2026-08-14T08:00:00Z', resolvedAt: null,                   ticketType: 'info' },
+  { createdAt: '2026-08-15T08:00:00Z', resolvedAt: null,                   ticketType: null },
+  { createdAt: '2026-08-20T08:00:00Z', resolvedAt: '2026-08-21T08:00:00Z', ticketType: 'dfir_case' },
+];
+const mixed = M.cohortStats(MIXED, '2026-08');
+
+check('only the incidents are counted', mixed.raised === 2, mixed.raised + ' of 6 tickets');
+check('casing does not matter — the CSV path stores the column verbatim',
+  mixed.raised === 2, "'Incident' and 'incident' both counted");
+check('snake_case ticket_type works too, which is what pg returns',
+  M.cohortStats(MIXED.map(t => ({
+    created_at: t.createdAt, resolved_at: t.resolvedAt, ticket_type: t.ticketType,
+  })), '2026-08').raised === 2);
+
+/*
+ * The point of the filter. The support ticket took 168 hours; leaving it in
+ * would have put the mean at 72 and cost real points through the speed penalty.
+ */
+check('a week-long support ticket cannot reach the incident mean',
+  mixed.meanHours === 24, mixed.meanHours + ' hrs, not 72');
+check('nor can a dfir_case or an info ticket',
+  mixed.resolved === 2 && mixed.stillOpen === 0,
+  mixed.resolved + ' resolved, ' + mixed.stillOpen + ' open');
+
+/*
+ * WHAT WAS DROPPED IS REPORTED. If a tenant's feed labels incidents something
+ * other than 'incident', every cohort empties and the score reads 100 —
+ * indistinguishable from a spotless month. The counts are what make that
+ * visible rather than silently wrong.
+ */
+check('the excluded tickets are counted', mixed.excluded === 4, mixed.excluded);
+check('and named by type, so a mislabelled feed is obvious',
+  JSON.stringify(mixed.excludedTypes) ===
+  JSON.stringify({ support: 1, info: 1, unclassified: 1, dfir_case: 1 }),
+  JSON.stringify(mixed.excludedTypes));
+check('a blank type in a classifying feed is unclassified, not an incident',
+  mixed.excludedTypes.unclassified === 1);
+
+const wrongLabel = M.cohortStats(
+  MIXED.map(t => Object.assign({}, t, { ticketType: 'security_incident' })), '2026-08');
+check('a feed that labels incidents differently reports every ticket as excluded',
+  wrongLabel.raised === 0 && wrongLabel.excluded === 6 &&
+  wrongLabel.excludedTypes.security_incident === 6,
+  JSON.stringify(wrongLabel.excludedTypes));
+
+section('a feed with no ticket types at all is not silently perfect');
+
+/*
+ * THE GUARD. An empty cohort scores 100, correctly, because a month with no
+ * incidents is a quiet month. But a feed carrying NO type information filters
+ * to empty every time, and that would read as a flawless MDR service rather
+ * than as a filter that could not be applied.
+ *
+ * Dormant in practice — tickets arrive through the Arctic Wolf integration,
+ * which always sets a type. This is for the CSV path, where the "Ticket Type"
+ * column is optional.
+ */
+const UNTYPED = MIXED.map(t => ({ createdAt: t.createdAt, resolvedAt: t.resolvedAt }));
+const untyped = M.cohortStats(UNTYPED, '2026-08');
+
+check('the feed is recognised as not classifying', M.feedClassifies(UNTYPED) === false);
+check('and the filter is reported as not applied', untyped.typeFiltered === false);
+check('so every ticket is counted rather than none',
+  untyped.raised === 6, untyped.raised);
+// Scored inline rather than through the scoreOf() helper further down: this
+// file's own header records a `const` declared beside its section putting an
+// earlier one in a temporal dead zone and crashing the suite on load.
+const untypedScore = SS.calculateMdrScore({ upload: M.scoreInput(untyped) });
+check('which is the difference between a real score and a silent 100',
+  untypedScore !== 100, 'scores ' + untypedScore + ', not 100');
+check('a classifying feed is flagged as filtered', mixed.typeFiltered === true);
+
+// The whole feed decides, not the month: a month whose tickets happen to be
+// untyped must not degrade open while the rest of the feed is filtered.
+const oneBlankMonth = M.cohortStats(MIXED.concat([
+  { createdAt: '2026-09-01T08:00:00Z', resolvedAt: null, ticketType: null },
+]), '2026-09');
+check('a month of blanks inside a classifying feed still filters',
+  oneBlankMonth.typeFiltered === true && oneBlankMonth.raised === 0 &&
+  oneBlankMonth.excluded === 1,
+  'excluded ' + JSON.stringify(oneBlankMonth.excludedTypes));
+
 // ── The window ─────────────────────────────────────────────────────────────
 
 section('the score window is the last COMPLETE month');

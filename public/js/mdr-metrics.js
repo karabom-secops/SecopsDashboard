@@ -119,11 +119,53 @@
     return (b.getTime() - a.getTime()) / 3600000;
   }
 
-  /** The tickets raised in a month. The cohort every figure below is drawn from. */
+  /** The tickets raised in a month, of every type. */
   function raisedIn(tickets, monthKey) {
     if (!monthKey) return [];
     return (Array.isArray(tickets) ? tickets : []).filter(function (t) {
       return t && typeof t === 'object' && monthKeyOf(createdOf(t)) === monthKey;
+    });
+  }
+
+  /* ══ INCIDENTS ONLY ═══════════════════════════════════════════════════════
+   *
+   * The MDR feed carries more than incidents — mdr_tickets.ticket_type is
+   * documented as "incident, info, support, etc.", and IRIS adds 'dfir_case'.
+   * A support request answered in a week is not a slow incident response, and
+   * counting one dragged both the resolution rate and the mean.
+   *
+   * Matched case-insensitively on a trimmed value: the Arctic Wolf integration
+   * lower-cases what the API returns, but the CSV parser stores the column
+   * verbatim, so 'Incident' and 'incident' both reach this table.
+   */
+  var INCIDENT_TYPE = 'incident';
+
+  function typeOf(t) {
+    var v = t && (t.ticketType !== undefined ? t.ticketType : t.ticket_type);
+    if (v === null || v === undefined) return null;
+    v = String(v).trim().toLowerCase();
+    return v === '' ? null : v;
+  }
+
+  /**
+   * Does this feed classify tickets at all?
+   *
+   * THE GUARD THAT STOPS A SILENT PERFECT SCORE. An empty cohort scores 100 —
+   * correctly, because a month with no incidents is a quiet month. But a feed
+   * with NO type information filters to empty every time, and that would read
+   * as a flawless MDR service rather than as a filter that could not be
+   * applied. Not recorded is not none, here as everywhere else.
+   *
+   * Judged over the WHOLE feed rather than one month, because the question is
+   * about the feed's shape, not about a month that happened to be quiet.
+   *
+   * In practice this is dormant: tickets arrive through the Arctic Wolf
+   * integration, which always sets a type. It exists for the CSV upload path,
+   * where the column is optional.
+   */
+  function feedClassifies(tickets) {
+    return (Array.isArray(tickets) ? tickets : []).some(function (t) {
+      return t && typeof t === 'object' && typeOf(t) !== null;
     });
   }
 
@@ -136,7 +178,28 @@
    *                   medianHours, measuredHours
    */
   function cohortStats(tickets, monthKey) {
-    var cohort = raisedIn(tickets, monthKey);
+    var all = raisedIn(tickets, monthKey);
+
+    /*
+     * Filter to incidents, and REPORT WHAT WAS DROPPED.
+     *
+     * The exclusion counts are not decoration. If this tenant's feed labels its
+     * incidents something other than 'incident', the filter would empty every
+     * cohort and the score would read 100 — indistinguishable from a spotless
+     * month. Surfacing "48 excluded (48 security_incident)" turns that from an
+     * invisible wrong number into an obvious one.
+     */
+    var filtered = feedClassifies(tickets);
+    var excludedTypes = {};
+    var cohort = !filtered ? all : all.filter(function (t) {
+      var ty = typeOf(t);
+      if (ty === INCIDENT_TYPE) return true;
+      // A blank in a feed that does classify is unclassified, not an incident.
+      var label = ty === null ? 'unclassified' : ty;
+      excludedTypes[label] = (excludedTypes[label] || 0) + 1;
+      return false;
+    });
+
     var hours = [];
     var resolved = 0;
 
@@ -173,6 +236,16 @@
       // How many resolutions could actually be timed. Not the same as
       // `resolved` when a feed omits a creation stamp.
       measuredHours: hours.length,
+
+      /*
+       * The incident filter, and what it did. `typeFiltered` false means the
+       * feed carries no ticket types, so every figure above counts tickets of
+       * every kind and the page must say so rather than implying these are
+       * incidents.
+       */
+      typeFiltered:  filtered,
+      excluded:      all.length - cohort.length,
+      excludedTypes: excludedTypes,
     };
   }
 
@@ -194,7 +267,7 @@
 
   var api = {
     monthKeyOf, lastCompleteMonth, raisedIn, cohortStats, scoreInput,
-    elapsedHours,
+    elapsedHours, feedClassifies, INCIDENT_TYPE,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

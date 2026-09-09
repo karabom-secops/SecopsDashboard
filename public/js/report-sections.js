@@ -832,11 +832,15 @@ window.ReportSections = (function () {
      * applies. Incidents logged on the Incident Response tab always count:
      * those are recorded against the client directly and belong to them
      * whatever they buy from us.
+     *
+     * Only tickets typed 'incident'. The tile is captioned "Security incidents
+     * this period", and it was counting the whole feed — support requests and
+     * administrative tickets included — which overstated the number on the
+     * front page of the board pack. Through the shared cohort module, so this
+     * tile and the incident-resolution KPIs count the same things.
      */
     var mdr = serviceInScope(ctx, 'mdr')
-      ? (((ctx.data || {}).mdr || {}).tickets || []).filter(function (t) {
-          return monthOf(t.createdAt) === ctx.period;
-        }).length
+      ? MM.cohortStats(((ctx.data || {}).mdr || {}).tickets || [], ctx.period).raised
       : 0;
     return { ir: ir, mdr: mdr, total: ir + mdr };
   }
@@ -1602,7 +1606,17 @@ window.ReportSections = (function () {
      */
     var stat = MM.cohortStats(tickets, period);
 
-    if (!stat.raised) return null;
+    /*
+     * Rendered whenever the period had ANY ticket activity, not only when it
+     * had incidents.
+     *
+     * Returning null on `!stat.raised` would hide the one failure this filter
+     * can produce: if a feed labels its incidents something other than
+     * 'incident', every cohort empties and the section simply disappears from
+     * the deck. A table reading "0 incidents raised, 6 tickets excluded as not
+     * typed incident" is how that becomes visible instead.
+     */
+    if (!stat.raised && !stat.excluded) return null;
 
     var mttr   = stat.meanHours;
     var median = stat.medianHours;
@@ -1642,10 +1656,18 @@ window.ReportSections = (function () {
      * reason. It existed only to stop a partial SLA figure being read as a
      * complete one; with no SLA figure it qualifies nothing.
      */
+    /*
+     * The row label names what was actually counted. With the incident filter
+     * applied these are incidents; on a feed carrying no ticket types it could
+     * not be applied, and calling a support request an incident on a client's
+     * board pack would be the lie the degrade-open guard exists to avoid.
+     */
+    var noun = stat.typeFiltered ? 'Incidents' : 'Tickets';
+
     var rows = [
       { kpi: 'Mean time to resolve',   actual: hrs(mttr),   ok: null },
       { kpi: 'Median time to resolve', actual: hrs(median), ok: null },
-      { kpi: 'Tickets raised this period', actual: String(stat.raised),   ok: null },
+      { kpi: noun + ' raised this period', actual: String(stat.raised),   ok: null },
       { kpi: 'Of those, resolved',         actual: String(stat.resolved), ok: null },
     ];
 
@@ -1701,15 +1723,45 @@ window.ReportSections = (function () {
      * copies of the August report can see why they differ.
      */
     '<div class="rag-note">Every figure above describes the <strong>' +
-      esc(String(stat.raised)) + ' ticket' + (stat.raised === 1 ? '' : 's') +
+      esc(String(stat.raised)) + ' incident' + (stat.raised === 1 ? '' : 's') +
       ' raised in this period</strong>, followed through to resolution — so ' +
-      'the resolution rate cannot exceed 100%, and a ticket raised in an ' +
+      'the resolution rate cannot exceed 100%, and an incident raised in an ' +
       'earlier month is not counted here even if it closed during it. ' +
+      exclusionSentence(stat) +
       'Resolution status is as at <strong>' + esc(asAtLabel()) + '</strong>; ' +
-      'tickets raised late in the period may since have closed. ' +
+      'incidents raised late in the period may since have closed. ' +
       'Security operations run <strong>24/7</strong>, so resolution time is ' +
       'measured in elapsed hours from creation to resolution — nights, ' +
       'weekends and public holidays included.</div>';
+  }
+
+  /**
+   * What the incident filter removed, named by type.
+   *
+   * A support request answered in a week is not a slow incident response, so
+   * only tickets typed 'incident' are measured. Saying which tickets were set
+   * aside — and how many — keeps the denominator checkable against the ticket
+   * list, and makes a mislabelled feed obvious: if every ticket is excluded
+   * under one unexpected type, that reads as a filter to fix rather than as a
+   * month with no incidents.
+   */
+  function exclusionSentence(stat) {
+    if (!stat.typeFiltered) {
+      // The feed carries no ticket types at all, so the filter could not be
+      // applied. Claiming these are incidents would be the lie.
+      return 'This feed does not classify tickets by type, so <strong>all ' +
+             'tickets are counted</strong> rather than incidents alone. ';
+    }
+    if (!stat.excluded) return '';
+
+    var kinds = Object.keys(stat.excludedTypes).sort(function (a, b) {
+      return stat.excludedTypes[b] - stat.excludedTypes[a];
+    }).map(function (k) { return stat.excludedTypes[k] + ' ' + k; });
+
+    return esc(String(stat.excluded)) + ' further ticket' +
+      (stat.excluded === 1 ? ' was' : 's were') + ' raised and are not counted ' +
+      'here, being support and administrative work rather than incidents (' +
+      esc(kinds.join(', ')) + '). ';
   }
 
   /** Today, for the as-at line on any figure that follows a cohort forward. */

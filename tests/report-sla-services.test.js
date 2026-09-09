@@ -159,25 +159,35 @@ section('the resolution KPI table');
 
 const kpiSec = S.filter(x => x.id === 'assuranceDashboard')[0];
 
+/*
+ * Fixtures carry ticketType: 'incident'.
+ *
+ * Only tickets typed 'incident' are measured, and a feed carrying NO types at
+ * all degrades open and counts everything. These fixtures originally had no
+ * type, so every check here was silently exercising the degrade-open path and
+ * would have passed with the filter completely broken. Typed on purpose, with
+ * the untyped and mixed cases tested explicitly below.
+ */
 function kpiHtml(tickets) {
   return kpiSec.render({
     period: '2026-08', periodLabel: 'August 2026', comments: {},
     data: { mdr: { tickets: tickets }, secureScore: {} },
   }) || '';
 }
+const inc = (t) => Object.assign({ ticketType: 'incident' }, t);
 
 const kpi = kpiHtml([
   // 12h HIGH — inside every target. 96h CRITICAL — outside all of them.
-  { createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' },
-  { createdAt: '2026-08-05T08:00:00Z', resolvedAt: '2026-08-09T08:00:00Z', severity: 'CRITICAL' },
-  { createdAt: '2026-08-06T08:00:00Z', resolvedAt: '2026-08-06T12:00:00Z', severity: 'WEIRD' },
+  inc({ createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' }),
+  inc({ createdAt: '2026-08-05T08:00:00Z', resolvedAt: '2026-08-09T08:00:00Z', severity: 'CRITICAL' }),
+  inc({ createdAt: '2026-08-06T08:00:00Z', resolvedAt: '2026-08-06T12:00:00Z', severity: 'WEIRD' }),
 ]);
 const kpiText = kpi.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
 check('the table renders', /Incident resolution/.test(kpi));
 check('and still reports what it measures',
   /Mean time to resolve/.test(kpiText) && /Median time to resolve/.test(kpiText) &&
-  /Tickets raised this period/.test(kpiText) && /Of those, resolved/.test(kpiText));
+  /Incidents raised this period/.test(kpiText) && /Of those, resolved/.test(kpiText));
 
 // The removal, asserted on the rendered output rather than the source — the
 // source still discusses the SLA in comments and in the exec-summary tile.
@@ -225,14 +235,14 @@ check('so nothing is left open', !/Still open/.test(kpiText));
 check('and the cross-cohort backlog row is gone', !/Backlog change/.test(kpiText));
 
 const partialText = kpiHtml([
-  { createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' },
-  { createdAt: '2026-08-04T08:00:00Z', severity: 'HIGH' },
-  { createdAt: '2026-08-05T08:00:00Z', severity: 'LOW' },
+  inc({ createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' }),
+  inc({ createdAt: '2026-08-04T08:00:00Z', severity: 'HIGH' }),
+  inc({ createdAt: '2026-08-05T08:00:00Z', severity: 'LOW' }),
 ]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 check('an unresolved cohort reports what is still open',
   /Still open 2/.test(partialText), partialText.slice(0, 200));
 check('and a rate that is a real fraction of the tickets raised',
-  /Tickets raised this period 3/.test(partialText) &&
+  /Incidents raised this period 3/.test(partialText) &&
   /Of those, resolved 1/.test(partialText) &&
   /Resolution rate 33%/.test(partialText));
 
@@ -243,11 +253,11 @@ check('and a rate that is a real fraction of the tickets raised',
  * which is how the rate reached 125%.
  */
 const crossText = kpiHtml([
-  { createdAt: '2026-07-28T08:00:00Z', resolvedAt: '2026-08-02T08:00:00Z', severity: 'HIGH' },
-  { createdAt: '2026-08-04T08:00:00Z', resolvedAt: '2026-08-05T08:00:00Z', severity: 'HIGH' },
+  inc({ createdAt: '2026-07-28T08:00:00Z', resolvedAt: '2026-08-02T08:00:00Z', severity: 'HIGH' }),
+  inc({ createdAt: '2026-08-04T08:00:00Z', resolvedAt: '2026-08-05T08:00:00Z', severity: 'HIGH' }),
 ]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 check('a ticket raised before the period is excluded, however it closed',
-  /Tickets raised this period 1/.test(crossText) && /Of those, resolved 1/.test(crossText),
+  /Incidents raised this period 1/.test(crossText) && /Of those, resolved 1/.test(crossText),
   crossText.slice(0, 150));
 // Parsed, not pattern-matched: the first version of this asserted the rendered
 // text did not match /1\d\d%/, which "100%" satisfies. It passed for the wrong
@@ -262,7 +272,7 @@ check('and the rate can never exceed 100%',
 // The opposite direction: raised in the period, closed after it. This is the
 // case the "as at" date exists for.
 const lateText = kpiHtml([
-  { createdAt: '2026-08-30T08:00:00Z', resolvedAt: '2026-09-02T08:00:00Z', severity: 'HIGH' },
+  inc({ createdAt: '2026-08-30T08:00:00Z', resolvedAt: '2026-09-02T08:00:00Z', severity: 'HIGH' }),
 ]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 check('a ticket closed after the period still counts as resolved for it',
   /Of those, resolved 1/.test(lateText) && /Resolution rate 100%/.test(lateText),
@@ -270,6 +280,73 @@ check('a ticket closed after the period still counts as resolved for it',
 check('and the note dates that claim rather than leaving it to move silently',
   /as at/i.test(lateText) && /may since have closed/.test(lateText),
   (lateText.match(/as at[^.]*/i) || [''])[0]);
+
+/* ── Incidents only ────────────────────────────────────────────────────────
+ *
+ * The feed carries support and administrative tickets too. A support request
+ * answered in a week is not a slow incident response, and one of those in the
+ * cohort moved both the mean and the rate.
+ */
+const mixedText = kpiHtml([
+  inc({ createdAt: '2026-08-03T08:00:00Z', resolvedAt: '2026-08-04T08:00:00Z' }),
+  inc({ createdAt: '2026-08-10T08:00:00Z', resolvedAt: '2026-08-11T08:00:00Z' }),
+  { createdAt: '2026-08-12T08:00:00Z', resolvedAt: '2026-08-19T08:00:00Z', ticketType: 'support' },
+  { createdAt: '2026-08-14T08:00:00Z', resolvedAt: null, ticketType: 'info' },
+]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+check('only tickets typed incident are measured',
+  /Incidents raised this period 2/.test(mixedText), mixedText.slice(0, 130));
+check('a week-long support ticket does not reach the mean',
+  /Mean time to resolve 24 hrs/.test(mixedText), mixedText.slice(0, 90));
+check('nor does an unresolved info ticket leave something "still open"',
+  !/Still open/.test(mixedText) && /Resolution rate 100%/.test(mixedText));
+
+/*
+ * WHAT WAS SET ASIDE IS STATED. Silently dropping tickets makes the
+ * denominator uncheckable against the ticket list, and hides the one way this
+ * filter fails: a feed that labels its incidents something else empties every
+ * cohort and would otherwise read as a spotless month.
+ */
+check('the note says what was excluded, and of what type',
+  /2 further tickets were raised and are not counted here/.test(mixedText) &&
+  /1 support/.test(mixedText) && /1 info/.test(mixedText),
+  (mixedText.match(/\d+ further[^.]*/) || [''])[0]);
+
+const allExcluded = kpiHtml([
+  { createdAt: '2026-08-03T08:00:00Z', resolvedAt: '2026-08-04T08:00:00Z', ticketType: 'security_incident' },
+  { createdAt: '2026-08-10T08:00:00Z', resolvedAt: '2026-08-11T08:00:00Z', ticketType: 'security_incident' },
+]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+check('a feed that labels incidents differently does not just vanish',
+  allExcluded.length > 0 && /2 security_incident/.test(allExcluded),
+  allExcluded.slice(0, 170));
+
+/*
+ * The degrade-open guard. An untyped feed cannot be filtered, and an empty
+ * cohort scores 100 — so counting nothing would read as a flawless service.
+ * Dormant in practice: the Arctic Wolf integration always sets a type.
+ */
+const untypedText = kpiHtml([
+  { createdAt: '2026-08-03T08:00:00Z', resolvedAt: '2026-08-04T08:00:00Z' },
+  { createdAt: '2026-08-10T08:00:00Z', resolvedAt: null },
+]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+check('an untyped feed counts everything rather than nothing',
+  /Tickets raised this period 2/.test(untypedText), untypedText.slice(0, 120));
+check('and says the figures are not incidents alone',
+  /does not classify tickets by type/.test(untypedText),
+  (untypedText.match(/This feed[^.]*/) || [''])[0]);
+
+/*
+ * The row label has to name what was actually counted. Asserted as a PAIR:
+ * either label on its own could be hard-coded and still pass, and calling a
+ * support request an incident on a client's board pack is the lie the
+ * degrade-open guard exists to avoid.
+ */
+check('the row is labelled incidents only when the filter was applied',
+  /Incidents raised this period/.test(mixedText) &&
+  !/Tickets raised this period/.test(mixedText) &&
+  /Tickets raised this period/.test(untypedText) &&
+  !/Incidents raised this period/.test(untypedText),
+  'filtered=Incidents, unfiltered=Tickets');
 
 // The helpers that existed only for the removed row are gone from the code —
 // a constant named SLA_TARGET_PCT left behind reads as a policy in force.
