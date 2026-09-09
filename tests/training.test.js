@@ -31,6 +31,7 @@ const T = require(path.join(ROOT, 'lib', 'training'));
 const P = require(path.join(ROOT, 'lib', 'pages'));
 const { QUESTIONS, PASS_MARK } = require(path.join(ROOT, 'lib', 'training', 'questions'));
 const { PLAYBOOKS } = require(path.join(ROOT, 'public', 'js', 'ir-playbooks-data'));
+const { MODULES, BLOCK_TYPES } = require(path.join(ROOT, 'lib', 'training', 'content'));
 
 const serverJs  = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 const tabJs     = fs.readFileSync(path.join(ROOT, 'public', 'js', 'tab-training.js'), 'utf8');
@@ -449,6 +450,182 @@ const pbHtml = TT._renderBlock({ playbook: 'phishing' }, { phishing: phishing })
 check('and renders the live tasks when present',
   pbHtml.indexOf('live playbook') > 0 &&
   pbHtml.indexOf(PLAYBOOKS.phishing.containment[0].slice(0, 25)) > 0);
+
+/*
+ * ══ EVERY AUTHORED BLOCK ACTUALLY REACHES THE PAGE ═════════════════════════
+ *
+ * The checks above prove the renderer is safe. They do not prove it renders
+ * anything, and authoring silently fails in two ways that no existing check
+ * would have caught:
+ *
+ *   wrong key    the bulleted key is `list`, not `ul`; the ordered one is
+ *                `steps`, not `ol`. isKnownBlock() drops an unknown key on the
+ *                server and renderBlock() drops it again in the browser, so a
+ *                mistyped block leaves NO trace anywhere — the lesson just
+ *                renders one paragraph short.
+ *   wrong type   `{ p: 42 }` has a known key, so it passes the server filter,
+ *                then fails renderBlock's `typeof b.p === 'string'` and
+ *                vanishes.
+ *
+ * Both produce a lesson that looks fine to whoever wrote it and is missing a
+ * step for whoever reads it. Driven off MODULES, so this covers content added
+ * later without anybody remembering to extend the test.
+ */
+section('nothing authored is silently dropped');
+
+const authored = [];
+MODULES.forEach((m) => {
+  (m.lessons || []).forEach((l) => {
+    (l.body || []).forEach((b, i) => {
+      authored.push({ where: m.id + '/' + l.id + '#' + i, block: b });
+    });
+  });
+});
+
+check('there are blocks to check', authored.length > 40, authored.length + ' blocks');
+
+const unknownKeyed = authored.filter(a =>
+  !BLOCK_TYPES.some(t => Object.prototype.hasOwnProperty.call(a.block, t)));
+check('every authored block uses a known block type',
+  unknownKeyed.length === 0,
+  unknownKeyed.map(a => a.where + ' {' + Object.keys(a.block).join(',') + '}').join('; '));
+
+/*
+ * The playbook block is the exception: it renders '' without its data, which is
+ * correct behaviour and asserted above. It is given the live map here so this
+ * check tests the block, not the fixture.
+ */
+const allPlaybooks = {};
+(T.listPlaybooks() || []).forEach((p) => { allPlaybooks[p.key] = p; });
+
+const blank = authored.filter(a => TT._renderBlock(a.block, allPlaybooks) === '');
+check('and every one of them renders something',
+  blank.length === 0,
+  blank.map(a => a.where + ' {' + Object.keys(a.block).join(',') + '}').join('; '));
+
+// A playbook block naming an incident type that does not exist renders nothing
+// and says nothing — the lesson loses its entire task list in silence.
+const orphanPlaybooks = authored
+  .filter(a => typeof a.block.playbook === 'string')
+  .filter(a => !allPlaybooks[a.block.playbook]);
+check('no lesson references a playbook that does not exist',
+  orphanPlaybooks.length === 0,
+  orphanPlaybooks.map(a => a.where + ' -> ' + a.block.playbook).join('; '));
+
+/*
+ * An `answer` outside its options array grades every submission wrong, which
+ * looks to an analyst like a quiz they cannot pass and to nobody like a bug.
+ */
+const badAnswers = [];
+Object.keys(QUESTIONS).forEach((mod) => {
+  QUESTIONS[mod].forEach((q) => {
+    if (!Number.isInteger(q.answer) || q.answer < 0 || q.answer >= (q.options || []).length) {
+      badAnswers.push(mod + '/' + q.id + ' answer=' + q.answer +
+                      ' of ' + (q.options || []).length);
+    }
+  });
+});
+check('every quiz answer indexes a real option', badAnswers.length === 0,
+  badAnswers.join('; '));
+
+/* ══ The phishing procedure ═════════════════════════════════════════════════
+ *
+ * The five-step bench procedure analysts follow here. It is TRAINING CONTENT,
+ * deliberately — PLAYBOOKS.phishing is untouched, so no incident's task board
+ * changed. The two live at different altitudes: the board records what must be
+ * established, this lesson teaches how it is established on our tooling.
+ *
+ * These checks exist because the content is operational instruction. A step
+ * quietly trimmed to fit is a step an analyst does not perform at 3am.
+ */
+section('the phishing lesson carries the procedure we actually follow');
+
+const phishMod = T.getModule('phishing-response');
+const bench = (phishMod.lessons || []).find(l => l.id === 'working-the-alert');
+
+check('the lesson is there', !!bench, (phishMod.lessons || []).map(l => l.id).join(' -> '));
+check('and its progress can be recorded',
+  T.isValidProgressKey('lesson:phishing-response/working-the-alert'));
+
+const benchSteps = (bench.body.find(b => Array.isArray(b.steps)) || {}).steps || [];
+check('the procedure has five steps', benchSteps.length === 5, benchSteps.length);
+
+const stepAt = (rx) => benchSteps.findIndex(s => rx.test(s));
+const iEml    = stepAt(/\.eml/i);
+const iScan   = stepAt(/urlscan\.io/i);
+const iTrace  = stepAt(/message trace/i);
+const iBlock  = stepAt(/WPM T3/);
+
+check('it starts from the .eml', iEml === 0, 'index ' + iEml);
+check('it names both scanning tools',
+  iScan >= 0 && /VirusTotal/.test(benchSteps[iScan]), benchSteps[iScan]);
+check('it establishes the recipient list by message trace', iTrace >= 0, 'index ' + iTrace);
+check('and it escalates to WPM T3 to block', iBlock >= 0, benchSteps[iBlock]);
+
+/*
+ * ORDER IS THE PROCEDURE. Escalating before the evidence is gathered is the
+ * failure this sequence prevents — WPM T3 get a block request they cannot
+ * action, and the analyst has already lost the round trip.
+ */
+check('nothing is escalated before it has been examined and scoped',
+  iEml < iScan && iScan < iTrace && iTrace < iBlock,
+  [iEml, iScan, iTrace, iBlock].join(' < '));
+
+/*
+ * The data-handling rule. Both halves matter and each protects a different
+ * party: a VirusTotal upload exposes the client's file to every subscriber and
+ * cannot be withdrawn, and a Public urlscan of a phishing URL publishes the
+ * target's address, which these URLs routinely carry in the path.
+ */
+const benchWarn = bench.body
+  .filter(b => b.callout && b.callout.tone === 'warn')
+  .map(b => b.callout.text).join(' ');
+
+check('the tooling carries a data-handling rule', benchWarn.length > 0, benchWarn.length + ' chars');
+check('hash first, upload second', /SHA-256/.test(benchWarn) && /upload/i.test(benchWarn));
+check('and urlscan is unlisted, not public',
+  /Unlisted/.test(benchWarn) && /searchable|Public/.test(benchWarn));
+
+// The trace is unconditional. A login screen changes what the recipient list
+// MEANS, not whether it is needed — the lesson has to say so, because the
+// procedure as first written read as "trace only if you see a login screen".
+const benchProse = bench.body.filter(b => typeof b.p === 'string').map(b => b.p).join(' ');
+
+// Report the sentence that MATCHED, not the first 120 characters of the lesson.
+// check() prints its detail on a pass as well as a failure, so that a check
+// which is quietly matching the wrong thing is visible in the output — a detail
+// that shows unrelated text throws that away.
+const sentenceWith = (prose, rx) =>
+  (String(prose).split(/(?<=\.)\s+/).find(s => rx.test(s)) || '(no match)').trim();
+
+check('the trace is run on every alert, not only on a login screen',
+  /every phishing alert/i.test(benchProse),
+  sentenceWith(benchProse, /every phishing alert/i));
+
+/*
+ * THE DRIFT GUARD. The file header in content.js warns that a training copy of
+ * playbook steps starts drifting the moment the real one improves. This lesson
+ * is allowed to exist alongside the board only because it operates at a
+ * different altitude — so the live playbook must still be untouched, and the
+ * lesson that shows it must still say how the two relate.
+ */
+const boardLesson = (phishMod.lessons || []).find(l => l.id === 'the-playbook');
+check('the live playbook is still what the module teaches',
+  boardLesson.body.some(b => b.playbook === 'phishing'));
+check('and the board is still seeded from it, unchanged by this lesson',
+  PLAYBOOKS.phishing.identification.length === 3 &&
+  /preserve the original email\/headers/.test(PLAYBOOKS.phishing.identification[0]),
+  PLAYBOOKS.phishing.identification.length + ' identification tasks');
+
+const boardProse = boardLesson.body.filter(b => typeof b.p === 'string').map(b => b.p).join(' ');
+check('the module says how the procedure and the board relate',
+  /not alternatives/i.test(boardProse) && /how you established it/i.test(boardProse),
+  sentenceWith(boardProse, /how you established it/i));
+
+// No step may restate a board task — that is the copy that would drift.
+const restated = benchSteps.filter(s =>
+  PLAYBOOKS.phishing.identification.some(t => s.toLowerCase() === t.toLowerCase()));
+check('no step is a verbatim copy of a board task', restated.length === 0, restated.join('; '));
 
 section('every request keeps the /secops/ base path');
 
