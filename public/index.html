@@ -2363,6 +2363,11 @@
   <script src="js/tab-grc.js"></script>
   <script src="js/tab-redteam.js"></script>
   <script src="js/ir-playbooks-data.js"></script>
+  <!-- Shared with server.js via require(), like ir-playbooks-data.js above it:
+       the browser builds the incident-resolution KPI table and the server
+       computes the MDR score, and both must count the same tickets. Must load
+       before report-sections.js. -->
+  <script src="js/mdr-metrics.js"></script>
   <script src="js/tab-incident-response.js"></script>
   <script src="js/theme.js"></script>
   <script src="js/modal-a11y.js"></script>

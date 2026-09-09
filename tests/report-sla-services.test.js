@@ -21,7 +21,10 @@ const { check, section, done } = createChecker('report-sla-services');
 const sandbox = { console };
 sandbox.window = sandbox;
 vm.createContext(sandbox);
-for (const f of ['report-shell.js', 'report-deck.js', 'report-sections.js']) {
+// mdr-metrics.js first: report-sections.js captures window.MdrMetrics at
+// IIFE-execution time, exactly as index.html loads them in this order.
+for (const f of ['report-shell.js', 'report-deck.js', 'mdr-metrics.js',
+                 'report-sections.js']) {
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'public', 'js', f), 'utf8'), sandbox);
 }
 const S = sandbox.window.ReportSections;
@@ -116,9 +119,26 @@ check('and the browser module really has dropped them',
 // must not take the measurement with it.
 check('elapsed-hours measurement survives',
   typeof S.elapsedHoursBetween === 'function');
-check('and the KPI table still uses it',
-  (srcNoComments.match(/elapsedHoursBetween\(/g) || []).length >= 2,
-  (srcNoComments.match(/elapsedHoursBetween\(/g) || []).length);
+
+/*
+ * This used to count call sites of elapsedHoursBetween() in report-sections.js
+ * and require at least two. The measurement has since moved into
+ * mdr-metrics.js — shared with the server so the MDR score and these KPIs
+ * count one cohort — so a textual count in one file no longer says anything
+ * about whether the table measures durations.
+ *
+ * Reframed to the property that check was protecting: the table's timings are
+ * still real elapsed hours. Asserted against the exported function rather than
+ * against the source, so it survives the next move too.
+ */
+const MM = sandbox.window.MdrMetrics;
+check('the shared cohort module is loaded', !!MM && typeof MM.cohortStats === 'function');
+check('there is ONE elapsed-hours implementation, and the report uses it',
+  S.elapsedHoursBetween('2026-03-03T22:00:00Z', '2026-03-04T06:00:00Z') ===
+  MM.elapsedHours('2026-03-03T22:00:00Z', '2026-03-04T06:00:00Z'),
+  MM.elapsedHours('2026-03-03T22:00:00Z', '2026-03-04T06:00:00Z') + ' hrs both ways');
+check('and no second copy of the arithmetic was left behind',
+  !/3600000/.test(codeOnly(src)), 'report-sections.js does no ms maths of its own');
 
 section('the business-hours model is gone, not merely unused');
 
@@ -157,7 +177,7 @@ const kpiText = kpi.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 check('the table renders', /Incident resolution/.test(kpi));
 check('and still reports what it measures',
   /Mean time to resolve/.test(kpiText) && /Median time to resolve/.test(kpiText) &&
-  /Tickets raised this period/.test(kpiText) && /Tickets resolved this period/.test(kpiText));
+  /Tickets raised this period/.test(kpiText) && /Of those, resolved/.test(kpiText));
 
 // The removal, asserted on the rendered output rather than the source — the
 // source still discusses the SLA in comments and in the exec-summary tile.
@@ -187,19 +207,69 @@ check('the mean is computed over every resolved ticket',
 check('and the median is the middle duration',
   /Median time to resolve 12 hrs/.test(kpiText), kpiText.slice(0, 140));
 check('a ticket with an unrecognised severity is still timed',
-  /Tickets resolved this period 3/.test(kpiText));
+  /Of those, resolved 3/.test(kpiText));
 
-// Backlog change appears only when the two counts differ — the fixture above
-// has three of each, so its absence there is correct, not a regression.
-check('no backlog row when raised and resolved match',
-  !/Backlog change/.test(kpiText));
-const backlogText = kpiHtml([
+/* ── ONE COHORT ────────────────────────────────────────────────────────────
+ *
+ * Every figure describes the tickets RAISED in the period, followed through to
+ * whenever they were resolved. The table used to mix two populations — raised
+ * this month against resolved this month — and drew its timings from whichever
+ * suited, so a June ticket closed in August put June's duration into August.
+ *
+ * "Still open" replaces "Backlog change", which compared the two cohorts and
+ * cannot be stated within one.
+ */
+check('all three fixture tickets were raised and resolved in the period',
+  /Resolution rate 100%/.test(kpiText), kpiText.slice(0, 150));
+check('so nothing is left open', !/Still open/.test(kpiText));
+check('and the cross-cohort backlog row is gone', !/Backlog change/.test(kpiText));
+
+const partialText = kpiHtml([
   { createdAt: '2026-08-02T08:00:00Z', resolvedAt: '2026-08-02T20:00:00Z', severity: 'HIGH' },
   { createdAt: '2026-08-04T08:00:00Z', severity: 'HIGH' },
   { createdAt: '2026-08-05T08:00:00Z', severity: 'LOW' },
 ]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-check('and it reports the growth when they differ',
-  /Backlog change 2 more open/.test(backlogText), backlogText.slice(0, 200));
+check('an unresolved cohort reports what is still open',
+  /Still open 2/.test(partialText), partialText.slice(0, 200));
+check('and a rate that is a real fraction of the tickets raised',
+  /Tickets raised this period 3/.test(partialText) &&
+  /Of those, resolved 1/.test(partialText) &&
+  /Resolution rate 33%/.test(partialText));
+
+/*
+ * THE REGRESSION THE OLD RATE HAD. A ticket raised in July and closed in
+ * August must not appear in August's figures at all — under the previous
+ * definition it counted as an August resolution with no August denominator,
+ * which is how the rate reached 125%.
+ */
+const crossText = kpiHtml([
+  { createdAt: '2026-07-28T08:00:00Z', resolvedAt: '2026-08-02T08:00:00Z', severity: 'HIGH' },
+  { createdAt: '2026-08-04T08:00:00Z', resolvedAt: '2026-08-05T08:00:00Z', severity: 'HIGH' },
+]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+check('a ticket raised before the period is excluded, however it closed',
+  /Tickets raised this period 1/.test(crossText) && /Of those, resolved 1/.test(crossText),
+  crossText.slice(0, 150));
+// Parsed, not pattern-matched: the first version of this asserted the rendered
+// text did not match /1\d\d%/, which "100%" satisfies. It passed for the wrong
+// reason and would have gone on passing at 125%.
+const ratePct = (t) => {
+  const m = /Resolution rate (\d+)%/.exec(t);
+  return m ? Number(m[1]) : null;
+};
+check('and the rate can never exceed 100%',
+  ratePct(crossText) === 100, 'rate = ' + ratePct(crossText) + '%');
+
+// The opposite direction: raised in the period, closed after it. This is the
+// case the "as at" date exists for.
+const lateText = kpiHtml([
+  { createdAt: '2026-08-30T08:00:00Z', resolvedAt: '2026-09-02T08:00:00Z', severity: 'HIGH' },
+]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+check('a ticket closed after the period still counts as resolved for it',
+  /Of those, resolved 1/.test(lateText) && /Resolution rate 100%/.test(lateText),
+  lateText.slice(0, 140));
+check('and the note dates that claim rather than leaving it to move silently',
+  /as at/i.test(lateText) && /may since have closed/.test(lateText),
+  (lateText.match(/as at[^.]*/i) || [''])[0]);
 
 // The helpers that existed only for the removed row are gone from the code —
 // a constant named SLA_TARGET_PCT left behind reads as a policy in force.
@@ -233,13 +303,29 @@ check('the timings are labelled resolution',
  * been raised in January. Clearing a backlog produced 125.2%, which is not a
  * rate and cannot be read as one.
  */
-check('the >100% "resolution rate" is gone', !/resRate/.test(src));
-check('and the two counts are shown without a fabricated ratio between them',
-  /Tickets raised this period/.test(src) && /Tickets resolved this period/.test(src));
-check('a backlog change is stated in tickets, not as a percentage',
-  /Backlog change/.test(src) && /fewer open/.test(src) && /more open/.test(src));
-check('the note warns the two counts are different sets',
-  /different sets/.test(src));
+/*
+ * The rate is back, because within ONE cohort it is arithmetically sound: the
+ * numerator is a subset of the denominator. The property to protect is no
+ * longer "there is no rate" but "the rate is drawn from one population" —
+ * asserted behaviourally above and structurally here.
+ */
+check('the old cross-cohort rate is still gone', !/resRate/.test(codeOnly(src)));
+check('the rate is computed by the shared cohort module, not in the section',
+  /stat\.resolutionRate/.test(codeOnly(src)) &&
+  !/resolved\.length\s*\/\s*raised\.length/.test(codeOnly(src)),
+  'one denominator');
+check('and the module cannot produce a figure above 100',
+  MM.cohortStats([
+    { createdAt: '2026-07-01T00:00:00Z', resolvedAt: '2026-08-01T00:00:00Z' },
+    { createdAt: '2026-08-01T00:00:00Z', resolvedAt: '2026-08-02T00:00:00Z' },
+  ], '2026-08').resolutionRate === 100, 'a July closure adds no August numerator');
+check('a month with no tickets has no rate, rather than 0%',
+  MM.cohortStats([], '2026-08').resolutionRate === null, 'null, not zero');
+
+check('the note states the cohort the figures describe',
+  /raised in this period/.test(src) && /followed through to resolution/.test(src));
+check('and dates the resolution status',
+  /as at/i.test(src) && /may since have closed/.test(src));
 
 /* ── Vulnerability remediation SLA ────────────────────────────────────────── */
 
@@ -1257,8 +1343,10 @@ check('the table says how each domain is measured',
  * fails, which is the point — a methodology note that drifts from the code is
  * worse than none, because a client will quote it back.
  */
-check('the MDR measure names resolution share and the speed penalty',
-  /share of MDR tickets resolved/.test(matHtml) &&
+// The cohort is part of the measure, not a detail: the score covers the
+// tickets RAISED in the month, so the note has to name that denominator.
+check('the MDR measure names the cohort, the share and the speed penalty',
+  /tickets raised in the month that have been resolved/.test(matHtml) &&
   /20 points/.test(matHtml) && /24 hours/.test(matHtml), 'stated');
 check('the awareness measure names training completion',
   /share of assigned training that has been completed/.test(matHtml));

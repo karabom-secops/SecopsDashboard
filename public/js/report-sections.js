@@ -16,6 +16,10 @@ window.ReportSections = (function () {
 
   var S = window.ReportShell;
   var D = window.ReportDeck;
+  // Shared with server.js, which require()s the same file. The MDR score and
+  // the incident-resolution KPIs have to count one population of tickets, so
+  // there is one implementation of what that population is.
+  var MM = window.MdrMetrics;
   var P = S.PALETTE;
 
   // Slides are fixed-height with overflow:hidden, so an over-long list is
@@ -1560,12 +1564,17 @@ window.ReportSections = (function () {
    * timestamp would otherwise be measured from 1970 and report half a million
    * hours — which is how a single bad row can wreck an average.
    */
+  /*
+   * DELEGATES — it does not have its own arithmetic any more.
+   *
+   * The cohort timings moved into mdr-metrics.js so the server could compute
+   * the MDR score from the same rule. For a moment that left two
+   * implementations of "elapsed hours between two timestamps" in the product,
+   * which is how a business-hours model got back in once already. This keeps
+   * the export other callers and the test suite use, over one implementation.
+   */
   function elapsedHoursBetween(startTs, endTs) {
-    if (!startTs || !endTs) return null;
-    var a = new Date(startTs), b = new Date(endTs);
-    if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
-    if (b.getTime() < a.getTime()) return null;
-    return (b.getTime() - a.getTime()) / 3600000;
+    return MM.elapsedHours(startTs, endTs);
   }
 
 
@@ -1576,26 +1585,27 @@ window.ReportSections = (function () {
     var tickets = ((ctx.data.mdr || {}).tickets) || [];
     var period  = ctx.period;
 
-    // /api/mdr aliases its columns to camelCase — see the ticket query in server.js.
-    var raised   = tickets.filter(function (t) { return monthOf(t.createdAt) === period; });
-    var resolved = tickets.filter(function (t) {
-      return t.resolvedAt && monthOf(t.resolvedAt) === period;
-    });
+    /*
+     * ONE COHORT: the tickets RAISED in the reporting month, followed through
+     * to whenever they were resolved.
+     *
+     * This block used to count tickets raised in the month against tickets
+     * RESOLVED in the month — two different populations, since a ticket
+     * resolved in August may have been raised in June. Every figure below was
+     * drawn from whichever of the two happened to suit it: the timings came
+     * from the resolved-in-month set, so a June ticket closed in August put
+     * June's duration into August's mean.
+     *
+     * The rule now lives in one place, shared with the server so the Managed
+     * Detection and Response score in the maturity table above and these KPIs
+     * describe the same tickets. They did not before.
+     */
+    var stat = MM.cohortStats(tickets, period);
 
-    // Elapsed hours, measured from creation to resolution — nights and
-    // weekends included, because the service runs through them.
-    var hours = [];
-    resolved.forEach(function (t) {
-      var h = elapsedHoursBetween(t.createdAt, t.resolvedAt);
-      if (h == null) return;
-      hours.push(h);
-    });
+    if (!stat.raised) return null;
 
-    if (!raised.length && !resolved.length) return null;
-
-    hours.sort(function (a, b) { return a - b; });
-    var mttr   = hours.length ? hours.reduce(function (s, h) { return s + h; }, 0) / hours.length : null;
-    var median = hours.length ? hours[Math.floor(hours.length / 2)] : null;
+    var mttr   = stat.meanHours;
+    var median = stat.medianHours;
 
     function hrs(v) {
       if (v == null) return '—';
@@ -1635,26 +1645,36 @@ window.ReportSections = (function () {
     var rows = [
       { kpi: 'Mean time to resolve',   actual: hrs(mttr),   ok: null },
       { kpi: 'Median time to resolve', actual: hrs(median), ok: null },
-      { kpi: 'Tickets raised this period',   actual: String(raised.length), ok: null },
-      { kpi: 'Tickets resolved this period', actual: String(resolved.length), ok: null },
+      { kpi: 'Tickets raised this period', actual: String(stat.raised),   ok: null },
+      { kpi: 'Of those, resolved',         actual: String(stat.resolved), ok: null },
     ];
 
     /*
-     * The old "Resolution rate" is gone because it was not a rate.
+     * THE RATE IS BACK, AND IT IS NOW ACTUALLY A RATE.
      *
-     * It divided tickets RESOLVED in the month by tickets RAISED in the month
-     * — two different cohorts, since a ticket resolved in March may have been
-     * raised in January. Clearing a backlog therefore produced 125%, which a
-     * board reads either as an error or as a boast, and neither is what
-     * happened. The two counts are still shown; the reader can compare them
-     * without a fabricated ratio in between.
+     * It was removed because it divided tickets RESOLVED in the month by
+     * tickets RAISED in the month — two different cohorts, so clearing a
+     * backlog produced 125%, which a board reads either as an error or as a
+     * boast. Neither was what happened.
+     *
+     * Within one cohort the numerator is a subset of the denominator, so it
+     * cannot exceed 100% by construction. The row label says "of those" for
+     * the same reason: the reader should be able to see the denominator
+     * without being told what it is.
      */
-    if (resolved.length > raised.length) {
-      rows.push({ kpi: 'Backlog change',
-        actual: (resolved.length - raised.length) + ' fewer open', ok: true });
-    } else if (raised.length > resolved.length) {
-      rows.push({ kpi: 'Backlog change',
-        actual: (raised.length - resolved.length) + ' more open', ok: false });
+    if (stat.resolutionRate !== null) {
+      rows.push({ kpi: 'Resolution rate', actual: stat.resolutionRate + '%',
+                  ok: null });
+    }
+
+    /*
+     * What is left, rather than a "backlog change" comparing two cohorts.
+     * Shown only when there is something open: a row reading "Still open 0" is
+     * worth stating, but not at the cost of a row on every clean month, and
+     * the rate above already says 100%.
+     */
+    if (stat.stillOpen > 0) {
+      rows.push({ kpi: 'Still open', actual: String(stat.stillOpen), ok: false });
     }
 
     return D.dataTable({
@@ -1668,12 +1688,35 @@ window.ReportSections = (function () {
       ],
       rows: rows,
     }) +
-    '<div class="rag-note">Security operations run <strong>24/7</strong>, so ' +
-      'resolution time is measured in elapsed hours from ticket creation to ' +
-      'resolution — nights, weekends and public holidays included. ' +
-      'Tickets raised and resolved are counted within this period and are ' +
-      'different sets: a ticket resolved this month may have been raised in an ' +
-      'earlier one.</div>';
+    /*
+     * THE AS-AT DATE IS NOT OPTIONAL.
+     *
+     * Following a cohort past its own month end is what makes these figures
+     * fair — a ticket raised on the 30th and closed on the 2nd was resolved,
+     * and freezing the count at month end would report it as a miss. The price
+     * is that the figure can improve if the report is re-run later.
+     *
+     * Printing the date is what makes that reproducible: not that the number
+     * never moves, but that it says what it was true of. A reader comparing two
+     * copies of the August report can see why they differ.
+     */
+    '<div class="rag-note">Every figure above describes the <strong>' +
+      esc(String(stat.raised)) + ' ticket' + (stat.raised === 1 ? '' : 's') +
+      ' raised in this period</strong>, followed through to resolution — so ' +
+      'the resolution rate cannot exceed 100%, and a ticket raised in an ' +
+      'earlier month is not counted here even if it closed during it. ' +
+      'Resolution status is as at <strong>' + esc(asAtLabel()) + '</strong>; ' +
+      'tickets raised late in the period may since have closed. ' +
+      'Security operations run <strong>24/7</strong>, so resolution time is ' +
+      'measured in elapsed hours from creation to resolution — nights, ' +
+      'weekends and public holidays included.</div>';
+  }
+
+  /** Today, for the as-at line on any figure that follows a cohort forward. */
+  function asAtLabel() {
+    var d = new Date();
+    return d.toLocaleDateString('en-ZA',
+      { day: 'numeric', month: 'long', year: 'numeric' });
   }
 
   // ── Security Maturity Trend ───────────────────────────────────────────────
@@ -1727,8 +1770,9 @@ window.ReportSections = (function () {
       { label: 'Security Awareness',       key: 'awareness',        target: MATURITY_TARGETS.awareness,
         how: 'the share of assigned training that has been completed' },
       { label: 'Managed Detection and Response', key: 'incidentResponse', target: MATURITY_TARGETS.incidentResponse,
-        how: 'the share of MDR tickets resolved, less up to 20 points where ' +
-             'average resolution time runs beyond 24 hours' },
+        how: 'the share of the tickets raised in the month that have been ' +
+             'resolved, less up to 20 points where average resolution time ' +
+             'runs beyond 24 hours' },
       { label: 'Secure Score',             key: 'overall',          target: MATURITY_TARGETS.overall,
         how: 'the domains above combined at the weights set by the services ' +
              'in scope' },
@@ -3505,10 +3549,17 @@ window.ReportSections = (function () {
     var recovering = incidents.filter(function (i) {
       return i.phase === 'recovery' && i.status !== 'closed' && i.status !== 'resolved';
     }).length;
+    /*
+     * Already the right cohort — incidents OPENED in the period, of those the
+     * ones closed — but it was doing its own millisecond arithmetic, which made
+     * three copies of "elapsed hours" in the product. Same helper as the MDR
+     * timings now, so a change to how duration is measured cannot reach one
+     * section and miss another.
+     */
     var closed = inPeriod.filter(function (i) { return i.closed_at; });
-    var hours  = closed.map(function (i) {
-      return (new Date(i.closed_at) - new Date(i.opened_at)) / 3600000;
-    }).filter(function (h) { return h >= 0; });
+    var hours  = closed
+      .map(function (i) { return MM.elapsedHours(i.opened_at, i.closed_at); })
+      .filter(function (h) { return h !== null; });
     var meanHours = hours.length
       ? Math.round((hours.reduce(function (x, y) { return x + y; }, 0) / hours.length) * 10) / 10
       : null;

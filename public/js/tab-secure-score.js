@@ -568,6 +568,41 @@ const SecureScoreTab = (() => {
            'to ' + pts + ' points.';
   }
 
+  /**
+   * The caption under the Incident Response score: which month, and how many
+   * tickets it was drawn from.
+   *
+   * The score used to be computed over the entire uploaded feed, so "Ticket
+   * resolution & speed" was the whole story anyone was given about a number
+   * that might have covered two years. It is now one month's cohort, and a
+   * reader who cannot see which month cannot check the figure.
+   *
+   * Falls back to the old caption on a payload from a server that predates
+   * this, rather than printing a month it does not have.
+   */
+  function mdrCohortText(comp) {
+    const c = comp || {};
+    const d = c.detail;
+    if (!c.period || !d) return 'Ticket resolution & speed';
+
+    const when = monthLabel(c.period);
+    if (!d.raised) {
+      // Not a gap in the data — a month in which nothing needed responding to.
+      // Saying "no tickets" beside a score of 100 stops it reading as a fault.
+      return 'No tickets raised in ' + when + ' — nothing to respond to';
+    }
+    return d.resolved + ' of ' + d.raised + ' ticket' + (d.raised === 1 ? '' : 's') +
+           ' raised in ' + when + ' resolved';
+  }
+
+  /** 'YYYY-MM' as a readable month. Returns the key itself if it is malformed. */
+  function monthLabel(key) {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(key || ''));
+    if (!m) return String(key || '');
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 1));
+    return d.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  }
+
   function renderComponentScores(container, components, weights) {
     // `measured` comes from the scoring engine. A component with no data
     // scores 0 by design — an unmeasured control is an unmanaged one — but the
@@ -590,10 +625,19 @@ const SecureScoreTab = (() => {
         label: 'Incident Response', weight: pctOf(components.incidentResponse, '25%'),
         score: components.incidentResponse.score,
         measured: wasMeasured(components.incidentResponse),
-        desc: 'Ticket resolution & speed',
+        desc: mdrCohortText(components.incidentResponse),
         missing: 'No MDR or incident data available — connect the MDR feed to ' +
                  'recover up to ' + ptsOf(components.incidentResponse, 25) + ' points.',
-        tooltip: 'Score based on ticket resolution rate minus a speed penalty.<br>• Resolution rate forms the base score.<br>• Avg resolution &gt; 24 hrs deducts up to 20 pts.<br><br><strong>No data scores 0</strong>, because an unmeasured control is an unmanaged one.',
+        tooltip: 'Scored on the tickets <strong>raised in the last complete ' +
+                 'calendar month</strong>, followed through to whenever they ' +
+                 'were resolved — one cohort, so the resolution rate cannot ' +
+                 'exceed 100%.<br>• Resolution rate forms the base score.<br>' +
+                 '• Avg resolution &gt; 24 hrs deducts up to 20 pts.<br>' +
+                 '• A month with no tickets scores 100 — nothing needed doing.' +
+                 '<br><br>This used to score the <em>whole uploaded feed</em>, ' +
+                 'so a client who exported two years of history was judged on ' +
+                 'two years of it.<br><br><strong>No data scores 0</strong>, ' +
+                 'because an unmeasured control is an unmanaged one.',
       },
     ];
 

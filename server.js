@@ -40,6 +40,9 @@ const secureScore = require('./lib/secure-score');
 const { encrypt: encryptKey, decrypt: decryptKey } = require('./lib/crypto-utils');
 const arcticWolfAdapter = require('./lib/integrations/arctic-wolf');
 const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
+// Same file the browser loads with a <script> tag, for the same reason: the
+// report's incident-resolution KPIs and the MDR score must count one cohort.
+const mdrMetrics = require('./public/js/mdr-metrics');
 const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports');
 const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
 const sentinelOneAdapter = require('./lib/integrations/sentinelone');
@@ -6548,24 +6551,29 @@ async function reconstructComponents(tenantId, months) {
       });
     }
 
-    // Tickets raised by the end of the month, resolved state as at that date.
-    const raised = tickets.filter(t => new Date(t.created_at).toISOString() <= end);
-    if (raised.length) {
-      const closed = raised.filter(t =>
-        t.resolved_at && new Date(t.resolved_at).toISOString() <= end
-      );
-      const hours = closed
-        .map(t => (new Date(t.resolved_at) - new Date(t.created_at)) / 3600000)
-        .filter(h => h >= 0);
-      rec.mdrScore = calculateMdrScore({
-        upload: {
-          total_tickets:        raised.length,
-          resolved_count:       closed.length,
-          avg_resolution_hours: hours.length
-            ? hours.reduce((a, b) => a + b, 0) / hours.length
-            : 0,
-        },
-      });
+    /*
+     * THE TICKETS RAISED IN THAT MONTH — not every ticket raised up to it.
+     *
+     * This counted cumulatively: every ticket the client had ever raised by the
+     * month end, with its resolved state frozen at that date. Two things were
+     * wrong with it. A single good month could barely move a figure averaged
+     * over the client's whole history, so the trend flattened out the longer a
+     * client stayed with us; and it measured a different thing from the live
+     * score beside it, which meant a rising trend line could be an artefact of
+     * the two definitions rather than of anything the client did.
+     *
+     * Now each point is that month's own cohort, through the same module the
+     * live score and the report KPIs use — so the trend and the headline are
+     * finally comparable.
+     *
+     * Resolution is NOT frozen at the month end here either, matching the
+     * report: a ticket raised in June and closed in July counts as resolved for
+     * June. Reconstruction already carries the caveat that it is built from
+     * today's export; this is the same caveat, and the trend chart states it.
+     */
+    const stat = mdrMetrics.cohortStats(tickets, monthKey);
+    if (stat.raised) {
+      rec.mdrScore = calculateMdrScore({ upload: mdrMetrics.scoreInput(stat) });
     }
 
     out.set(monthKey, rec);
@@ -7595,9 +7603,29 @@ async function loadScoreInputs(tenantId) {
       }
     } catch (_) { /* table may not exist yet */ }
 
-    // Fetch latest MDR upload for this tenant
+    /*
+     * MDR, SCORED ON ONE MONTH'S TICKETS — NOT ON THE WHOLE UPLOAD.
+     *
+     * `mdr_uploads.total_tickets` is however much CSV somebody exported: a
+     * month for most clients, two years for anyone who pulled their full
+     * history. Scoring it meant a client's incident-response component was
+     * partly a function of how much history they happened to upload, and a
+     * strong recent month could not move a number averaged over two years.
+     *
+     * The cohort is the tickets RAISED in the last complete calendar month,
+     * followed through to whenever they were resolved — the same rule, from the
+     * same module, that the report's KPI table uses. Those two sit on the same
+     * page as each other and were computing over different populations.
+     *
+     * The upload row is still read, and still decides `measured`: an upload
+     * existing is what says this client has an MDR feed at all. A month with no
+     * tickets in it is a QUIET MONTH, scored 100 by calculateMdrScore, not an
+     * unmeasured one — and that distinction is only available because the
+     * upload is checked separately from the cohort.
+     */
     let mdrData = null;
     let mdrUploadId = null;
+    let mdrPeriod = null;
     try {
       const mdrResult = await pool.query(
         `SELECT id, total_tickets, resolved_count, avg_resolution_hours, uploaded_at
@@ -7607,8 +7635,32 @@ async function loadScoreInputs(tenantId) {
         [tenantId]
       );
       if (mdrResult.rows.length > 0) {
-        mdrData = { upload: mdrResult.rows[0] };
         mdrUploadId = mdrResult.rows[0].id;
+        mdrPeriod = mdrMetrics.lastCompleteMonth(new Date());
+
+        // Joined through mdr_uploads rather than read off mdr_tickets.tenant_id,
+        // matching reconstructComponents: the tenant column was backfilled by a
+        // later migration and may be null on older rows.
+        let cohortTickets = [];
+        try {
+          const t = await pool.query(
+            `SELECT t.created_at, t.resolved_at
+               FROM mdr_tickets t
+               JOIN mdr_uploads u ON u.id = t.upload_id
+              WHERE u.tenant_id = $1 AND t.created_at IS NOT NULL`,
+            [tenantId]
+          );
+          cohortTickets = t.rows;
+        } catch (_) { /* tickets not migrated — see the fallback below */ }
+
+        const stat = mdrMetrics.cohortStats(cohortTickets, mdrPeriod);
+        mdrData = {
+          // The upload row is kept for isMdrMeasured() and for anything that
+          // wants to know when the feed last synced.
+          upload: Object.assign({}, mdrResult.rows[0], mdrMetrics.scoreInput(stat)),
+          period: mdrPeriod,
+          cohort: stat,
+        };
       }
     } catch (_) { /* table may not exist yet */ }
 
@@ -7970,7 +8022,19 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
           detail: vulnDetail,
         },
         awareness:        { score: awarenessScore, weight: weights.awareness,        measured: measured.awareness },
-        incidentResponse: { score: mdrScore,       weight: weights.incidentResponse, measured: measured.incidentResponse },
+        incidentResponse: {
+          score: mdrScore, weight: weights.incidentResponse,
+          measured: measured.incidentResponse,
+          /*
+           * WHICH MONTH THIS SCORE IS ABOUT. The component is computed from the
+           * tickets raised in the last complete calendar month, not from the
+           * whole uploaded feed — so the page has to be able to say so. A
+           * figure whose window is invisible is one a client cannot argue with,
+           * and this one used to silently cover however much CSV was exported.
+           */
+          period: mdrData ? mdrData.period : null,
+          detail: mdrData ? mdrData.cohort : null,
+        },
       },
       weights,
       estate: {
