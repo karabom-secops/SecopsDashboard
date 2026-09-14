@@ -214,6 +214,10 @@
     }
 
     window.__clientName = me.clientName || '';
+    // Views that offer an action read this to hide it: the server refuses
+    // staff writes through the portal, so a button a previewer can see but not
+    // use would only produce an error.
+    window.__portalPreview = !!me.preview;
 
     var uname = document.getElementById('headerUsername');
     if (uname) uname.textContent = me.username || '';

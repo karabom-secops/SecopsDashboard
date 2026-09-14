@@ -161,6 +161,60 @@
 }
 .portal-component-label { font-size: 0.875rem; }
 
+/* What changed — the month-by-month explanation under the score. */
+.portal-changes-title { font-size: 0.9rem; font-weight: 600; margin: 1.25rem 0 0.5rem; color: var(--text); }
+.portal-changes { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--separator); }
+.portal-change { border-bottom: 1px solid var(--separator); }
+.portal-change summary {
+  display: grid;
+  grid-template-columns: 8.5rem 3rem 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.6rem 0;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+.portal-change-month { color: var(--muted); }
+.portal-change-delta { font-weight: 650; font-variant-numeric: tabular-nums; }
+.portal-change-up   { color: var(--green); }
+.portal-change-down { color: var(--red); }
+.portal-change-flat { color: var(--muted); }
+.portal-change-details {
+  margin: 0 0 0.75rem 11.75rem;
+  padding-left: 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+.portal-change-details li + li { margin-top: 0.35rem; }
+@media (max-width: 640px) {
+  .portal-change summary { grid-template-columns: 1fr auto; }
+  .portal-change-summary { grid-column: 1 / -1; }
+  .portal-change-details { margin-left: 0; }
+}
+
+/* Risk acceptance — the form and its feedback. */
+.portal-accept-explain { margin-top: 0; }
+.portal-accept-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem 1.25rem;
+  margin-bottom: 1rem;
+}
+.portal-accept-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.portal-accept-wide { grid-column: 1 / -1; }
+.portal-accept-field textarea { resize: vertical; }
+.portal-accept-hint { font-size: 0.78rem; color: var(--muted); }
+.portal-accept-confirm { display: flex; gap: 0.5rem; align-items: flex-start; font-size: 0.875rem; line-height: 1.5; }
+.portal-accept-confirm input { margin-top: 0.25rem; }
+.portal-accept-error { color: var(--red); font-size: 0.85rem; margin: 0 0 0.75rem; }
+.portal-flash { padding: 0.6rem 0.9rem; border-radius: var(--radius, 10px); font-size: 0.875rem; margin: 0 0 1rem; }
+.portal-flash-ok    { background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--text); }
+.portal-flash-error { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--text); }
+@media (max-width: 640px) {
+  .portal-accept-grid { grid-template-columns: 1fr; }
+}
+
 /* ── Progress bars ───────────────────────────────────────────────────────── */
 
 .portal-bar {

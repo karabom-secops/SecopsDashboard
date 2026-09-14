@@ -144,6 +144,13 @@ function makePool(log) {
         const rows = DATA.events[p[0]] || [];
         return { rows: /tenant_id = \$2/.test(s) ? rows : rows };
       }
+      // One row per month, for the "what changed" explanations.
+      if (/FROM secure_scores/.test(s) && /DISTINCT ON/.test(s)) {
+        return { rows: !hasTenantFilter(s) || t === 7
+          ? [{ month_key: '2026-08', composite_score: 72, vuln_score: 60, awareness_score: 88, mdr_score: 70 },
+             { month_key: '2026-07', composite_score: 65, vuln_score: 50, awareness_score: 80, mdr_score: 68 }]
+          : [] };
+      }
       if (/FROM secure_scores/.test(s)) {
         return { rows: !hasTenantFilter(s) || t === 7
           ? [{ score_date: '2026-08-01', composite_score: 72, vuln_score: 60,
@@ -372,6 +379,27 @@ function request(server, url, tenant, role) {
      */
     check('and no list of services they have not bought',
       !/unpurchased/i.test(raw) && !/Penetration Testing/i.test(raw), raw.slice(0, 120));
+
+    /*
+     * What changed, month to month. Every "no weight" check above already runs
+     * over this text, because it is part of the same payload; these pin that
+     * the explanation is there at all and is in evidence rather than points.
+     */
+    const changes = r.json.changes || [];
+    check('the month-to-month change is explained', changes.length === 1 && changes[0].monthKey === '2026-08',
+      changes.map(c => c.monthKey).join(','));
+    check('with a summary naming what drove it',
+      /^Up 7 points, driven by vulnerability management \(\+10\)/.test(changes[0] && changes[0].summary),
+      changes[0] && changes[0].summary);
+    check('and evidence behind it', changes[0] && changes[0].details.length === 3,
+      changes[0] && changes[0].details.join(' | '));
+    check('never in points', !/pts|points on the score/.test(JSON.stringify(changes)));
+    check('carrying only allowlisted fields',
+      changes.every(c => Object.keys(c).sort().join(',') === 'delta,details,from,monthKey,summary,to'),
+      changes[0] && Object.keys(changes[0]).join(','));
+    const ticketQ = log.filter(x => /FROM mdr_tickets/.test(x.sql)).pop();
+    check('incident counts use only tickets the client can see',
+      ticketQ && /portal_visible/.test(ticketQ.sql) && ticketQ.params[0] === 7);
   }
 
   section('a tenant with no data gets a reason, not an empty shell');
@@ -542,13 +570,13 @@ function request(server, url, tenant, role) {
   section('remediation merges four sources into one shape');
   {
     DATA.findings = [
-      { name: 'Outdated OpenSSL', risk: 'High', status: 'open',
+      { id: 5, name: 'Outdated OpenSSL', risk: 'High', status: 'open',
         due_date: '2020-01-01', first_seen_at: '2026-08-01',
         host: '10.0.0.5', cve: 'CVE-2024-1234', notes: 'internal only' },
     ];
     DATA.risks = [{ title: 'Single supplier', risk_score: 20, stage: 'mitigating',
                     due_date: '2027-01-01', start_date: '2026-01-01' }];
-    DATA.pentest = [{ title: 'Weak password policy', severity: 'medium',
+    DATA.pentest = [{ id: 3, title: 'Weak password policy', severity: 'medium',
                       status: 'open', due_date: null, created_at: '2026-06-01' }];
 
     const r = await go('/api/portal/remediation', 7);
@@ -568,6 +596,13 @@ function request(server, url, tenant, role) {
     check('NO internal notes', !/internal only/.test(raw));
     check('but the issue is named, so it is actionable',
       /Outdated OpenSSL/.test(raw));
+    // The ref a client uses to request risk acceptance. A row id, not a host.
+    check('a vulnerability carries an opaque ref for risk acceptance',
+      r.json.items.find(i => i.source === 'Vulnerability').ref === 'vuln-5');
+    check('a penetration test finding too',
+      r.json.items.find(i => i.source === 'Penetration test').ref === 'pentest-3');
+    check('a risk does not — it cannot be accepted through the portal',
+      !r.json.items.find(i => i.source === 'Risk').ref);
 
     // The risk register scores 1-25; one list must not carry two scales.
     const risk = r.json.items.find(i => i.source === 'Risk');

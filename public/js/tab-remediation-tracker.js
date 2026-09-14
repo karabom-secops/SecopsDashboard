@@ -543,6 +543,125 @@ const RemediationTrackerTab = (() => {
       'remediation-tracker.csv', csv, 'text/csv;charset=utf-8');
   }
 
+  // ── Client risk acceptances ────────────────────────────────────────────────
+  //
+  // Requests clients raised from the portal. Nothing about the finding or the
+  // Secure Score changes until one is approved here — approval sets the finding
+  // accepted, which takes it out of the vulnerability counts. That is why this
+  // is behind write access and the client cannot do it themselves.
+
+  let _acceptances = [];
+  const _reviewDrafts = {};
+
+  async function loadAcceptances() {
+    try {
+      const res = await fetch('api/risk-acceptances?status=pending' + tenantParam('&'),
+        { credentials: 'same-origin' });
+      if (!res.ok) { _acceptances = []; return; }
+      const data = await res.json();
+      _acceptances = (data && data.acceptances) || [];
+    } catch (_) {
+      // A missing table or a failed request must not take the tracker with it.
+      _acceptances = [];
+    }
+  }
+
+  function renderAcceptances() {
+    const el = document.getElementById('rt-acceptances');
+    if (!el) return;
+    if (!_acceptances.length) { el.innerHTML = ''; return; }
+
+    const writable = canWrite();
+    el.innerHTML = `
+      <div class="rt-accept-panel">
+        <div class="rt-accept-head">
+          <h3 class="rt-accept-title">Client risk acceptances awaiting review
+            <span class="badge badge-amber">${_acceptances.length}</span></h3>
+          <p class="rt-accept-lead">Approving marks the finding accepted and removes it from the
+            Secure Score until the review date. Your note is shown to the client.</p>
+        </div>
+        ${_acceptances.map(a => `
+          <div class="rt-accept-item" data-id="${Number(a.id)}">
+            <div class="rt-accept-main">
+              <div class="rt-accept-finding">
+                <span class="badge badge-source-${a.source === 'pentest' ? 'pentest' : 'vuln'}">${a.source === 'pentest' ? 'Pentest' : 'Vulnerability'}</span>
+                <strong>${esc(a.finding_title)}</strong>
+                ${a.finding_severity ? `<span class="rt-accept-sev">${esc(a.finding_severity)}</span>` : ''}
+                ${a.host ? `<span class="rt-accept-host">${esc(a.host)}${a.port ? ':' + esc(a.port) : ''}</span>` : ''}
+              </div>
+              <div class="rt-accept-meta">
+                Accepted by <strong>${esc(a.approver_name)}</strong> (${esc(a.approver_role)})
+                until <strong>${esc(a.expires_on)}</strong>
+                &middot; requested ${fmt(a.requested_at)}${a.requested_by_name ? ' by ' + esc(a.requested_by_name) : ''}
+              </div>
+              <blockquote class="rt-accept-why">${esc(a.justification)}</blockquote>
+            </div>
+            ${writable ? `
+              <div class="rt-accept-actions">
+                <label class="form-label" for="rt-accept-note-${Number(a.id)}">Note to the client</label>
+                <textarea id="rt-accept-note-${Number(a.id)}" class="form-input rt-accept-note" rows="2"
+                  maxlength="1000" placeholder="Optional to approve, required to reject">${esc(_reviewDrafts[a.id] || '')}</textarea>
+                <div class="rt-accept-buttons">
+                  <button type="button" class="btn btn-primary btn-sm" data-accept-action="approve">Approve</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-accept-action="reject">Reject</button>
+                </div>
+                <div class="rt-accept-error" role="alert" hidden></div>
+              </div>` : ''}
+          </div>`).join('')}
+      </div>`;
+
+    el.querySelectorAll('.rt-accept-note').forEach(t => {
+      t.addEventListener('input', () => {
+        const id = t.closest('.rt-accept-item').dataset.id;
+        _reviewDrafts[id] = t.value;
+      });
+    });
+    el.querySelectorAll('[data-accept-action]').forEach(btn => {
+      btn.addEventListener('click', () => reviewAcceptance(btn));
+    });
+  }
+
+  async function reviewAcceptance(btn) {
+    const item = btn.closest('.rt-accept-item');
+    const id = item.dataset.id;
+    const action = btn.dataset.acceptAction;
+    const note = (item.querySelector('.rt-accept-note') || {}).value || '';
+    const errEl = item.querySelector('.rt-accept-error');
+
+    if (action === 'reject' && !note.trim()) {
+      errEl.textContent = 'Give the client a reason before rejecting.';
+      errEl.hidden = false;
+      return;
+    }
+
+    item.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    errEl.hidden = true;
+
+    const body = { note };
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+    if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
+
+    try {
+      const res = await fetch(`api/risk-acceptances/${encodeURIComponent(id)}/${action}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not ' + action + ' this acceptance.');
+
+      delete _reviewDrafts[id];
+      // Approval changed a finding's status, so the whole tracker is stale.
+      await Promise.all([load(), loadAcceptances()]);
+      renderAcceptances();
+      renderStats();
+      renderActiveView();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+      item.querySelectorAll('button').forEach(b => { b.disabled = false; });
+    }
+  }
+
   // ── Data loading ───────────────────────────────────────────────────────────
 
   async function load() {
@@ -573,7 +692,8 @@ const RemediationTrackerTab = (() => {
 
   async function loadAndRender() {
     wireOnce();
-    await load();
+    await Promise.all([load(), loadAcceptances()]);
+    renderAcceptances();
     renderStats();
     renderFilters();
     renderActiveView();

@@ -164,11 +164,38 @@ function request(server, method, url, role, tenant) {
     check('staff ' + method + ' on the portal is refused', r.status === 403, r.status);
   }
 
-  section('the portal is read-only for clients too');
+  /*
+   * REFRAMED, not removed. The portal was entirely read-only; it now has one
+   * allowlisted exception — a client REQUESTING risk acceptance, which changes
+   * nothing until staff approve it (lib/risk-acceptance.js). Everything else
+   * this section asserted still holds and is still asserted.
+   */
+  section('the portal is read-only for clients, except the risk-acceptance request');
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
     const r = await go(method, '/api/portal/incidents', 'client', 7);
     check('client ' + method + ' is refused', r.status === 405, r.status);
   }
+  const submit = await go('POST', '/api/portal/risk-acceptances', 'client', 7);
+  check('client POST to risk-acceptances passes the gate', submit.status === 200, submit.status);
+  const withdraw = await go('POST', '/api/portal/risk-acceptances/12/withdraw', 'client', 7);
+  check('and so does withdrawing one', withdraw.status === 200, withdraw.status);
+  for (const [method, url] of [
+    ['PUT',    '/api/portal/risk-acceptances'],
+    ['DELETE', '/api/portal/risk-acceptances/12'],
+    ['PATCH',  '/api/portal/risk-acceptances/12/withdraw'],
+    ['POST',   '/api/portal/risk-acceptances/12'],
+    ['POST',   '/api/portal/risk-acceptances/abc/withdraw'],
+    ['POST',   '/api/portal/risk-acceptances/12/withdraw/extra'],
+    ['POST',   '/api/portal/risk-acceptances-export'],
+  ]) {
+    const r = await go(method, url, 'client', 7);
+    check('client ' + method + ' ' + url.replace('/api/portal', '') + ' is refused', r.status === 405, r.status);
+  }
+  const staffSubmit = await go('POST', '/api/portal/risk-acceptances', 'superadmin', 7);
+  check('staff still cannot write through the portal, even to the allowlisted route',
+    staffSubmit.status === 403, staffSubmit.status);
+  const clientStaffRoute = await go('POST', '/api/risk-acceptances/12/approve', 'client', 7);
+  check('and a client cannot reach the staff approval route', clientStaffRoute.status === 404, clientStaffRoute.status);
 
   section('anonymous callers get nowhere');
   check('no session, no portal', (await go('GET', '/api/portal/incidents')).status === 401);

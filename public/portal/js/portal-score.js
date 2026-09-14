@@ -42,6 +42,40 @@
       '" r="3" fill="currentColor"/></svg>';
   }
 
+  function monthLabel(key) {
+    var m = /^(\d{4})-(\d{2})$/.exec(String(key || ''));
+    if (!m) return String(key || '');
+    return new Date(Date.UTC(+m[1], +m[2] - 1, 1))
+      .toLocaleDateString('en-ZA', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  }
+
+  /**
+   * What changed, month by month. The summary is always visible; the evidence
+   * behind it opens on request. Everything here is written by the server in
+   * terms of findings, training and incidents — never in points — so there is
+   * nothing to strip.
+   */
+  function changesHtml(changes) {
+    if (!changes || !changes.length) return '';
+    return '<h4 class="portal-changes-title">What changed</h4>' +
+      '<ul class="portal-changes">' + changes.map(function (c) {
+        var tone = c.delta == null || c.delta === 0 ? 'flat' : c.delta > 0 ? 'up' : 'down';
+        return '<li class="portal-change">' +
+          '<details>' +
+            '<summary>' +
+              '<span class="portal-change-month">' + P.esc(monthLabel(c.monthKey)) + '</span>' +
+              '<span class="portal-change-delta portal-change-' + tone + '">' +
+                P.esc(c.delta == null ? '—' : (c.delta > 0 ? '+' : '') + c.delta) + '</span>' +
+              '<span class="portal-change-summary">' + P.esc(c.summary) + '</span>' +
+            '</summary>' +
+            '<ul class="portal-change-details">' +
+              (c.details || []).map(function (t) { return '<li>' + P.esc(t) + '</li>'; }).join('') +
+            '</ul>' +
+          '</details>' +
+        '</li>';
+      }).join('') + '</ul>';
+  }
+
   function render(d) {
     if (!d || !d.available) {
       return '<div class="portal-card">' +
@@ -77,6 +111,7 @@
             '<span class="portal-bar-num">' + P.esc(c.score) + '</span></li>';
         }).join('') +
       '</ul>' +
+      changesHtml(d.changes) +
       '<p class="portal-note">As at ' + P.esc(P.fmtDate(d.asOf)) + '.</p>' +
       '</div>';
   }

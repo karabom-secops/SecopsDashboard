@@ -9,8 +9,9 @@
  * The staff dashboard carries fifteen private copies of `esc` and ten of the
  * tenant query-param helper. The portal has one of each, on purpose.
  *
- * Read-only: there is no POST helper, and adding one should feel like a
- * decision rather than a convenience.
+ * Almost read-only. post() exists for exactly one decision — clients requesting
+ * risk acceptance — and the server refuses any write not allowlisted in
+ * lib/portal-gate.js, so this helper cannot make another route writable.
  */
 (function () {
   'use strict';
@@ -37,6 +38,25 @@
    */
   async function get(pathname) {
     var res = await fetch(BASE + 'api/portal/' + pathname, { credentials: 'same-origin' });
+    if (res.status === 401) { location.replace(BASE + 'login.html'); throw new Error('signed out'); }
+    var data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) throw new Error((data && data.error) || 'Request failed (' + res.status + ').');
+    return data;
+  }
+
+  /**
+   * A JSON POST. Same rules as get(): no tenant, ever — the server takes it
+   * from the session. Errors carry the server's message, which for the only
+   * write this is used for is written for the client to read.
+   */
+  async function post(pathname, body) {
+    var res = await fetch(BASE + 'api/portal/' + pathname, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
     if (res.status === 401) { location.replace(BASE + 'login.html'); throw new Error('signed out'); }
     var data = null;
     try { data = await res.json(); } catch (e) { data = null; }
@@ -179,6 +199,7 @@
     BASE: BASE,
     esc: esc,
     get: get,
+    post: post,
     viewHead: viewHead,
     emptyState: emptyState,
     errorState: errorState,

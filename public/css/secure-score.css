@@ -434,6 +434,40 @@
   color: var(--text);
 }
 
+/* What moved the score — explanations under the trend chart */
+.ss-trend-why:not(:empty) { margin-top: 1.25rem; }
+.ss-trend-why-title { margin: 0 0 0.5rem; font-size: 0.95rem; font-weight: 600; color: var(--text); }
+.ss-trend-why-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.ss-trend-why-item { border-bottom: 1px solid var(--border); }
+.ss-trend-why-item summary {
+  display: grid;
+  grid-template-columns: 5rem 3rem 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.55rem 0;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+.ss-trend-why-month { color: var(--muted); }
+.ss-trend-why-delta { font-weight: 650; font-variant-numeric: tabular-nums; }
+.ss-trend-up   { color: var(--green, #1e8e3e); }
+.ss-trend-down { color: var(--red, #c0392b); }
+.ss-trend-flat { color: var(--muted); }
+.ss-trend-why-drivers {
+  margin: 0 0 0.6rem 8.5rem;
+  padding-left: 1rem;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--text);
+}
+.ss-trend-why-drivers li + li { margin-top: 0.3rem; }
+.ss-trend-why-note { margin: 0 0 0.75rem 8.5rem; font-size: 0.8rem; color: var(--muted); font-style: italic; }
+@media (max-width: 700px) {
+  .ss-trend-why-item summary { grid-template-columns: 1fr auto; }
+  .ss-trend-why-summary { grid-column: 1 / -1; }
+  .ss-trend-why-drivers, .ss-trend-why-note { margin-left: 0; }
+}
+
 /* Trend Chart */
 .trend-chart-container {
   display: flex;

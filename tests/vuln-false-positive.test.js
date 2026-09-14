@@ -164,9 +164,22 @@ check('and writes the result back to vuln_scans.summary',
 
 // `await` anchors this to actual CALLS — the function's own declaration
 // contains the same text and was otherwise counted as a third.
+//
+// REFRAMED from "exactly two call sites". Approving a client's risk acceptance
+// (and its expiry) also changes a finding's status, and must rebuild the
+// summary for exactly the reason these endpoints do — so there are now three.
+// What this check protects is that no status-changing path skips the rebuild.
+const bulkRoute = (srv.match(/app\.patch\('\/api\/vulns\/:monthKey\/findings\/bulk-status'[\s\S]*?\n\}\);/) || [''])[0];
+const oneRoute = (srv.match(/app\.patch\('\/api\/vulns\/:monthKey\/finding\/:index'[\s\S]*?\n\}\);/) || [''])[0];
+const acceptMove = (srv.match(/async function moveAcceptanceFinding[\s\S]*?\n\}/) || [''])[0];
 check('both endpoints resync',
-  (srv.match(/await resyncVulnSummary\(client, scanId\)/g) || []).length === 2,
+  /await resyncVulnSummary\(client, scanId\)/.test(bulkRoute) &&
+  /await resyncVulnSummary\(client, scanId\)/.test(oneRoute),
   (srv.match(/await resyncVulnSummary\(client, scanId\)/g) || []).length + ' call sites');
+check('and so does a risk acceptance changing a finding\'s status',
+  /await resyncVulnSummary\(client, scanId\)/.test(acceptMove));
+check('with no other caller unaccounted for',
+  (srv.match(/await resyncVulnSummary\(client, scanId\)/g) || []).length === 3);
 
 /*
  * Atomic, because a crash between the two writes would leave the findings

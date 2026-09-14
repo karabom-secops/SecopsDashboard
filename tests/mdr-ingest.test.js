@@ -13,8 +13,8 @@
  *
  * THE THING MOST LIKELY TO BREAK
  *
- * Not the portal — the INTERNAL views. GET /api/mdr, /api/mdr/trends,
- * loadIncidentRate() and /api/reports/metrics all mean "tickets on the latest
+ * Not the portal — the INTERNAL views. GET /api/mdr, /api/mdr/trends and
+ * /api/reports/metrics all mean "tickets on the latest
  * upload_id". They keep working only because the upsert re-points upload_id at
  * the new snapshot for every ticket the feed returned. If that ever stops, the
  * internal panel silently empties. Several checks below exist solely to pin it.

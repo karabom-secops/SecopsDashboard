@@ -1263,7 +1263,7 @@ check('and no vulnerability advice',
   !recAware.some(a => /Vulnerabilit|Scan Coverage|Asset Inventory|Internal Infrastructure|Patch Management|Endpoint/.test(a)),
   recAware.join(', '));
 check('and no incident-response advice',
-  recAware.indexOf('Incident Response') < 0, recAware.join(', '));
+  recAware.indexOf('Managed Detection and Response') < 0, recAware.join(', '));
 
 const recVuln = recs(['vuln']);
 check('a vuln-only client gets vulnerability advice',
@@ -1272,7 +1272,18 @@ check('and no awareness advice',
   recVuln.indexOf('Security Awareness') < 0, recVuln.join(', '));
 
 check('an MDR client gets incident-response advice',
-  recs(['mdr']).indexOf('Incident Response') >= 0);
+  recs(['mdr']).indexOf('Managed Detection and Response') >= 0);
+
+/*
+ * The last place the internal name survived. The recommendation area is printed
+ * under Executive Decisions in the board pack, beside a maturity table that
+ * already says "Managed Detection and Response" — one service, two names, on
+ * the same slide.
+ */
+check('the recommendation area uses the service name, not the component name',
+  recs(['mdr']).indexOf('Incident Response') < 0 &&
+  !/area: 'Incident Response'/.test(fs.readFileSync(path.join(ROOT, 'lib', 'secure-score.js'), 'utf8')),
+  recs(['mdr']).join(', '));
 
 /*
  * The map is the enforcement. An area missing from it keeps its

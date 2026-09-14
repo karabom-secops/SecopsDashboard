@@ -1449,6 +1449,44 @@ input[type="file"] {
 .rt-gantt-bar.overdue        { outline: 2px solid #dc2626; outline-offset: 1px; }
 .rt-gantt-empty { padding: 1.5rem; text-align: center; color: var(--muted); }
 
+/* Client risk acceptances awaiting review, above the tracker. */
+.rt-accept-panel {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber, #d98e04);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.rt-accept-title { margin: 0; font-size: 1rem; font-weight: 600; display: flex; gap: 0.5rem; align-items: center; }
+.rt-accept-lead { margin: 0.35rem 0 0.75rem; font-size: 0.85rem; color: var(--muted); }
+.rt-accept-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+  gap: 1rem 1.5rem;
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--border);
+}
+.rt-accept-finding { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.rt-accept-sev { text-transform: capitalize; font-size: 0.8rem; color: var(--muted); }
+.rt-accept-host { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.8rem; color: var(--muted); }
+.rt-accept-meta { margin-top: 0.35rem; font-size: 0.85rem; color: var(--muted); }
+.rt-accept-why {
+  margin: 0.5rem 0 0;
+  padding: 0.4rem 0.75rem;
+  border-left: 2px solid var(--border);
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rt-accept-actions { display: flex; flex-direction: column; gap: 0.35rem; }
+.rt-accept-note { resize: vertical; }
+.rt-accept-buttons { display: flex; gap: 0.5rem; }
+.rt-accept-error { color: var(--red); font-size: 0.8rem; }
+@media (max-width: 760px) {
+  .rt-accept-item { grid-template-columns: 1fr; }
+}
+
 /* Scrollable findings table.
    Sized to the viewport rather than a fixed 500px: this list runs to hundreds
    of rows, and 500px showed seven of them on a 1080p screen. The floor keeps it

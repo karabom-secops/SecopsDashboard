@@ -1439,6 +1439,10 @@
       </div>
     </div>
 
+    <!-- Client risk acceptances awaiting review. Empty (and so invisible) when
+         there are none; rendered by tab-remediation-tracker.js. -->
+    <div id="rt-acceptances"></div>
+
     <div id="rt-stats" class="stat-grid" style="margin-bottom:1.5rem"></div>
 
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
@@ -2373,6 +2377,7 @@
   <script src="js/tab-awareness.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <script src="js/ms-secure-score.js"></script>
+  <script src="js/score-trend.js"></script>
   <script src="js/tab-secure-score.js"></script>
   <script src="js/tab-grc.js"></script>
   <script src="js/tab-redteam.js"></script>

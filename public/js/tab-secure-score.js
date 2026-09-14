@@ -728,7 +728,48 @@ const SecureScoreTab = (() => {
     return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
   }
 
-  function renderTrendChart(container, history, grcScore) {
+  /**
+   * "What moved the score" — one line per month, newest first, under the chart.
+   *
+   * Each month opens on its summary; the component detail and the evidence sit
+   * behind a <details> so six months of explanation does not turn the section
+   * into a wall of text. The biggest mover is always visible in the summary.
+   */
+  function renderTrendWhy(container, explanations) {
+    if (!container) return;
+    const list = (explanations || []).slice(0, 6);
+    if (!list.length) { container.innerHTML = ''; return; }
+
+    const esc = s => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+    container.innerHTML =
+      '<h4 class="ss-trend-why-title">What moved the score</h4>' +
+      '<ul class="ss-trend-why-list">' + list.map(e => {
+        const tone = e.delta == null ? 'flat' : e.delta > 0 ? 'up' : e.delta < 0 ? 'down' : 'flat';
+        const badge = e.delta == null ? '—' : (e.delta > 0 ? '+' : '') + e.delta;
+        return '<li class="ss-trend-why-item">' +
+          '<details>' +
+            '<summary>' +
+              '<span class="ss-trend-why-month">' + esc(formatMonthLabel(e.monthKey)) + '</span>' +
+              '<span class="ss-trend-why-delta ss-trend-' + tone + '">' + esc(badge) + '</span>' +
+              '<span class="ss-trend-why-summary">' + esc(e.summary) + '</span>' +
+            '</summary>' +
+            '<ul class="ss-trend-why-drivers">' +
+              e.drivers.map(d => '<li>' + esc(d.text) + '</li>').join('') +
+            '</ul>' +
+            (e.note ? '<p class="ss-trend-why-note">' + esc(e.note) + '</p>' : '') +
+          '</details>' +
+        '</li>';
+      }).join('') + '</ul>';
+  }
+
+  function renderTrendChart(container, history, grcScore, explanations) {
+    // Keyed by month so the tooltip can find the explanation for the point
+    // under the cursor. The first month has none: there is nothing before it.
+    const whyByMonth = {};
+    (explanations || []).forEach(e => { whyByMonth[e.monthKey] = e; });
     if (!history || history.length === 0) {
       container.innerHTML = '<p style="color:var(--muted);padding:1rem 0">Insufficient data for trend chart.</p>';
       return;
@@ -798,6 +839,15 @@ const SecureScoreTab = (() => {
           tooltip: {
             callbacks: {
               label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y}/100`,
+              // The explanation for the hovered month, under the figures. Only
+              // the summary: the tooltip is not the place for the evidence,
+              // which is in the list beneath the chart.
+              afterBody: items => {
+                const point = items && items[0];
+                const row = point ? sorted[point.dataIndex] : null;
+                const why = row ? whyByMonth[row.monthKey] : null;
+                return why ? ['', why.summary] : [];
+              },
             },
           },
         },
@@ -986,6 +1036,7 @@ const SecureScoreTab = (() => {
         <div class="secure-score-section">
           <h3 class="secure-score-section-title">6-Month Trend</h3>
           <div id="secure-score-trend" class="trend-chart-container"></div>
+          <div id="secure-score-trend-why" class="ss-trend-why"></div>
         </div>
         <div class="secure-score-section">
           <h3 class="secure-score-section-title">Improvement Recommendations</h3>
@@ -1101,7 +1152,16 @@ const SecureScoreTab = (() => {
     // Render trend chart (pass grc score for insurability overlay line)
     const trendContainer = document.getElementById('secure-score-trend');
     const grcScoreVal = (grcData && grcData.assessment) ? (grcData.assessment.grc_score || 0) : null;
-    renderTrendChart(trendContainer, history, grcScoreVal);
+    // Explained against the SAME weights the history was computed on, which the
+    // history route returns — not scoreData.weights, which could differ if the
+    // service mix changed between the two requests.
+    const explanations = window.ScoreTrend
+      ? window.ScoreTrend.explainTrend(history, {
+          audience: 'staff', weights: (historyData && historyData.weights) || null,
+        })
+      : [];
+    renderTrendChart(trendContainer, history, grcScoreVal, explanations);
+    renderTrendWhy(document.getElementById('secure-score-trend-why'), explanations);
 
     // Render recommendations
     const recommendationContainer = document.getElementById('secure-score-recommendations');

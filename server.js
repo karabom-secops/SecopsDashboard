@@ -43,6 +43,8 @@ const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
 // Same file the browser loads with a <script> tag, for the same reason: the
 // report's incident-resolution KPIs and the MDR score must count one cohort.
 const mdrMetrics = require('./public/js/mdr-metrics');
+const scoreEvidence = require('./lib/score-evidence');
+const riskAcceptance = require('./lib/risk-acceptance');
 const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports');
 const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
 const sentinelOneAdapter = require('./lib/integrations/sentinelone');
@@ -6244,6 +6246,271 @@ app.get('/api/remediation-tracker', requireAuth, async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
+// ── Risk acceptances (client-requested, staff-reviewed) ───────────────────
+//
+// Clients request from the portal (lib/portal-routes.js); the request changes
+// nothing until it is approved here. Approval sets the finding accepted, which
+// removes it from the vulnerability counts and so raises the Secure Score —
+// the reason this is a staff decision and not a client one. Gated on WRITE to
+// the Remediation Tracker page via API_PREFIX_TO_PAGE['risk-acceptances'].
+
+/** Run fn inside a transaction on one client; always releases. */
+async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const out = await fn(client);
+    await client.query(out && out.rollback ? 'ROLLBACK' : 'COMMIT');
+    return out;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * The finding rows an acceptance applies to.
+ *
+ * Pentest findings have a stable id. A vulnerability is followed by its
+ * plugin|host|port key into the LATEST scan — the same key the upload
+ * carry-forward uses — because the row it was raised against may have been
+ * replaced by a newer upload while the request waited for review. Only when an
+ * old row carried no identity at all does it fall back to the id.
+ */
+function acceptanceFindingMatch(row) {
+  if (row.plugin_id == null && row.host == null && row.port == null) {
+    return { sql: 'id = $4', params: [row.finding_id] };
+  }
+  return {
+    sql: 'plugin_id IS NOT DISTINCT FROM $4 AND host IS NOT DISTINCT FROM $5 AND port IS NOT DISTINCT FROM $6',
+    params: [row.plugin_id, row.host, row.port],
+  };
+}
+
+/**
+ * Move a finding between statuses on behalf of an acceptance, inside the
+ * caller's transaction. Returns the number of finding rows changed.
+ *
+ * `fromStatuses` is the guard: approval only accepts a finding that is still
+ * open, and expiry only reopens one that is still accepted — if staff have
+ * since marked it fixed, the expiry must not resurrect it.
+ */
+async function moveAcceptanceFinding(client, row, fromStatuses, toStatus, note) {
+  if (row.source === 'pentest') {
+    const u = await client.query(
+      `UPDATE pentest_findings
+          SET status = $1,
+              notes = CASE WHEN notes = '' THEN $2 ELSE notes || E'\\n' || $2 END,
+              status_updated_at = NOW(), updated_at = NOW()
+        WHERE id = $3 AND tenant_id = $4 AND status = ANY($5::text[])
+        RETURNING id`,
+      [toStatus, note, row.finding_id, row.tenant_id, fromStatuses]);
+    return u.rows.length;
+  }
+
+  const scan = await client.query(
+    'SELECT id FROM vuln_scans WHERE tenant_id = $1 ORDER BY month_key DESC LIMIT 1',
+    [row.tenant_id]);
+  if (!scan.rows.length) return 0;
+  const scanId = scan.rows[0].id;
+
+  const match = acceptanceFindingMatch(row);
+  const u = await client.query(
+    `UPDATE vuln_findings
+        SET status = $1,
+            notes = CASE WHEN notes = '' THEN $2 ELSE notes || E'\\n' || $2 END,
+            status_updated_at = NOW()
+      WHERE scan_id = $3 AND ${match.sql} AND status = ANY($${4 + match.params.length}::text[])
+      RETURNING id`,
+    [toStatus, note, scanId].concat(match.params, [fromStatuses]));
+
+  // The score reads the summary, not the findings. Same transaction, for the
+  // reason given at resyncVulnSummary().
+  if (u.rows.length) await resyncVulnSummary(client, scanId);
+  return u.rows.length;
+}
+
+const RISK_ACCEPTANCES_NOT_MIGRATED =
+  'Risk acceptances are not set up on this database yet. Run db/migrate-risk-acceptances.sql.';
+
+/** GET /api/risk-acceptances?status=pending — the review queue and the register. */
+app.get('/api/risk-acceptances', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolvePentestTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const params = [tenantId];
+    let where = 'ra.tenant_id = $1';
+    if (riskAcceptance.STATUSES.includes(req.query.status)) {
+      params.push(req.query.status);
+      where += ' AND ra.status = $2';
+    }
+
+    const r = await pool.query(
+      `SELECT ra.id, ra.source, ra.finding_id, ra.plugin_id, ra.host, ra.port,
+              ra.finding_title, ra.finding_severity, ra.approver_name, ra.approver_role,
+              ra.justification, ra.expires_on, ra.status, ra.requested_at,
+              ra.reviewed_at, ra.review_note, ra.closed_at,
+              ru.username AS requested_by_name, vu.username AS reviewed_by_name
+         FROM risk_acceptances ra
+         LEFT JOIN users ru ON ru.id = ra.requested_by
+         LEFT JOIN users vu ON vu.id = ra.reviewed_by
+        WHERE ${where}
+        ORDER BY (ra.status = 'pending') DESC, ra.requested_at DESC
+        LIMIT 200`,
+      params);
+
+    res.json({
+      available: true,
+      acceptances: r.rows.map(row =>
+        Object.assign(row, { expires_on: riskAcceptance.dateOnly(row.expires_on) })),
+    });
+  } catch (err) {
+    if (err.code === '42P01') return res.json({ available: false, acceptances: [] });
+    return serverError(res, err);
+  }
+});
+
+/** POST /api/risk-acceptances/:id/approve — { note? } */
+app.post('/api/risk-acceptances/:id/approve', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1) return res.status(404).json({ error: 'Acceptance not found.' });
+
+    const { tenantId, error } = resolvePentestTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const note = riskAcceptance.validateReviewNote(req.body && req.body.note, false);
+    if (note.error) return res.status(400).json({ error: note.error });
+
+    const out = await withTransaction(async (client) => {
+      // Locked, and owned by this tenant in the WHERE clause.
+      const r = await client.query(
+        'SELECT * FROM risk_acceptances WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
+        [id, tenantId]);
+      if (!r.rows.length) return { rollback: true, status: 404, error: 'Acceptance not found.' };
+      const row = r.rows[0];
+
+      if (row.status !== 'pending') {
+        return { rollback: true, status: 409, error: 'This acceptance is already ' + row.status + '.' };
+      }
+      if (riskAcceptance.dateOnly(row.expires_on) <= riskAcceptance.todayUtc(new Date())) {
+        return { rollback: true, status: 409,
+          error: 'Its review date has already passed. Reject it and ask the client to resubmit.' };
+      }
+
+      const moved = await moveAcceptanceFinding(client, row,
+        riskAcceptance.OPEN_STATUSES, riskAcceptance.SOURCES[row.source].acceptedStatus,
+        riskAcceptance.acceptedNote(row));
+      if (!moved) {
+        return { rollback: true, status: 409,
+          error: 'The finding is no longer open in the latest data, so there is nothing to accept. ' +
+                 'Reject this request with a note to the client instead.' };
+      }
+
+      await client.query(
+        `UPDATE risk_acceptances
+            SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(), review_note = $2
+          WHERE id = $3 AND tenant_id = $4`,
+        [req.session.userId, note.value, id, tenantId]);
+      return { ok: true, findingsUpdated: moved };
+    });
+
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    res.json(out);
+  } catch (err) {
+    if (err.code === '42P01') return res.status(503).json({ error: RISK_ACCEPTANCES_NOT_MIGRATED });
+    return serverError(res, err);
+  }
+});
+
+/** POST /api/risk-acceptances/:id/reject — { note } (required: the client is owed a reason) */
+app.post('/api/risk-acceptances/:id/reject', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1) return res.status(404).json({ error: 'Acceptance not found.' });
+
+    const { tenantId, error } = resolvePentestTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const note = riskAcceptance.validateReviewNote(req.body && req.body.note, true);
+    if (note.error) return res.status(400).json({ error: note.error });
+
+    const r = await pool.query(
+      `UPDATE risk_acceptances
+          SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(),
+              review_note = $2, closed_at = NOW()
+        WHERE id = $3 AND tenant_id = $4 AND status = 'pending'
+        RETURNING id`,
+      [req.session.userId, note.value, id, tenantId]);
+    if (!r.rows.length) return res.status(404).json({ error: 'No pending acceptance with that id.' });
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '42P01') return res.status(503).json({ error: RISK_ACCEPTANCES_NOT_MIGRATED });
+    return serverError(res, err);
+  }
+});
+
+/**
+ * Expire approved acceptances whose review date has passed, and reopen their
+ * findings so they are scored again.
+ *
+ * One transaction per acceptance: one finding failing to reopen must not hold
+ * every other client's expiry hostage. A finding staff have since marked fixed
+ * is left fixed — the acceptance still expires, but nothing is reopened.
+ */
+async function expireRiskAcceptances() {
+  let due;
+  try {
+    due = await pool.query(
+      `SELECT * FROM risk_acceptances
+        WHERE status = 'approved' AND expires_on < (NOW() AT TIME ZONE 'UTC')::date
+        ORDER BY id LIMIT 500`);
+  } catch (err) {
+    if (err.code === '42P01') return 0;   // not migrated
+    throw err;
+  }
+
+  let expired = 0;
+  for (const row of due.rows) {
+    try {
+      await withTransaction(async (client) => {
+        const still = await client.query(
+          `SELECT id FROM risk_acceptances WHERE id = $1 AND status = 'approved' FOR UPDATE`,
+          [row.id]);
+        if (!still.rows.length) return { rollback: true };
+
+        await moveAcceptanceFinding(client, row,
+          [riskAcceptance.SOURCES[row.source].acceptedStatus], 'open',
+          'Risk acceptance RA-' + row.id + ' expired on ' +
+            riskAcceptance.dateOnly(row.expires_on) + '; reopened for review.');
+
+        await client.query(
+          `UPDATE risk_acceptances SET status = 'expired', closed_at = NOW() WHERE id = $1`,
+          [row.id]);
+        expired++;
+        return { ok: true };
+      });
+    } catch (err) {
+      console.error('[risk-acceptance] expiry failed for RA-' + row.id + ' —', err.message);
+    }
+  }
+  return expired;
+}
+
+const RISK_ACCEPTANCE_SWEEP_MS = 6 * 60 * 60 * 1000;
+function runRiskAcceptanceExpiry() {
+  expireRiskAcceptances()
+    .then(n => { if (n) console.log('[risk-acceptance] expired ' + n + ' acceptance(s); findings reopened'); })
+    .catch(err => console.error('[risk-acceptance] expiry sweep failed —', err.message));
+}
+if (process.env.NODE_ENV !== 'test') {
+  setTimeout(runRiskAcceptanceExpiry, 2 * 60 * 1000);
+  setInterval(runRiskAcceptanceExpiry, RISK_ACCEPTANCE_SWEEP_MS);
+}
+
 // ── Client report deck ─────────────────────────────────────────────────────
 
 function resolveReportTenant(req, source) {
@@ -6631,31 +6898,35 @@ async function reconstructComponents(tenantId, months) {
   } catch (_) { /* not migrated, or summary-format upload — no session history */ }
 
   let tickets = [];
+  let feedExists = false;
   try {
+    // ticket_type selected so the cohort can filter to incidents — see the
+    // matching note in loadScoreInputs().
     const r = await pool.query(
-      `SELECT t.created_at, t.resolved_at
+      `SELECT t.created_at, t.resolved_at, t.ticket_type
          FROM mdr_tickets t
          JOIN mdr_uploads u ON u.id = t.upload_id
         WHERE u.tenant_id = $1 AND t.created_at IS NOT NULL`,
       [tenantId]
     );
     tickets = r.rows;
+    feedExists = tickets.length > 0;
   } catch (_) { /* not migrated */ }
 
   months.forEach(monthKey => {
-    const end = monthEnd(monthKey);
-    const rec = { awarenessScore: null, mdrScore: null };
+    const rec = { awarenessScore: null, mdrScore: null, evidence: {} };
 
     // Sessions issued by the end of the month, and those completed by then.
-    const sent = sessions.filter(s => new Date(s.sent_date).toISOString() <= end);
-    if (sent.length) {
-      const done = sent.filter(s =>
-        s.completed_date && new Date(s.completed_date).toISOString() <= end
-      ).length;
+    // Counted in lib/score-evidence.js so the explanation beside the trend and
+    // the score it explains cannot be counting different sessions.
+    const aw = scoreEvidence.awarenessEvidence(sessions, monthKey);
+    rec.evidence.awareness = aw;
+    if (aw) {
       rec.awarenessScore = calculateAwarenessScore({
-        upload: { total_users: sent.length, total_incomplete: sent.length - done },
+        upload: { total_users: aw.assigned, total_incomplete: aw.assigned - aw.completed },
       });
     }
+    rec.evidence.incidentResponse = scoreEvidence.incidentEvidence(tickets, monthKey, { feedExists });
 
     /*
      * THE TICKETS RAISED IN THAT MONTH — not every ticket raised up to it.
@@ -7581,37 +7852,6 @@ async function loadEstate(tenantId, scanId, trainedUsers) {
   return estateLib.resolveEstate(declared, derived);
 }
 
-/**
- * Incident load, as tickets per month — the driver behind the incident-response
- * weight. The arithmetic lives in secureScore.incidentRateFrom() so it can be
- * tested without a database; this is only the query.
- *
- * Degrades to null ("unknown", which the curve treats as neutral) on an
- * un-migrated table rather than taking the Secure Score with it.
- */
-async function loadIncidentRate(uploadId) {
-  if (!uploadId) return null;
-  try {
-    // DELIBERATELY still keyed on upload_id, not tenant_id, now that tickets
-    // survive across syncs. This derives a RATE from the span of the latest
-    // snapshot; widening it to all retained history would silently change the
-    // denominator and move every tenant's incident-response weight without
-    // anything about their security having changed.
-    const r = await pool.query(
-      `SELECT COUNT(*) FILTER (WHERE created_at IS NOT NULL)::int AS dated,
-              MIN(created_at) AS first_at,
-              MAX(created_at) AS last_at
-       FROM mdr_tickets WHERE upload_id = $1`,
-      [uploadId]
-    );
-    const row = r.rows[0];
-    if (!row) return null;
-    return secureScore.incidentRateFrom({
-      dated: row.dated, firstAt: row.first_at, lastAt: row.last_at,
-    });
-  } catch (_) { return null; }   // mdr_tickets not migrated
-}
-
 /** Endpoint patch currency and agent health — the endpoint-only yardstick. */
 async function loadEdrHealth(tenantId) {
   try {
@@ -7749,8 +7989,12 @@ async function loadScoreInputs(tenantId) {
         // later migration and may be null on older rows.
         let cohortTickets = [];
         try {
+          // ticket_type MUST be selected. cohortStats() filters to incidents
+          // only when the rows carry a type; rows without the column look like
+          // a feed that never classifies, and every support request and info
+          // ticket was silently scored as an incident.
           const t = await pool.query(
-            `SELECT t.created_at, t.resolved_at
+            `SELECT t.created_at, t.resolved_at, t.ticket_type
                FROM mdr_tickets t
                JOIN mdr_uploads u ON u.id = t.upload_id
               WHERE u.tenant_id = $1 AND t.created_at IS NOT NULL`,
@@ -7769,10 +8013,6 @@ async function loadScoreInputs(tenantId) {
         };
       }
     } catch (_) { /* table may not exist yet */ }
-
-    // How much there has actually been to respond to. Incident response is no
-    // longer the leftover of two other decisions — see incidentPull().
-    const incidentRate = await loadIncidentRate(mdrUploadId);
 
     // The estate: how much this client actually has, of what kind, and how many
     // people. Without it the vulnerability component judges everyone against
@@ -7812,7 +8052,7 @@ async function loadScoreInputs(tenantId) {
 
     return {
       vulnData, scanId, edrHealth, awarenessData, mdrData, mdrUploadId,
-      incidentRate, trainedUsers, estate, tenantServices, mdrCoverage,
+      trainedUsers, estate, tenantServices, mdrCoverage,
     };
   }
 }
@@ -7829,7 +8069,7 @@ async function compositeScoreFor(tenantId) {
   try {
     const i = await loadScoreInputs(tenantId);
     const r = calculateSecureScore(i.vulnData, i.awarenessData, i.mdrData, {
-      estate: i.estate, edr: i.edrHealth, incidentRate: i.incidentRate,
+      estate: i.estate, edr: i.edrHealth,
       services: i.tenantServices, mdrCoverage: i.mdrCoverage,
     });
     return typeof r.composite === 'number' ? r.composite : null;
@@ -8060,7 +8300,7 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
 
     const {
       vulnData, edrHealth, awarenessData, mdrData,
-      incidentRate, estate, tenantServices, mdrCoverage,
+      estate, tenantServices, mdrCoverage,
     } = await loadScoreInputs(tenantId);
 
     const {
@@ -8068,7 +8308,7 @@ app.get('/api/secure-score', requireAuth, async (req, res) => {
       measured, unmeasured, maxAchievable, vulnDetail, weights,
       serviceScore, coverage, coverageNominal, scope, overall,
     } = calculateSecureScore(vulnData, awarenessData, mdrData,
-                             { estate, edr: edrHealth, incidentRate,
+                             { estate, edr: edrHealth,
                                services: tenantServices, mdrCoverage });
     // Services passed through: advice about a control the client does not buy
     // reads on their board pack as a failing of theirs.
@@ -8277,9 +8517,13 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
     } catch (_) { /* table not migrated — fall back to derived months only */ }
 
     // Cover the last 6 calendar months plus any month that has a vuln scan, so
-    // the trend is continuous even when scans are irregular.
+    // the trend is continuous even when scans are irregular. Snapshot months
+    // are included too, so every point on the chart — stored or reconstructed —
+    // has the evidence behind it and can be explained.
     const months = [...new Set(
-      recentMonths(6).concat(vulnTrendRows.map(r => r.month_key))
+      recentMonths(6)
+        .concat(vulnTrendRows.map(r => r.month_key))
+        .concat(snapshots.map(s => s.month_key))
     )].sort().reverse().slice(0, 12);
 
     const reconstructed = await reconstructComponents(tenantId, months);
@@ -8294,6 +8538,18 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
     };
 
     const byMonth = new Map();
+
+    /*
+     * The facts behind each month — findings, completion, incidents — for the
+     * "what moved the score" explanations beside the chart. Attached to
+     * snapshot rows as well as reconstructed ones: a stored score is exactly
+     * the one a client has already seen, and the one most likely to be asked
+     * about.
+     */
+    const evidenceOf = monthKey => Object.assign(
+      { vulnerabilities: scoreEvidence.vulnerabilityEvidence(vulnTrendRows, monthKey) },
+      (reconstructed.get(monthKey) || {}).evidence || {}
+    );
 
     // Reconstructed first, so a real stored snapshot overwrites it below.
     months.forEach(monthKey => {
@@ -8320,6 +8576,7 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
         awarenessScore: rec.awarenessScore,
         mdrScore:       rec.mdrScore,
         source:         'reconstructed',
+        evidence:       evidenceOf(monthKey),
       });
     });
 
@@ -8331,6 +8588,7 @@ app.get('/api/secure-score/history', requireAuth, async (req, res) => {
         awarenessScore: s.awareness_score,
         mdrScore:       s.mdr_score,
         source:         'snapshot',
+        evidence:       evidenceOf(s.month_key),
       });
     });
 
