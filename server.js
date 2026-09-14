@@ -5591,6 +5591,112 @@ app.delete('/api/ir/activities/:id', async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
+/*
+ * ══ Comments on playbook steps ══
+ *
+ * A thread per step, append-only — there is deliberately no edit or delete
+ * route. An incident record is evidence that can end up in front of a client,
+ * an insurer or a regulator; a correction is a later comment, not a rewrite.
+ *
+ * WRITE-GATED WITHOUT A GUARD HERE. app.use('/api', pageGate) maps the `ir`
+ * prefix to the incident-response page and requires WRITE for any POST, so a
+ * read-only role can see a thread and cannot add to it — the same rule every
+ * other /api/ir write already relies on.
+ *
+ * STAFF-ONLY. lib/portal-routes.js never reads ir_activity_comments; the portal
+ * shows only that a phase completed. tests/ir-step-comments.test.js holds it.
+ *
+ * DEGRADE-OPEN. On a database that has not run migrate-ir-step-comments.sql the
+ * read returns an empty, `available: false` thread rather than a 500, so the
+ * playbook still loads; a write says which migration to run.
+ */
+const IR_COMMENT_MAX = 4000;
+
+/** GET /api/ir/incidents/:id/comments — every step's thread, in one request */
+app.get('/api/ir/incidents/:id/comments', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const incidentId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(incidentId)) return res.status(404).json({ error: 'Incident not found.' });
+
+    const incRes = await pool.query(
+      'SELECT id FROM ir_incidents WHERE id=$1 AND tenant_id=$2', [incidentId, tenantId]);
+    if (incRes.rows.length === 0) return res.status(404).json({ error: 'Incident not found.' });
+
+    try {
+      // One query for the whole incident rather than one per step: a phishing
+      // playbook has a dozen steps, and N requests to open one incident is a
+      // board that paints its threads in piecemeal.
+      const r = await pool.query(
+        `SELECT c.id, c.activity_id, c.body, c.created_at, u.username AS author
+           FROM ir_activity_comments c
+           LEFT JOIN users u ON u.id = c.author_id
+          WHERE c.incident_id = $1 AND c.tenant_id = $2
+          ORDER BY c.created_at ASC, c.id ASC`,
+        [incidentId, tenantId]
+      );
+      return res.json({ available: true, comments: r.rows });
+    } catch (err) {
+      if (err.code !== '42P01') throw err;   // comments table not migrated yet
+      return res.json({ available: false, comments: [] });
+    }
+  } catch (err) { return serverError(res, err); }
+});
+
+/** POST /api/ir/activities/:id/comments — add to one step's thread */
+app.post('/api/ir/activities/:id/comments', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIrTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const activityId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(activityId)) return res.status(404).json({ error: 'Activity not found.' });
+
+    // Trimmed before the length check, so a comment of only whitespace is
+    // empty rather than a blank entry in the thread with an author and a time.
+    const text = typeof (req.body || {}).body === 'string' ? req.body.body.trim() : '';
+    if (!text) return res.status(400).json({ error: 'Comment cannot be empty.' });
+    if (text.length > IR_COMMENT_MAX) {
+      return res.status(400).json({ error: `Comment is limited to ${IR_COMMENT_MAX} characters.` });
+    }
+
+    // OWNERSHIP THROUGH THE INCIDENT. The step id alone proves nothing — step
+    // ids are sequential across every tenant — so the step must belong to an
+    // incident in the caller's tenant, checked in the same statement.
+    const act = await pool.query(
+      `SELECT a.id, a.incident_id
+         FROM ir_activities a
+         JOIN ir_incidents i ON i.id = a.incident_id
+        WHERE a.id = $1 AND i.tenant_id = $2`,
+      [activityId, tenantId]
+    );
+    if (act.rows.length === 0) return res.status(404).json({ error: 'Activity not found.' });
+
+    try {
+      // The author comes from the session and never from the request body, so
+      // a comment cannot be posted under someone else's name.
+      const ins = await pool.query(
+        `WITH ins AS (
+           INSERT INTO ir_activity_comments (activity_id, incident_id, tenant_id, body, author_id)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, activity_id, body, created_at, author_id
+         )
+         SELECT ins.id, ins.activity_id, ins.body, ins.created_at, u.username AS author
+           FROM ins LEFT JOIN users u ON u.id = ins.author_id`,
+        [act.rows[0].id, act.rows[0].incident_id, tenantId, text, req.session.userId || null]
+      );
+      return res.json({ comment: ins.rows[0] });
+    } catch (err) {
+      if (err.code !== '42P01') throw err;
+      return res.status(503).json({
+        error: 'Step comments are not available yet — run db/migrate-ir-step-comments.sql.',
+      });
+    }
+  } catch (err) { return serverError(res, err); }
+});
+
 // ── Risk Register routes (tenant-scoped) ───────────────────────────────────
 
 function resolveRiskTenant(req, source) {

@@ -7,6 +7,25 @@ const IrTab = (() => {
   let _selectedId  = null;
   let _activities  = [];
 
+  // Step comments, keyed by activity id. Loaded once per incident with the
+  // steps themselves, so opening an incident is two requests rather than one
+  // per step.
+  let _comments = {};
+  // false when the server has not run migrate-ir-step-comments.sql. The threads
+  // are then hidden rather than shown empty, because an empty thread invites a
+  // comment the server will refuse.
+  let _commentsAvailable = true;
+  // true when the comments request itself failed (network, 500). Distinct from
+  // "not migrated": that is a known state and hides the threads quietly; this
+  // one is said out loud, because showing no comments on an incident that has
+  // them reads as nobody having written anything.
+  let _commentsLoadFailed = false;
+  // Which threads are open. Kept across re-renders — completing a step redraws
+  // the whole track, and a thread snapping shut mid-read is a small, constant
+  // irritation on the one screen used under pressure.
+  const _openThreads = new Set();
+  const COMMENT_MAX = 4000;
+
   function canWrite() { return isAdmin(); }
 
   function esc(s) {
@@ -71,6 +90,114 @@ const IrTab = (() => {
       .sort((a, b) => (PHASE_INDEX[a.phase] - PHASE_INDEX[b.phase]) || (a.sort_order - b.sort_order));
   }
 
+  // ── Step comments ──────────────────────────────────────────────────────────
+  // A thread on every step — done, current and upcoming alike. A note against a
+  // future step ("client asked us not to reset passwords until Monday") is as
+  // useful as one against a finished step, and often more.
+  //
+  // Append-only: there is no edit or delete, on the server or here. An incident
+  // record is evidence, and a correction is a later comment.
+
+  // Unsent text per step, so re-rendering the track (completing a step, opening
+  // another thread) does not throw away something half-typed.
+  const _drafts = {};
+
+  function commentsFor(activityId) { return _comments[activityId] || []; }
+
+  function renderStepComments(t) {
+    if (!_commentsAvailable) return '';
+
+    const list = commentsFor(t.id);
+    const writable = canWrite();
+
+    // Nothing written and nothing the viewer is allowed to write: render no
+    // affordance at all, rather than a "Comments (0)" toggle that opens onto an
+    // empty box they cannot type in.
+    if (!list.length && !writable) return '';
+
+    const open = _openThreads.has(t.id);
+    const label = list.length
+      ? `Comments (${list.length})`
+      : 'Add comment';
+
+    const toggle = `
+      <button type="button" class="ir-step-comments-toggle${list.length ? ' has-comments' : ''}"
+              data-id="${t.id}" aria-expanded="${open ? 'true' : 'false'}">${open ? '▾' : '▸'} ${label}</button>`;
+
+    if (!open) return `<div class="ir-step-comments">${toggle}</div>`;
+
+    const thread = list.length
+      ? list.map(c => `
+          <div class="ir-step-comment">
+            <div class="ir-step-comment-head">
+              <span class="ir-step-comment-author">${esc(c.author || 'Former user')}</span>
+              <span>${fmt(c.created_at)}</span>
+            </div>
+            <div class="ir-step-comment-body">${esc(c.body)}</div>
+          </div>`).join('')
+      : '<div class="ir-step-comment-empty">No comments on this step yet.</div>';
+
+    // The form is only for roles that can write. The server enforces this
+    // independently (pageGate requires WRITE for any POST under /api/ir); this
+    // just avoids offering a box that would be refused.
+    const form = writable ? `
+      <div class="ir-step-comment-form">
+        <textarea class="ir-step-comment-input" data-id="${t.id}" maxlength="${COMMENT_MAX}"
+                  placeholder="Add a comment…" aria-label="Comment on step">${esc(_drafts[t.id] || '')}</textarea>
+        <div class="ir-step-comment-error" data-id="${t.id}" role="alert"></div>
+        <button type="button" class="btn btn-sm btn-secondary ir-step-comment-post" data-id="${t.id}">Post</button>
+      </div>` : '';
+
+    return `
+      <div class="ir-step-comments">
+        ${toggle}
+        <div class="ir-step-thread">${thread}</div>
+        ${form}
+      </div>`;
+  }
+
+  /*
+   * NOT OPTIMISTIC. Every other write on this tab updates the screen first and
+   * rolls back on failure. A comment does not: on an evidence record, a note
+   * that appears, is read by a colleague, and then silently vanishes because
+   * the save failed is worse than one that takes a moment to appear. It is
+   * shown only once the server has stored it.
+   */
+  async function postStepComment(activityId) {
+    const input = document.querySelector(`.ir-step-comment-input[data-id="${activityId}"]`);
+    const errEl = document.querySelector(`.ir-step-comment-error[data-id="${activityId}"]`);
+    const btn   = document.querySelector(`.ir-step-comment-post[data-id="${activityId}"]`);
+    const showError = (msg) => { if (errEl) errEl.textContent = msg; };
+
+    const text = (input ? input.value : '').trim();
+    if (!text) { showError('Comment cannot be empty.'); return; }
+    if (text.length > COMMENT_MAX) { showError(`Comments are limited to ${COMMENT_MAX} characters.`); return; }
+
+    showError('');
+    if (btn) btn.disabled = true;
+
+    const body = { body: text };
+    const isSA = window.currentUser && window.currentUser.role === 'superadmin';
+    if (isSA && window.globalTenantId) body.tenantId = window.globalTenantId;
+
+    try {
+      const res = await fetch(`api/ir/activities/${activityId}/comments`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.comment) throw new Error(data.error || 'The comment could not be saved.');
+
+      (_comments[activityId] = _comments[activityId] || []).push(data.comment);
+      delete _drafts[activityId];
+      renderPlaybookTrack();
+    } catch (err) {
+      // The draft is kept — the text is still in the box, so nothing typed is lost.
+      showError(err.message || 'The comment could not be saved.');
+      if (btn) btn.disabled = false;
+    }
+  }
+
   function renderPlaybookTrack() {
     const heading = document.getElementById('ir-phase-board-heading');
     const track = document.getElementById('ir-playbook-track');
@@ -126,12 +253,51 @@ const IrTab = (() => {
             ${t.completed_at ? `<span>${fmt(t.completed_at)}</span>` : ''}
           </div>
           ${actionBtn}
+          ${renderStepComments(t)}
         </div>
       `;
     }).join('');
 
+    // A load failure is said once, above the track, rather than on every tile —
+    // and said at all, because silently showing no comments on an incident
+    // that has them reads as "nobody wrote anything".
+    if (_commentsLoadFailed) {
+      track.insertAdjacentHTML('afterbegin',
+        '<p class="ir-step-comment-error" style="flex:0 0 100%">Step comments could not be loaded — select the incident again to retry.</p>');
+    }
+
     track.querySelectorAll('.ir-playbook-complete-btn').forEach(btn => {
       btn.addEventListener('click', () => completeStep(parseInt(btn.dataset.id, 10)));
+    });
+
+    track.querySelectorAll('.ir-step-comments-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = parseInt(btn.dataset.id, 10);
+        const opening = !_openThreads.has(id);
+        if (opening) _openThreads.add(id); else _openThreads.delete(id);
+        renderPlaybookTrack();
+        if (opening && canWrite()) {
+          const box = track.querySelector(`.ir-step-comment-input[data-id="${id}"]`);
+          if (box) box.focus();
+        }
+      });
+    });
+
+    track.querySelectorAll('.ir-step-comment-input').forEach(box => {
+      const id = parseInt(box.dataset.id, 10);
+      box.addEventListener('input', () => { _drafts[id] = box.value; });
+      // Ctrl/Cmd+Enter posts; a plain Enter is a new line, because a recipient
+      // list or a timeline is exactly what gets pasted here.
+      box.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+          ev.preventDefault();
+          postStepComment(id);
+        }
+      });
+    });
+
+    track.querySelectorAll('.ir-step-comment-post').forEach(btn => {
+      btn.addEventListener('click', () => postStepComment(parseInt(btn.dataset.id, 10)));
     });
   }
 
@@ -283,12 +449,47 @@ const IrTab = (() => {
   // ── Incident selection ─────────────────────────────────────────────────────
 
   async function selectIncident(id) {
+    const switching = _selectedId !== id;
     _selectedId = id;
     renderIncidentsTable();
 
-    const res = await fetch(`api/ir/incidents/${id}/activities` + tenantParam('?'), { credentials: 'same-origin' });
+    // Open threads and drafts belong to the incident they were opened on.
+    if (switching) {
+      _openThreads.clear();
+      Object.keys(_drafts).forEach(k => { delete _drafts[k]; });
+    }
+
+    // Steps and their comments together. The comments request is allowed to
+    // fail on its own: a broken thread must never stop the playbook loading.
+    const [res, comRes] = await Promise.all([
+      fetch(`api/ir/incidents/${id}/activities` + tenantParam('?'), { credentials: 'same-origin' }),
+      fetch(`api/ir/incidents/${id}/comments` + tenantParam('?'), { credentials: 'same-origin' })
+        .catch(() => null),
+    ]);
+
+    // Clicking a second incident before the first has loaded would otherwise
+    // let the first incident's steps and comments land on the second's board.
+    if (_selectedId !== id) return;
+
     const data = await res.json();
     _activities = data.activities || [];
+
+    _comments = {};
+    _commentsAvailable = true;
+    _commentsLoadFailed = false;
+    try {
+      if (!comRes || !comRes.ok) throw new Error('comments request failed');
+      const c = await comRes.json();
+      if (_selectedId !== id) return;
+      _commentsAvailable = c.available !== false;
+      (c.comments || []).forEach((cm) => {
+        (_comments[cm.activity_id] = _comments[cm.activity_id] || []).push(cm);
+      });
+    } catch (_) {
+      _commentsAvailable = false;
+      _commentsLoadFailed = true;
+    }
+
     renderPlaybookTrack();
   }
 
@@ -364,7 +565,24 @@ const IrTab = (() => {
     renderPlaybookTrack();
   }
 
-  return { loadAndRender };
+  return {
+    loadAndRender,
+    // Test seams. The thread is client-authored text rendered onto a staff
+    // page, so its escaping is asserted by rendering it rather than by grepping
+    // for esc() — a grep passes just as well when the call has been removed from
+    // the one place it mattered.
+    _renderStepComments: renderStepComments,
+    _setState(s) {
+      const st = s || {};
+      _commentsAvailable = st.available !== false;
+      _comments = {};
+      (st.comments || []).forEach((cm) => {
+        (_comments[cm.activity_id] = _comments[cm.activity_id] || []).push(cm);
+      });
+      _openThreads.clear();
+      (st.open || []).forEach(id => _openThreads.add(id));
+    },
+  };
 })();
 
 window.IrTab = IrTab;
