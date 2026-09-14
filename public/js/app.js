@@ -57,7 +57,7 @@
     ndr:        'Managed NDR',
     o365:       'Managed Identity',
     email:      'Managed Email Security',
-    'mdr-pricing': 'MDR Pricing',
+    'mdr-pricing': 'Pricing',
     reports:    'Reports',
     training:   'Training',
     firewall:   'Firewall Audit',
@@ -177,8 +177,10 @@
     if (target === 'email' && typeof window.EmailTab !== 'undefined') {
       window.EmailTab.loadAndRender();
     }
-    if (target === 'mdr-pricing' && typeof window.MdrPricingTab !== 'undefined') {
-      window.MdrPricingTab.loadAndRender();
+    // The Pricing page (key still 'mdr-pricing') is a shell over two
+    // calculators; it decides which sub-tab to show and renders that one.
+    if (target === 'mdr-pricing' && typeof window.PricingTab !== 'undefined') {
+      window.PricingTab.loadAndRender();
     }
     if (target === 'reports' && typeof window.ReportsTab !== 'undefined') {
       window.ReportsTab.loadAndRender();

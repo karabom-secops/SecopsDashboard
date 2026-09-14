@@ -215,7 +215,7 @@
              aria-labelledby="grp-business-btn" hidden>
           <button class="side-nav-item" type="button" data-tab="mdr-pricing" hidden>
             <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-            <span class="side-nav-text">MDR Pricing</span>
+            <span class="side-nav-text">Pricing</span>
           </button>
           <button class="side-nav-item" type="button" data-tab="reports" hidden>
             <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
@@ -1534,8 +1534,18 @@
 
   <!-- ── MDR Pricing Tab Panel ───────────────────────────────────────────── -->
   <section id="tab-mdr-pricing" class="tab-panel" role="tabpanel" hidden>
+    <!-- One Pricing page, two calculators. The panel id and the page key stay
+         "mdr-pricing": per-user page grants are stored against that key, and
+         renaming it would silently revoke Pricing from everyone who has it. -->
     <div class="section-header">
-      <h2 class="section-title">MDR Pricing</h2>
+      <h2 class="section-title">Pricing</h2>
+    </div>
+
+    <!-- Sub-tab bar, built by tab-pricing.js with the Admin sub-tab styling. -->
+    <div id="pricingSubtabs" class="pricing-subtabs" role="tablist" aria-label="Pricing calculators"></div>
+
+    <div id="pricingPane-mdr" class="pricing-pane" role="tabpanel" aria-labelledby="pricingSubtab-mdr">
+    <div class="pricing-pane-actions">
       <button class="btn btn-secondary" id="mdrp-reset-rates" type="button">Reset List Prices to Defaults</button>
     </div>
 
@@ -1615,6 +1625,10 @@
         <div id="mdrp-summary" class="stat-grid" style="flex:2 1 400px; min-width:300px;"></div>
       </div>
     </form>
+    </div><!-- /pricingPane-mdr -->
+
+    <!-- vISO calculator. Rendered by tab-viso-pricing.js on first open. -->
+    <div id="pricingPane-viso" class="pricing-pane" role="tabpanel" aria-labelledby="pricingSubtab-viso" hidden></div>
   </section>
 
   <!-- ── Managed EDR Tab Panel ───────────────────────────────────────────── -->
@@ -2375,6 +2389,9 @@
   <script src="js/tab-third-party-risk.js"></script>
   <script src="js/tab-remediation-tracker.js"></script>
   <script src="js/tab-mdr-pricing.js"></script>
+  <script src="js/tab-viso-pricing.js"></script>
+  <!-- The Pricing page shell. Renders whichever calculator above is selected. -->
+  <script src="js/tab-pricing.js"></script>
   <script src="js/tab-edr.js"></script>
   <script src="js/wazuh-ui.js"></script>
   <script src="js/tab-ndr.js"></script>
