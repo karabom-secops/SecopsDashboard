@@ -105,6 +105,7 @@ const VisoPricingTab = (() => {
     { key: 'ndr',       label: 'Managed NDR',      includedIn: 'mdr' },
     { key: 'identity',  label: 'Managed Identity', includedIn: 'mdr' },
     { key: 'email',     label: 'Managed Email Security' },
+    { key: 'ai_visibility', label: 'AI Visibility' },
     { key: 'pentest',   label: 'Penetration Testing' },
     { key: 'firewall',  label: 'Firewall Configuration Review' },
   ];

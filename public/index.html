@@ -138,6 +138,10 @@
             <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 6 10-6"/></svg>
             <span class="side-nav-text">Managed Email Security</span>
           </button>
+          <button class="side-nav-item" type="button" data-tab="ai-visibility" hidden>
+            <svg class="side-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>
+            <span class="side-nav-text">AI Visibility</span>
+          </button>
         </div>
       </div>
       <div class="side-nav-group" data-group="threat">
@@ -1853,6 +1857,73 @@
     </div>
   </section>
 
+  <!-- ── AI Visibility Tab Panel ─────────────────────────────────────────── -->
+  <section id="tab-ai-visibility" class="tab-panel" role="tabpanel" hidden>
+    <div class="section-header">
+      <h2 class="section-title">AI Visibility</h2>
+      <p class="section-subtitle">Generative AI use seen in DNSFilter — which tools, who uses them, what is blocked, and whether each tool is sanctioned</p>
+    </div>
+
+    <div class="edr-toolbar">
+      <label class="edr-field">
+        <span>Reporting period</span>
+        <select id="ai-range" class="form-input">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="180">Last 6 months</option>
+        </select>
+      </label>
+      <div class="edr-toolbar-spacer"></div>
+      <span id="ai-sync-meta" class="edr-sync-meta"></span>
+      <button type="button" class="btn btn-sm" id="ai-refresh-btn">Refresh</button>
+      <button type="button" class="btn btn-sm btn-primary" id="ai-sync-btn" data-admin-only>Sync Now</button>
+    </div>
+
+    <div id="ai-banner" class="wz-banner" hidden></div>
+
+    <div id="ai-empty" class="edr-empty" hidden>
+      <p><strong>No AI usage data yet.</strong></p>
+      <p>Configure DNSFilter under Admin → Integrations.</p>
+    </div>
+
+    <div id="ai-content" hidden>
+      <div id="ai-stats" class="stat-grid"></div>
+
+      <div class="edr-grid-2">
+        <div class="admin-card">
+          <h3 class="secure-score-section-title">AI Lookups Over Time</h3>
+          <div id="ai-trend-panel"><div class="edr-chart-wrap"><canvas id="ai-trend-chart"></canvas></div></div>
+        </div>
+        <div class="admin-card">
+          <h3 class="secure-score-section-title">DNSFilter Policy</h3>
+          <div id="ai-policy-panel">
+            <table class="data-table" id="ai-policy-table"><thead><tr><th>Policy</th><th>Generative AI</th><th>Mode</th></tr></thead><tbody></tbody></table>
+          </div>
+        </div>
+      </div>
+
+      <div class="admin-card">
+        <h3 class="secure-score-section-title">AI Tools</h3>
+        <div id="ai-apps-panel" class="edr-table-scroll">
+          <table class="data-table" id="ai-apps-table">
+            <thead><tr><th>Tool</th><th>Status</th><th>Lookups</th><th>Allowed</th><th>Blocked</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="admin-card">
+        <h3 class="secure-score-section-title">Top Users of AI Tools</h3>
+        <div id="ai-users-panel" class="edr-table-scroll">
+          <table class="data-table" id="ai-users-table"><thead><tr><th>User / Device</th><th>Lookups</th><th>Main Tools</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+
+      <p id="ai-source-note" class="wz-source-note"></p>
+    </div>
+  </section>
+
   <!-- ── Managed Identity Tab Panel ──────────────────────────────────────── -->
   <section id="tab-o365" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
@@ -2401,6 +2472,7 @@
   <script src="js/wazuh-ui.js"></script>
   <script src="js/tab-ndr.js"></script>
   <script src="js/tab-o365.js"></script>
+  <script src="js/tab-ai-visibility.js"></script>
   <script src="js/report-deck.js"></script>
   <script src="js/report-sections.js"></script>
   <script src="js/tab-reports.js"></script>

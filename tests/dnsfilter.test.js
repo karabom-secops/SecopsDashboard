@@ -1,0 +1,522 @@
+'use strict';
+
+/**
+ * AI Visibility — DNSFilter telemetry, the sanctioned-app register, and the
+ * board section.
+ *
+ * Driven against a simulated DNSFilter API that answers the way the published
+ * v1 description says it does, and an in-memory stand-in for the rollup tables
+ * that rejects what Postgres would reject.
+ *
+ * THE PROPERTIES PROTECTED HERE
+ *
+ *   one key, many clients        the organisation id is validated, sent on every
+ *                                traffic report, and verified by Test; a sync
+ *                                against an unverified organisation is refused;
+ *                                a save cannot smuggle verification in
+ *   the MSP key stays put        superadmin-only routes; never returned by GET;
+ *                                the adapter only ever issues GET
+ *   not recorded is not none     an unreadable report is unavailable with a
+ *                                reason, never zero; an unreviewed tool is never
+ *                                sanctioned; a share over part of the period is
+ *                                not shown
+ *   re-collection is honest      a panel read empty clears yesterday's run; a
+ *                                panel that failed keeps it
+ *   names stay staff-side        the board section never prints a user; the
+ *                                portal has no route
+ *
+ *   node tests/dnsfilter.test.js <repoRoot>
+ */
+
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const ROOT = process.argv[2] || path.join(__dirname, '..');
+const { createChecker } = require('./helpers/check');
+
+const { check, section, done } = createChecker('dnsfilter');
+
+const DNS = require(path.join(ROOT, 'lib', 'integrations', 'dnsfilter.js'));
+const DM  = require(path.join(ROOT, 'lib', 'dnsfilter-metrics.js'));
+const AV  = require(path.join(ROOT, 'lib', 'ai-visibility.js'));
+const PAGES = require(path.join(ROOT, 'lib', 'pages.js'));
+const SERVICES = require(path.join(ROOT, 'lib', 'services.js'));
+
+function codeOnly(src) {
+  return String(src)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');
+}
+const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+
+// ── A simulated DNSFilter ───────────────────────────────────────────────────
+
+const res = (attrs, id) => ({ id: String(id), type: 'x', attributes: attrs });
+
+function fakeDns(over) {
+  const o = Object.assign({ bearer: false, rateLimitOnce: false, fail: {}, override: {} }, over || {});
+  const log = [];
+  const sleeps = [];
+  let limited = o.rateLimitOnce ? 1 : 0;
+
+  async function transport(cfg, url, headers) {
+    const u = new URL(url);
+    const p = u.pathname;
+    const q = {};
+    u.searchParams.forEach((v, k) => { q[k] = v; });
+    log.push({ path: p, q, auth: headers.Authorization, url });
+    const ok = json => ({ status: 200, json, headers: {} });
+
+    if (o.bearer && !/^Bearer /.test(headers.Authorization)) return { status: 401, json: { error: 'unauthorised' }, headers: {} };
+    if (limited > 0) { limited--; return { status: 429, json: null, headers: { 'retry-after': '3' } }; }
+    if (o.fail[p]) return { status: o.fail[p], json: { error: 'boom' }, headers: {} };
+    if (o.override[p]) return ok(o.override[p](q));
+
+    switch (p) {
+      case '/v1/organizations/all':
+        return ok({ data: [res({ name: 'Client A' }, 101), res({ name: 'Client B' }, 202)], links: { next: null } });
+      case '/v1/categories/all':
+        return ok({ data: [res({ name: 'Adult' }, 5), res({ name: 'Generative AI' }, 77)] });
+      case '/v1/application_categories':
+        return ok({ data: [res({ name: 'Generative AI' }, 9), res({ name: 'Games' }, 3)] });
+      case '/v1/applications/all':
+        return ok({ data: [
+          res({ name: 'chatgpt', display_name: 'ChatGPT', home_page_url: 'https://chat.openai.com' }, 31),
+          res({ name: 'claude', display_name: 'Claude', home_page_url: 'https://claude.ai' }, 32),
+        ] });
+      case '/v1/traffic_reports/total_categories':
+        return ok({ data: { values: [{ time: '2026-09-01T00:00:00Z', categories: [
+          { category_id: 77, category_name: 'Generative AI', total: q.type === 'blocked' ? 30 : 120 },
+          { category_id: 5, category_name: 'Adult', total: 40 },
+        ] }] } });
+      case '/v1/traffic_reports/total_requests':
+        return ok({ data: { values: [{ time: '2026-09-01T00:00:00Z', total: 10000 }] } });
+      case '/v1/traffic_reports/total_domains':
+        return ok({ data: q.type === 'blocked'
+          ? [{ domain: 'claude.ai', total: 30 }]
+          : [{ domain: 'chat.openai.com', total: 80 }, { domain: 'api.openai.com', total: 20 }, { domain: 'unknown-ai.io', total: 20 }] });
+      case '/v1/traffic_reports/total_domains_users':
+        return ok({ data: [
+          { user_name: 'alice@client.example', domain: 'chat.openai.com', total: 50 },
+          { user_name: 'bob@client.example', domain: 'claude.ai', total: 10 },
+        ] });
+      case '/v1/policies/all':
+        return ok({ data: [
+          res({ name: 'Default', organization_id: 101, blacklist_categories: [77, 5], allow_list_only: false }, 1),
+          res({ name: 'Someone else', organization_id: 202, blacklist_categories: [] }, 2),
+        ] });
+      default:
+        return { status: 404, json: { error: 'nope' }, headers: {} };
+    }
+  }
+  return { transport, log, sleeps, sleep: ms => { sleeps.push(ms); return Promise.resolve(); } };
+}
+
+function cfgFor(f, extra) {
+  return Object.assign({
+    api_key: 'k-msp', organization_id: '101', aiCategoryId: '77', timeZone: 'UTC',
+    transport: f.transport, sleep: f.sleep,
+  }, extra || {});
+}
+
+// ── An in-memory rollup store ───────────────────────────────────────────────
+
+function fakePool() {
+  let metrics = [];
+  const runs = new Map();
+
+  async function query(sql, params) {
+    const s = sql.replace(/\s+/g, ' ').trim();
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(s)) return { rows: [] };
+
+    if (s.startsWith('DELETE FROM wazuh_daily_metric')) {
+      const [iid, day, source, ms] = params;
+      metrics = metrics.filter(r => !(r.integration_id === iid && r.day === day && r.source === source && ms.indexOf(r.metric) >= 0));
+      return { rows: [] };
+    }
+    if (s.startsWith('INSERT INTO wazuh_daily_metric')) {
+      const [tids, iids, days, sources, ms, d1, d2, d3, v, v2, meta] = params;
+      const seen = new Set();
+      ms.forEach((metric, i) => {
+        const key = [iids[i], days[i], sources[i], metric, d1[i], d2[i], d3[i]].join('|');
+        // Postgres refuses to upsert the same key twice in one statement.
+        if (seen.has(key)) throw new Error('ON CONFLICT DO UPDATE command cannot affect row a second time: ' + key);
+        seen.add(key);
+        metrics = metrics.filter(r => [r.integration_id, r.day, r.source, r.metric, r.dim1, r.dim2, r.dim3].join('|') !== key);
+        metrics.push({
+          tenant_id: tids[i], integration_id: iids[i], day: days[i], source: sources[i], metric,
+          dim1: d1[i], dim2: d2[i], dim3: d3[i], value: v[i], value2: v2[i], meta: meta[i] ? JSON.parse(meta[i]) : null,
+        });
+      });
+      return { rows: [] };
+    }
+    if (s.startsWith('INSERT INTO wazuh_rollup_run')) {
+      const [iid, day, source, status, message] = params;
+      runs.set(`${iid}|${day}|${source}`, { day, source, status, message });
+      return { rows: [] };
+    }
+    if (s.includes('FROM wazuh_rollup_run')) {
+      const [iid, source] = params;
+      return { rows: [...runs.entries()].filter(([k]) => k.startsWith(`${iid}|`) && k.endsWith(`|${source}`)).map(([, r]) => r) };
+    }
+    if (s.includes('FROM wazuh_daily_metric')) {
+      const [tid, source, , iid] = params;
+      return { rows: metrics.filter(r => r.tenant_id === tid && r.source === source && (iid == null || r.integration_id === iid)) };
+    }
+    throw new Error('unexpected SQL: ' + s.slice(0, 80));
+  }
+  return { query, connect: async () => ({ query, release() {} }), runs, get metrics() { return metrics; } };
+}
+
+const NOW = Date.parse('2026-09-15T12:00:00Z');
+
+(async () => {
+  // ══ The adapter ═══════════════════════════════════════════════════════════
+
+  section('the organisation id is the only thing between clients');
+
+  const badIds = ['', '12a', '101;DROP', '1 01', null, '1234567890123'];
+  check('a malformed organisation id is refused before any request',
+    badIds.every((id) => { try { DNS.validOrgId(id); return false; } catch (_) { return true; } }), badIds.join(' | '));
+  check('a numeric id is accepted', DNS.validOrgId(' 101 ') === '101');
+
+  DNS._clearCatalogueCache();
+  const f1 = fakeDns();
+  const day1 = await DNS.fetchAiDay(cfgFor(f1), '2026-09-01', { now: NOW });
+  const reports = f1.log.filter(l => l.path.indexOf('/v1/traffic_reports/') === 0);
+  check('every traffic report is scoped to this organisation',
+    reports.length >= 6 && reports.every(l => l.q.organization_ids === '101'),
+    `${reports.length} report calls`);
+  check('and the policy read is too',
+    f1.log.filter(l => l.path === '/v1/policies/all').every(l => l.q.organization_id === '101'));
+  check('the day window is the client-local day',
+    reports[0].q.from === '2026-09-01T00:00:00.000Z' && reports[0].q.to === '2026-09-02T00:00:00.000Z',
+    `${reports[0].q.from} → ${reports[0].q.to}`);
+
+  const t1 = await DNS.testConnection(cfgFor(fakeDns()));
+  check('Test names the organisation it verified', t1.orgId === '101' && t1.orgName === 'Client A', t1.message);
+
+  let unseen = null;
+  try { await DNS.testConnection(cfgFor(fakeDns(), { organization_id: '999' })); } catch (err) { unseen = err; }
+  check('an organisation the key cannot see fails Test', !!(unseen && unseen.orgNotFound), unseen && unseen.message);
+
+  const msp = await DNS.testMspConnection({ api_key: 'k-msp', transport: fakeDns().transport });
+  check('the MSP Test lists organisations and finds the AI category by name',
+    msp.organisations.length === 2 && msp.aiCategory && msp.aiCategory.id === '77', msp.message);
+
+  section('the key and the transport');
+
+  check('the key is sent as the raw Authorization value first', f1.log[0].auth === 'k-msp', f1.log[0].auth);
+
+  const fb = fakeDns({ bearer: true });
+  const bearerOrgs = await DNS.listOrganisations({ api_key: 'k-msp', transport: fb.transport });
+  check('a 401 is retried once as Bearer, and Bearer is kept for the run',
+    bearerOrgs.length === 2 && fb.log.length === 2 && /^Bearer k-msp$/.test(fb.log[1].auth),
+    fb.log.map(l => l.auth).join(' then '));
+
+  const fr = fakeDns({ rateLimitOnce: true });
+  await DNS.listOrganisations({ api_key: 'k-msp', transport: fr.transport, sleep: fr.sleep });
+  check('a 429 waits for Retry-After, then retries', fr.sleeps.length === 1 && fr.sleeps[0] === 3000, fr.sleeps.join(','));
+
+  const paged = fakeDns({ override: { '/v1/organizations/all': q => ({
+    data: Array.from({ length: q['page[number]'] === '1' ? 100 : 5 }, (_, i) => res({ name: `Org ${q['page[number]']}-${i}` }, `${q['page[number]']}${i}`)),
+    links: { next: q['page[number]'] === '1' ? '/next' : null },
+  }) } });
+  const many = await DNS.listOrganisations({ api_key: 'k-msp', transport: paged.transport });
+  check('pagination follows every page', many.length === 105, many.length);
+
+  const srcCode = codeOnly(read('lib', 'integrations', 'dnsfilter.js'));
+  check('the adapter only ever issues GET',
+    /method:\s*'GET'/.test(srcCode) && !/method:\s*['"](POST|PUT|PATCH|DELETE)['"]/i.test(srcCode) &&
+    !/\.(post|put|patch|delete)\s*\(/.test(srcCode));
+  check('stored config cannot install a transport or an auth scheme',
+    (() => { const c = DNS.sanitiseStoredConfig({ transport() {}, sleep() {}, _authScheme: 'bearer', organization_id: '1' });
+      return !c.transport && !c.sleep && !c._authScheme && c.organization_id === '1'; })());
+
+  section('usage, tools, users and policy read correctly');
+
+  check('AI lookups allowed and blocked come from the AI category only',
+    day1.usage.available && day1.usage.data.allowed === 120 && day1.usage.data.blocked === 30,
+    JSON.stringify(day1.usage.data));
+  check('all DNS lookups are read as the denominator', day1.usage.data.total === 10000);
+
+  const apps = day1.apps.data.rows;
+  const chatgpt = apps.find(a => a.key === 'app:31');
+  check('domains map to the application they belong to',
+    chatgpt && chatgpt.name === 'ChatGPT' && chatgpt.allowed === 100 && chatgpt.mapped, JSON.stringify(chatgpt));
+  const claude = apps.find(a => a.key === 'app:32');
+  check('blocked lookups are attributed too', claude && claude.blocked === 30 && claude.allowed === 0);
+  const other = apps.find(a => a.key === 'domain:unknown-ai.io');
+  check('a domain with no catalogue entry is kept under its own name, not dropped',
+    other && other.allowed === 20 && other.mapped === false, JSON.stringify(other));
+
+  const alice = day1.users.data.rows.find(r => r.user === 'alice@client.example');
+  check('users are read with the tool they used', alice && alice.count === 50 && alice.appKey === 'app:31');
+
+  check('policy status shows whether Generative AI is blocked',
+    day1.policy.data.rows.length === 1 && day1.policy.data.rows[0].aiBlocked === true,
+    JSON.stringify(day1.policy.data.rows));
+  check('a policy belonging to another organisation is not shown',
+    !day1.policy.data.rows.some(r => r.name === 'Someone else'));
+
+  check('registered domains respect two-level suffixes',
+    DNS.registeredDomain('x.example.co.za') === 'example.co.za' && DNS.registeredDomain('chat.openai.com') === 'openai.com');
+
+  section('what cannot be read is unavailable, never zero');
+
+  DNS._clearCatalogueCache();
+  const noCat = await DNS.fetchAiDay(cfgFor(fakeDns(), { aiCategoryId: null }), '2026-09-01', { now: NOW });
+  check('without the AI category, usage, tools and users are unavailable with that reason',
+    ['usage', 'apps', 'users'].every(k => !noCat[k].available && noCat[k].reason === 'category_unknown'));
+  check('policy is still read', noCat.policy.available);
+
+  DNS._clearCatalogueCache();
+  const weird = await DNS.fetchAiDay(cfgFor(fakeDns({ override: {
+    '/v1/traffic_reports/total_categories': () => ({ data: { layout: 'unexpected' } }),
+  } })), '2026-09-01', { now: NOW });
+  check('an unrecognised report shape is unavailable, not zero',
+    !weird.usage.available && weird.usage.reason === 'unrecognised_response', JSON.stringify(weird.usage));
+  check('and the other panels still arrive', weird.apps.available && weird.users.available);
+
+  DNS._clearCatalogueCache();
+  const empty = await DNS.fetchAiDay(cfgFor(fakeDns({ override: {
+    '/v1/traffic_reports/total_categories': () => ({ data: [] }),
+  } })), '2026-09-01', { now: NOW });
+  check('an empty report IS zero — nothing happened',
+    empty.usage.available && empty.usage.data.allowed === 0 && empty.usage.data.blocked === 0);
+
+  DNS._clearCatalogueCache();
+  const noTotal = await DNS.fetchAiDay(cfgFor(fakeDns({ fail: { '/v1/traffic_reports/total_requests': 500 } })), '2026-09-01', { now: NOW });
+  check('a missing denominator leaves the counts but not the total',
+    noTotal.usage.available && noTotal.usage.data.total === null && noTotal.usage.data.totalReason === 'query_error');
+
+  DNS._clearCatalogueCache();
+  const forbidden = await DNS.fetchAiDay(cfgFor(fakeDns({ fail: { '/v1/traffic_reports/total_domains_users': 403 } })), '2026-09-01', { now: NOW });
+  check('a refused report says not permitted', !forbidden.users.available && forbidden.users.reason === 'not_permitted');
+
+  // ══ Rollups ═══════════════════════════════════════════════════════════════
+
+  section('flatten → store → rebuild');
+
+  const integ = f => ({ id: 7, tenant_id: 3, base_url: DNS.DEFAULT_BASE, api_key: 'k-msp',
+    config: { organization_id: '101', aiCategoryId: '77', timeZone: 'UTC', transport: 'stored-junk' },
+  });
+
+  DNS._clearCatalogueCache();
+  const pool = fakePool();
+  const fStore = fakeDns();
+  const snap = await DM.snapshotDay(pool, integ(), '2026-09-01', { now: NOW, cfg: { transport: fStore.transport, sleep: fStore.sleep } });
+  check('an older complete day is stored as ok', snap.status === 'ok', `${snap.status} (${snap.rows} rows)`);
+
+  const back = await DM.aiFromRollups(pool, 3, 30, 7);
+  check('usage rebuilds', back.usage.available && back.usage.data.allowed === 120 && back.usage.data.blocked === 30);
+  check('the AI share of all DNS is computed', back.usage.data.sharePct === 1.5, back.usage.data.sharePct);
+  check('tools rebuild with their names',
+    back.apps.data.rows.length === 3 && back.apps.data.rows[0].name === 'ChatGPT', back.apps.data.rows.map(r => r.name).join(', '));
+  check('users rebuild with their main tools',
+    back.users.data.rows[0].user === 'alice@client.example' && back.users.data.rows[0].apps[0].name === 'ChatGPT');
+  check('policy rebuilds', back.policy.data.rows[0].aiBlocked === true && back.policy.data.asOf === '2026-09-01');
+  check('rows are scoped to the integration they were written for',
+    (await DM.aiFromRollups(pool, 3, 30, 8)).usage.reason === 'no_data_in_range');
+
+  DNS._clearCatalogueCache();
+  const todaySnap = await DM.snapshotDay(pool, integ(), '2026-09-15', { now: NOW, cfg: { transport: fakeDns().transport } });
+  check('today is stored as partial_day, so it is collected again', todaySnap.status === 'partial_day', todaySnap.status);
+
+  section('re-collecting a day is honest in both directions');
+
+  /*
+   * Its own store, holding ONE day. The first version of these checks shared
+   * the store above, which also held today's snapshot — so "the figures are
+   * still there" passed on today's rows whatever happened to the re-collected
+   * day, and "the figures are gone" could never pass at all.
+   */
+  const poolR = fakePool();
+  DNS._clearCatalogueCache();
+  await DM.snapshotDay(poolR, integ(), '2026-09-01', { now: NOW, cfg: { transport: fakeDns().transport } });
+  const seeded = await DM.aiFromRollups(poolR, 3, 30, 7);
+  check('the re-collection store starts with one day of tools', seeded.apps.data.rows.length === 3);
+
+  DNS._clearCatalogueCache();
+  await DM.snapshotDay(poolR, integ(), '2026-09-01', { now: NOW, cfg: { transport: fakeDns({
+    fail: { '/v1/traffic_reports/total_domains': 500 },
+  }).transport } });
+  const kept = await DM.aiFromRollups(poolR, 3, 30, 7);
+  check('a panel that failed on re-collection keeps the figures an earlier run stored',
+    kept.apps.available && kept.apps.data.rows.length === 3, kept.apps.data && kept.apps.data.rows.length);
+  check('and says a day could not be read', kept.apps.data.unavailableOnSomeDays === 'query_error');
+
+  DNS._clearCatalogueCache();
+  await DM.snapshotDay(poolR, integ(), '2026-09-01', { now: NOW, cfg: { transport: fakeDns({ override: {
+    '/v1/traffic_reports/total_domains': () => ({ data: [] }),
+  } }).transport } });
+  const cleared = await DM.aiFromRollups(poolR, 3, 30, 7);
+  check('a panel READ as empty clears what the earlier run stored',
+    cleared.apps.reason === 'no_data_in_range' && cleared.apps.data.rows.length === 0,
+    cleared.apps.data && cleared.apps.data.rows.map(r => r.name).join(','));
+  check('and the earlier "not read" note is gone with it', !cleared.apps.data.unavailableOnSomeDays);
+
+  const pool2 = fakePool();
+  DNS._clearCatalogueCache();
+  await DM.snapshotDay(pool2, integ(), '2026-09-01', { now: NOW, cfg: { transport: fakeDns().transport } });
+  DNS._clearCatalogueCache();
+  await DM.snapshotDay(pool2, integ(), '2026-09-02', { now: NOW, cfg: { transport: fakeDns({ fail: { '/v1/traffic_reports/total_requests': 500 } }).transport } });
+  const partialShare = await DM.aiFromRollups(pool2, 3, 30, 7);
+  check('a share over only some of the days is not shown',
+    partialShare.usage.data.sharePct === null && partialShare.usage.data.allowed === 240, JSON.stringify(partialShare.usage.data.totalReason));
+
+  const pool3 = fakePool();
+  DNS._clearCatalogueCache();
+  const noCatInteg = integ();
+  noCatInteg.config.aiCategoryId = null;
+  await DM.snapshotDay(pool3, noCatInteg, '2026-09-01', { now: NOW, cfg: { transport: fakeDns().transport } });
+  const noCatBack = await DM.aiFromRollups(pool3, 3, 30, 7);
+  check('a reason stored for a day survives into the screen',
+    !noCatBack.usage.available && noCatBack.usage.reason === 'category_unknown', JSON.stringify(noCatBack.usage));
+
+  const dupBag = DM.flattenAi({
+    usage: { available: false, reason: 'category_unknown' }, apps: { available: false, reason: 'category_unknown' },
+    users: { available: false, reason: 'category_unknown' },
+    policy: { available: true, data: { rows: [
+      { name: 'Default', aiBlocked: false, allowListOnly: false },
+      { name: 'Default', aiBlocked: true, allowListOnly: false },
+    ] } },
+  });
+  const pol = dupBag.rows.filter(r => r.metric === 'ai.policy');
+  check('two policies with one name store once, and a block is never hidden by the merge',
+    pol.length === 1 && pol[0].dim2 === 'blocked', JSON.stringify(pol));
+
+  const days = await DM.daysNeedingSnapshot(pool, 7, 'UTC', new Date(NOW));
+  check('today and yesterday are always re-collected, capped per run',
+    days[0] === '2026-09-15' && days[1] === '2026-09-14' && days.length === DM.MAX_DAYS_PER_RUN, days.join(', '));
+
+  // ══ The sanctioned-app register ═══════════════════════════════════════════
+
+  section('an unreviewed tool is not a sanctioned one');
+
+  check('only the three statuses are accepted',
+    !AV.validateDecision({ status: 'approved' }).ok && !AV.validateDecision({}).ok &&
+    AV.validateDecision({ status: 'under_review' }).ok);
+  check('an over-long note is refused', !AV.validateDecision({ status: 'sanctioned', note: 'x'.repeat(1001) }).ok);
+  check('application keys are only the shapes the adapter produces',
+    AV.validAppKey('app:31') && AV.validAppKey('domain:openai.com') &&
+    !AV.validAppKey('app:../31') && !AV.validAppKey('APP:31') && !AV.validAppKey('openai.com') && !AV.validAppKey(''));
+
+  const annotated = AV.annotateApps([
+    { key: 'app:31', name: 'ChatGPT', allowed: 100, blocked: 0 },
+    { key: 'app:32', name: 'Claude', allowed: 0, blocked: 30 },
+    { key: 'domain:x.io', name: 'x.io', allowed: 5, blocked: 0 },
+  ], new Map([['app:31', { status: 'unsanctioned' }], ['app:32', { status: 'unsanctioned' }]]));
+  check('a tool with no decision is unreviewed', annotated.rows[2].status === 'unreviewed' && annotated.unreviewedCount === 1);
+  check('allowed traffic to an unsanctioned tool is shadow AI', annotated.rows[0].shadow === true);
+  check('blocked-only traffic to one is the policy working, not shadow AI', annotated.rows[1].shadow === false);
+  check('so the shadow count is one', annotated.shadowCount === 1 && annotated.sanctionedCount === 0);
+
+  // ══ Server wiring ═════════════════════════════════════════════════════════
+
+  section('the server keeps clients and the MSP key apart');
+
+  const srv = codeOnly(read('server.js'));
+  check('the provider is known', /DNSFILTER_PROVIDER = 'dnsfilter'/.test(srv) && /KNOWN_PROVIDERS[^;]*DNSFILTER_PROVIDER/.test(srv));
+
+  const syncFn = srv.slice(srv.indexOf('async function runDnsFilterSync'), srv.indexOf("app.post('/api/integrations/:provider/sync'"));
+  check('sync refuses an organisation Test has not verified',
+    /!conf\.verified_org_id \|\| String\(conf\.verified_org_id\) !== String\(conf\.organization_id\)/.test(syncFn) &&
+    syncFn.indexOf('verified_org_id') < syncFn.indexOf('daysNeedingSnapshot'));
+  check('Sync Now reaches it', /provider === DNSFILTER_PROVIDER\) result = await runDnsFilterSync/.test(srv));
+  check('the hourly collection does not run under test',
+    /NODE_ENV !== 'test'\) \{\s*setTimeout\(\(\) => \{ runDnsFilterSyncs/.test(srv));
+
+  const saveFn = srv.slice(srv.indexOf('async function saveDnsFilterIntegration'), srv.indexOf('async function testDnsFilterIntegration'));
+  check('a save builds config from an allowlist, so verification cannot be sent in',
+    /const next = \{ organization_id: orgId, timeZone: tz \}/.test(saveFn) &&
+    !/\.\.\.c\b|\.\.\.configJson|assign\([^)]*configJson/.test(saveFn));
+  check('verification survives a save only for the same organisation',
+    /prev\.verified_org_id && String\(prev\.verified_org_id\) === orgId/.test(saveFn));
+
+  const mspRoutes = srv.match(/app\.(get|post|delete)\('\/api\/msp-integrations\/dnsfilter[^']*', [^\n]*/g) || [];
+  check('every MSP key route is superadmin-only',
+    mspRoutes.length === 4 && mspRoutes.every(r => /requireAuth, requireSuperAdmin/.test(r)), `${mspRoutes.length} routes`);
+  const mspGet = srv.slice(srv.indexOf("app.get('/api/msp-integrations/dnsfilter'"), srv.indexOf("app.post('/api/msp-integrations/dnsfilter'"));
+  check('and the key is never read back out', mspGet.length > 0 && !/api_key/.test(mspGet));
+  check('the MSP key may only point at a dnsfilter.com host over https',
+    /hostname\.endsWith\('\.dnsfilter\.com'\)/.test(srv) && /protocol !== 'https:'/.test(srv));
+
+  const put = srv.slice(srv.indexOf("app.put('/api/ai-visibility/decisions/:appKey'"), srv.indexOf("app.delete('/api/ai-visibility/decisions/:appKey'"));
+  check('a decision is written to the resolved tenant, validated first',
+    /resolveIntegrationTenant\(req, 'body'\)/.test(put) && /validAppKey/.test(put) && /validateDecision/.test(put) &&
+    /\[tenantId, appKey,/.test(put));
+  check('and un-deciding is scoped the same way',
+    /DELETE FROM ai_app_decisions WHERE tenant_id = \$1 AND app_key = \$2/.test(srv));
+
+  section('staff only');
+
+  const levels = PAGES.ROLE_DEFAULTS;
+  check('the page exists and a portal client has no access to it',
+    PAGES.PAGE_KEYS.indexOf('ai-visibility') >= 0 && levels.client['ai-visibility'] === 'none', levels.client['ai-visibility']);
+  const pagesSrc = codeOnly(read('lib', 'pages.js'));
+  check('its API is gated by its page, so a decision needs WRITE',
+    /'ai-visibility':\s*'ai-visibility'/.test(pagesSrc));
+  check('the MSP key API is gated by Admin as well as by role', /'msp-integrations':\s*'admin'/.test(pagesSrc));
+  const portal = read('lib', 'portal-routes.js');
+  check('the portal has no AI Visibility route', !/ai-visibility|dnsfilter|ai_app_decisions/i.test(portal));
+
+  // ══ The tab, the admin cards, the report ═══════════════════════════════════
+
+  section('the tab is wired');
+
+  const html = read('public', 'index.html');
+  const appJs = read('public', 'js', 'app.js');
+  const ui = read('public', 'js', 'wazuh-ui.js');
+  const tab = codeOnly(read('public', 'js', 'tab-ai-visibility.js'));
+  check('nav item, panel and script are in the page',
+    /data-tab="ai-visibility"/.test(html) && /id="tab-ai-visibility"/.test(html) &&
+    html.indexOf('<script src="js/wazuh-ui.js">') < html.indexOf('<script src="js/tab-ai-visibility.js">'));
+  check('the router renders it', /target === 'ai-visibility'[\s\S]{0,120}AiVisibilityTab\.loadAndRender\(\)/.test(appJs));
+  check('Sync Now is a known target', /dnsfilter:\s*'Collecting from DNSFilter/.test(ui));
+  check('the decision editor appears only for writers', /canWrite\('ai-visibility'\)/.test(tab));
+  check('and an undecided tool shows as unreviewed', /STATUS\[r\.status\] \|\| STATUS\.unreviewed/.test(tab));
+
+  section('the board section counts, it does not name');
+
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  for (const f of ['report-shell.js', 'report-deck.js', 'mdr-metrics.js', 'report-sections.js']) {
+    vm.runInContext(read('public', 'js', f), sandbox);
+  }
+  const sec = sandbox.window.ReportSections.find(s => s.id === 'aiUsage');
+  check('the section exists and is tied to the service',
+    !!sec && sec.services.join(',') === 'ai_visibility' && sec.requires.join(',') === 'ai' &&
+    SERVICES.SERVICE_KEYS.indexOf('ai_visibility') >= 0);
+
+  const annotatedBack = Object.assign({}, back.apps, {
+    data: Object.assign({}, back.apps.data, AV.annotateApps(back.apps.data.rows, new Map([['app:31', { status: 'unsanctioned' }]]))),
+  });
+  const deckSummary = { configured: true, windowDays: 30, usage: back.usage, apps: annotatedBack, users: back.users, policy: back.policy };
+  const deck = String(sec.render({ data: { ai: deckSummary }, comments: {} }));
+  check('it reports the figures', /150/.test(deck) && /ChatGPT/.test(deck) && /Blocked/.test(deck));
+  check('it never prints a user, although the payload carries them',
+    back.users.data.rows.length > 0 && !/alice|bob|client\.example/i.test(deck));
+
+  const noUsage = String(sec.render({ data: { ai: Object.assign({}, deckSummary, {
+    usage: { available: false, data: null, reason: 'unrecognised_response' },
+  }) }, comments: {} }));
+  check('an unread usage figure says No data, not 0',
+    /bi-v nd">No data<\/div><div class="bi-l">AI tool lookups/.test(noUsage));
+  check('a client without DNSFilter gets no section at all',
+    sec.render({ data: { ai: { configured: false } }, comments: {} }) === null);
+
+  const rpt = codeOnly(read('public', 'js', 'tab-reports.js'));
+  check('the report fetches the summary, and withholds it from clients who do not buy the service',
+    /ai:\s*function \(ctx\) \{ return 'api\/ai-visibility\/summary/.test(rpt) && /ai:\s*'ai_visibility'/.test(rpt));
+
+  const admin = codeOnly(read('public', 'js', 'tab-admin.js'));
+  check('the MSP card is only fetched for a superadmin',
+    /role === 'superadmin'\) \{\s*try \{\s*const r = await fetch\('api\/msp-integrations\/dnsfilter'/.test(admin));
+
+  done();
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

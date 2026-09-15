@@ -85,6 +85,9 @@ const WazuhUI = (() => {
     not_synced:        'Nothing has been collected yet.',
     not_licensed:      'Not available — this needs a Microsoft Entra ID P1 or P2 licence on the client\'s tenant.',
     beyond_retention:  'Not available for this period — Microsoft keeps this data for a limited time only.',
+    category_unknown:  'Not available — DNSFilter\'s Generative AI category has not been identified yet.',
+    unrecognised_response: 'The log source answered in a form this dashboard does not recognise yet.',
+    not_available:     'This report is not available from the log source.',
   };
 
   const REASON_HINT = {
@@ -94,6 +97,8 @@ const WazuhUI = (() => {
     not_synced:       'Press Sync Now, or wait for the hourly collection.',
     not_licensed:     'Sign-ins need Entra ID P1; risky users and risk detections need P2.',
     beyond_retention: 'Office 365 audit content is kept for 7 days; shorter ranges will show it.',
+    category_unknown: 'Run Test Connection on the DNSFilter (MSP) card, which looks the category up by name.',
+    unrecognised_response: 'Re-test the integration: the Test result records the fields the source returned.',
   };
 
   function isReady(envelope) {
@@ -308,6 +313,13 @@ const WazuhUI = (() => {
         `(${summary.timeZone || 'UTC'}).`;
       return;
     }
+    if (summary.provider === 'dnsfilter') {
+      const org = summary.organisation || {};
+      el.textContent = `Collected from DNSFilter${org.name ? ` (${org.name})` : ''} into daily rollups, ` +
+        `refreshed hourly — the last ${summary.windowDays} days (${summary.timeZone || 'UTC'}), with today and ` +
+        `yesterday still settling. Counts are DNS lookups, not visits or prompts.`;
+      return;
+    }
     if (summary.provider === 'ms_graph') {
       el.textContent = `Collected from Microsoft Graph and the Office 365 Management Activity API into daily ` +
         `rollups, refreshed hourly — the last ${summary.windowDays} days (${summary.timeZone || 'UTC'}). ` +
@@ -360,8 +372,12 @@ const WazuhUI = (() => {
            <p>If there is an organisation dropdown in the header, choose one there. Otherwise ask an
            administrator to assign your account to an organisation — every screen on this dashboard
            is scoped to one.</p>`;
+    } else if (reason === 'msp_not_configured') {
+      body = `<p><strong>The DNSFilter MSP key is not set.</strong></p>
+        <p>This client's organisation is configured, but the shared DNSFilter key is not. A superadmin
+        sets it once under ${link} → DNSFilter (MSP).</p>`;
     } else if (reason === 'disabled') {
-      const name = { fortianalyzer: 'FortiAnalyzer', ms_graph: 'Microsoft Graph' }[summary.provider] || 'Wazuh';
+      const name = { fortianalyzer: 'FortiAnalyzer', ms_graph: 'Microsoft Graph', dnsfilter: 'DNSFilter' }[summary.provider] || 'Wazuh';
       body = `<p><strong>The ${name} integration is switched off.</strong></p>
         <p>Its connection may be working fine — but while it is disabled nothing syncs and
         this screen stays empty. Enable it under ${link}, then press Save.</p>`;
@@ -395,6 +411,7 @@ const WazuhUI = (() => {
     const SYNC_LABEL = {
       fortianalyzer: 'Collecting from FortiAnalyzer — this can take a minute…',
       ms_identity:   'Collecting from Microsoft Graph and Office 365 — this can take a minute…',
+      dnsfilter:     'Collecting from DNSFilter — this can take a minute…',
       wazuh:         'Snapshotting daily rollups from Wazuh…',
     };
     const p    = Object.prototype.hasOwnProperty.call(SYNC_LABEL, provider) ? provider : 'wazuh';

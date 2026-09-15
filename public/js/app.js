@@ -22,6 +22,7 @@
     ndr:          document.getElementById('tab-ndr'),
     o365:         document.getElementById('tab-o365'),
     email:        document.getElementById('tab-email'),
+    'ai-visibility': document.getElementById('tab-ai-visibility'),
     'mdr-pricing': document.getElementById('tab-mdr-pricing'),
     reports:      document.getElementById('tab-reports'),
     training:     document.getElementById('tab-training'),
@@ -57,6 +58,7 @@
     ndr:        'Managed NDR',
     o365:       'Managed Identity',
     email:      'Managed Email Security',
+    'ai-visibility': 'AI Visibility',
     'mdr-pricing': 'Pricing',
     reports:    'Reports',
     training:   'Training',
@@ -176,6 +178,11 @@
     // targeted mailboxes on screen under another client's name.
     if (target === 'email' && typeof window.EmailTab !== 'undefined') {
       window.EmailTab.loadAndRender();
+    }
+    // Names individual users of AI tools, so it must never be left on screen
+    // under another client's name after an organisation switch.
+    if (target === 'ai-visibility' && typeof window.AiVisibilityTab !== 'undefined') {
+      window.AiVisibilityTab.loadAndRender();
     }
     // The Pricing page (key still 'mdr-pricing') is a shell over two
     // calculators; it decides which sub-tab to show and renders that one.

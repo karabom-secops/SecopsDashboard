@@ -49,6 +49,9 @@ const fazAdapter = require('./lib/integrations/fortianalyzer');
 const fazMetrics = require('./lib/fortianalyzer-metrics');
 const msIdentity = require('./lib/integrations/ms-identity');
 const identityMetrics = require('./lib/identity-metrics');
+const dnsAdapter = require('./lib/integrations/dnsfilter');
+const dnsMetrics = require('./lib/dnsfilter-metrics');
+const aiVisibility = require('./lib/ai-visibility');
 const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports');
 const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
 const sentinelOneAdapter = require('./lib/integrations/sentinelone');
@@ -2938,7 +2941,15 @@ const FAZ_PROVIDER = 'fortianalyzer';
  */
 const IDENTITY_SYNC_PROVIDER = 'ms_identity';
 
-const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER, FAZ_PROVIDER]);
+/*
+ * DNSFilter backs AI Visibility. Unlike every provider above, the credential is
+ * NOT on the client's row: one MSP key sees every client organisation, so it is
+ * held once in msp_integrations (superadmin-only). The client's row carries only
+ * its DNSFilter organisation id and time zone — see saveDnsFilterIntegration.
+ */
+const DNSFILTER_PROVIDER = 'dnsfilter';
+
+const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER, FAZ_PROVIDER, DNSFILTER_PROVIDER]);
 
 /*
  * Degrade-open probe for the email-security tables, matching hasFirewallTables.
@@ -3024,6 +3035,8 @@ app.post('/api/integrations/:provider', async (req, res) => {
     const { tenantId, error } = resolveIntegrationTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
 
+    if (provider === DNSFILTER_PROVIDER) return await saveDnsFilterIntegration(req, res, tenantId);
+
     const { base_url, api_key, is_enabled, configJson } = req.body;
     if (!base_url) return res.status(400).json({ error: 'base_url is required.' });
     const configJsonVal = JSON.stringify(configJson || {});
@@ -3063,6 +3076,241 @@ app.delete('/api/integrations/:provider', async (req, res) => {
   } catch (err) { return serverError(res, err); }
 });
 
+// ── DNSFilter (AI Visibility): the MSP key and the per-client organisation ──
+
+/** The MSP DNSFilter credential, decrypted, or null when none is stored. */
+async function loadMspDnsFilter() {
+  let r;
+  try {
+    r = await pool.query(
+      'SELECT base_url, api_key_enc, api_key_iv, config_json, updated_at FROM msp_integrations WHERE provider = $1',
+      [DNSFILTER_PROVIDER]
+    );
+  } catch (err) {
+    if (err.code === '42P01') return null;   // migration not run yet
+    throw err;
+  }
+  if (!r.rows.length) return null;
+  const row = r.rows[0];
+  return {
+    base_url: row.base_url,
+    api_key:  decryptKey(row.api_key_enc, row.api_key_iv),
+    config:   row.config_json || {},
+    updated_at: row.updated_at,
+  };
+}
+
+/** Only DNSFilter's own API host: the key is an MSP-wide credential. */
+function validDnsFilterBase(value) {
+  let u;
+  try { u = new URL(String(value || dnsAdapter.DEFAULT_BASE)); } catch (_) { return null; }
+  if (u.protocol !== 'https:') return null;
+  if (u.hostname !== 'dnsfilter.com' && !u.hostname.endsWith('.dnsfilter.com')) return null;
+  return `${u.protocol}//${u.host}`;
+}
+
+/*
+ * The client's DNSFilter row: organisation id and time zone, nothing else.
+ *
+ * Built from an allowlist rather than merged over the request body, so the
+ * verification fields (verified_org_id, …) can only ever be written by Test —
+ * a crafted save cannot mark an organisation verified. Verification survives a
+ * save only while the organisation id is unchanged.
+ *
+ * integrations.api_key_enc is NOT NULL, and this provider has no per-client
+ * secret, so the row stores an encrypted empty string. Nothing reads it: the
+ * loader always takes the MSP key.
+ */
+async function saveDnsFilterIntegration(req, res, tenantId) {
+  const { is_enabled, configJson } = req.body;
+  const c = configJson || {};
+  let orgId;
+  try { orgId = dnsAdapter.validOrgId(c.organization_id); } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  const tz = String(c.timeZone || 'Africa/Johannesburg');
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch (_) {
+    return res.status(400).json({ error: `Unknown time zone: ${tz}` });
+  }
+
+  const prevRow = await pool.query(
+    'SELECT config_json FROM integrations WHERE tenant_id = $1 AND provider = $2',
+    [tenantId, DNSFILTER_PROVIDER]
+  );
+  const prev = (prevRow.rows[0] && prevRow.rows[0].config_json) || {};
+  const next = { organization_id: orgId, timeZone: tz };
+  if (prev.verified_org_id && String(prev.verified_org_id) === orgId) {
+    ['verified_org_id', 'verified_org_name', 'verified_at', 'verified_ai_category_id', 'detected']
+      .forEach((k) => { if (prev[k] !== undefined) next[k] = prev[k]; });
+  }
+
+  const { enc, iv } = encryptKey('');
+  await pool.query(
+    `INSERT INTO integrations (tenant_id, provider, base_url, api_key_enc, api_key_iv, is_enabled, config_json)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (tenant_id, provider) DO UPDATE
+       SET base_url = $3, is_enabled = $6, config_json = $7`,
+    [tenantId, DNSFILTER_PROVIDER, dnsAdapter.DEFAULT_BASE, enc, iv, is_enabled !== false, JSON.stringify(next)]
+  );
+  return res.json({ ok: true });
+}
+
+/*
+ * Test for one client: the MSP key can see THIS organisation. That is the check
+ * that matters — a mistyped id that happens to be another real client would
+ * otherwise fill this tab with someone else's AI use, and nothing downstream
+ * could tell. The organisation's name is echoed for the operator to confirm.
+ */
+async function testDnsFilterIntegration(res, tenantId) {
+  const row = await pool.query(
+    'SELECT config_json, is_enabled FROM integrations WHERE tenant_id = $1 AND provider = $2',
+    [tenantId, DNSFILTER_PROVIDER]
+  );
+  if (!row.rows.length) return res.status(404).json({ error: 'Integration not configured.' });
+  const { config_json, is_enabled } = row.rows[0];
+
+  const msp = await loadMspDnsFilter();
+  if (!msp) {
+    return res.status(409).json({
+      error: 'The DNSFilter MSP key is not configured. A superadmin sets it under Admin → Integrations → DNSFilter (MSP).',
+    });
+  }
+
+  const conf = dnsAdapter.sanitiseStoredConfig(config_json || {});
+  const cfg = {
+    base_url: msp.base_url,
+    api_key: msp.api_key,
+    organization_id: conf.organization_id,
+    timeZone: conf.timeZone,
+    aiCategoryId: msp.config.ai_category_id || null,
+  };
+
+  let info;
+  try {
+    info = await dnsAdapter.testConnection(cfg);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  let detected = null;
+  try {
+    detected = await dnsAdapter.probe(Object.assign({}, cfg, { aiCategoryId: info.aiCategory ? info.aiCategory.id : null }));
+  } catch (probeErr) {
+    console.warn('[dnsfilter] probe failed after a successful connection —', probeErr.message);
+  }
+
+  const merged = Object.assign({}, config_json || {}, {
+    verified_org_id:         info.orgId,
+    verified_org_name:       info.orgName,
+    verified_at:             new Date().toISOString(),
+    verified_ai_category_id: info.aiCategory ? info.aiCategory.id : null,
+  }, detected ? { detected } : {});
+  await pool.query(
+    'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
+    [JSON.stringify(merged), tenantId, DNSFILTER_PROVIDER]
+  );
+
+  const disabledNote = is_enabled ? '' :
+    ' This integration is currently disabled — enable it to start syncing and to show data on its screens.';
+  return res.json({
+    ok: true,
+    message: info.message + disabledNote,
+    organisation: { id: info.orgId, name: info.orgName },
+    aiCategory: info.aiCategory,
+    detected,
+    isEnabled: is_enabled,
+  });
+}
+
+/*
+ * The MSP key. Superadmin only, on every verb — it reads every client's DNS
+ * traffic. The key itself never leaves the server: GET reports only whether one
+ * is stored, and what the last Test found.
+ */
+app.get('/api/msp-integrations/dnsfilter', requireAuth, requireSuperAdmin, async (req, res) => {
+  try {
+    let r;
+    try {
+      r = await pool.query(
+        'SELECT base_url, config_json, updated_at FROM msp_integrations WHERE provider = $1',
+        [DNSFILTER_PROVIDER]
+      );
+    } catch (err) {
+      if (err.code === '42P01') return res.json({ configured: false, migrationNeeded: true });
+      throw err;
+    }
+    if (!r.rows.length) return res.json({ configured: false });
+    const row = r.rows[0];
+    res.json({ configured: true, base_url: row.base_url, config_json: row.config_json || {}, updated_at: row.updated_at });
+  } catch (err) { return serverError(res, err); }
+});
+
+app.post('/api/msp-integrations/dnsfilter', requireAuth, requireSuperAdmin, async (req, res) => {
+  try {
+    const base = validDnsFilterBase(req.body.base_url);
+    if (!base) return res.status(400).json({ error: 'The DNSFilter API URL must be https on a dnsfilter.com host.' });
+    const apiKey = typeof req.body.api_key === 'string' ? req.body.api_key.trim() : '';
+
+    if (apiKey) {
+      const { enc, iv } = encryptKey(apiKey);
+      // A new key may see a different set of organisations: its verification
+      // starts again from nothing.
+      await pool.query(
+        `INSERT INTO msp_integrations (provider, base_url, api_key_enc, api_key_iv, config_json, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, '{}'::jsonb, $5, NOW())
+         ON CONFLICT (provider) DO UPDATE
+           SET base_url = $2, api_key_enc = $3, api_key_iv = $4, config_json = '{}'::jsonb,
+               updated_by = $5, updated_at = NOW()`,
+        [DNSFILTER_PROVIDER, base, enc, iv, req.session.userId]
+      );
+    } else {
+      const upd = await pool.query(
+        'UPDATE msp_integrations SET base_url = $1, updated_by = $2, updated_at = NOW() WHERE provider = $3',
+        [base, req.session.userId, DNSFILTER_PROVIDER]
+      );
+      if (!upd.rowCount) return res.status(400).json({ error: 'An API key is required.' });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '42P01') return res.status(503).json({ error: 'Run db/migrate-ai-visibility.sql first.' });
+    return serverError(res, err);
+  }
+});
+
+app.post('/api/msp-integrations/dnsfilter/test', requireAuth, requireSuperAdmin, async (req, res) => {
+  try {
+    const msp = await loadMspDnsFilter();
+    if (!msp) return res.status(404).json({ error: 'No DNSFilter MSP key is stored.' });
+    let info;
+    try {
+      info = await dnsAdapter.testMspConnection({ base_url: msp.base_url, api_key: msp.api_key });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    const config = {
+      verified_at: new Date().toISOString(),
+      organisations: info.organisations,
+      ai_category_id: info.aiCategory ? info.aiCategory.id : null,
+      ai_category_name: info.aiCategory ? info.aiCategory.name : null,
+    };
+    await pool.query(
+      'UPDATE msp_integrations SET config_json = $1 WHERE provider = $2',
+      [JSON.stringify(config), DNSFILTER_PROVIDER]
+    );
+    res.json({ ok: true, message: info.message, organisations: info.organisations, aiCategory: info.aiCategory });
+  } catch (err) { return serverError(res, err); }
+});
+
+app.delete('/api/msp-integrations/dnsfilter', requireAuth, requireSuperAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM msp_integrations WHERE provider = $1', [DNSFILTER_PROVIDER]);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '42P01') return res.json({ ok: true });
+    return serverError(res, err);
+  }
+});
+
 /** POST /api/integrations/:provider/test — fetch 1 record to verify credentials */
 app.post('/api/integrations/:provider/test', async (req, res) => {
   try {
@@ -3072,6 +3320,9 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
 
     const { tenantId, error } = resolveIntegrationTenant(req, 'body');
     if (error) return res.status(error.status).json({ error: error.message });
+
+    // Before the key is decrypted: this row holds no key of its own.
+    if (provider === DNSFILTER_PROVIDER) return await testDnsFilterIntegration(res, tenantId);
 
     const row = await pool.query(
       'SELECT base_url, api_key_enc, api_key_iv, config_json, is_enabled FROM integrations WHERE tenant_id = $1 AND provider = $2',
@@ -4231,6 +4482,115 @@ async function runFortiAnalyzerSync(tenantId) {
   }
 }
 
+/**
+ * The client's DNSFilter row with the MSP key attached, or throw with `.reason`.
+ * The AI category comes from the client's own Test when it ran, else from the
+ * MSP Test — both resolved by name, never hard-coded.
+ */
+async function loadDnsFilterIntegration(tenantId) {
+  const row = await pool.query(
+    `SELECT id, tenant_id, config_json, is_enabled, last_synced_at, last_sync_status, last_sync_message
+       FROM integrations WHERE tenant_id = $1 AND provider = $2`,
+    [tenantId, DNSFILTER_PROVIDER]
+  );
+  if (!row.rows.length) {
+    throw Object.assign(new Error('DNSFilter is not configured for this client.'),
+      { httpStatus: 404, reason: 'not_configured' });
+  }
+  const r = row.rows[0];
+  if (!r.is_enabled) {
+    throw Object.assign(new Error('The DNSFilter integration is disabled.'),
+      { httpStatus: 409, reason: 'disabled' });
+  }
+  const msp = await loadMspDnsFilter();
+  if (!msp) {
+    throw Object.assign(new Error('The DNSFilter MSP key is not configured.'),
+      { httpStatus: 409, reason: 'msp_not_configured' });
+  }
+  const conf = dnsAdapter.sanitiseStoredConfig(r.config_json || {});
+  return {
+    id:        r.id,
+    tenant_id: r.tenant_id,
+    base_url:  msp.base_url,
+    api_key:   msp.api_key,
+    config:    Object.assign({}, conf, {
+      aiCategoryId: conf.verified_ai_category_id || msp.config.ai_category_id || null,
+    }),
+    sync: {
+      last_synced_at:    r.last_synced_at,
+      last_sync_status:  r.last_sync_status,
+      last_sync_message: r.last_sync_message,
+    },
+  };
+}
+
+async function recordDnsFilterSync(tenantId, status, message) {
+  await pool.query(
+    `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = $1, last_sync_message = $2
+      WHERE tenant_id = $3 AND provider = $4`,
+    [status, message, tenantId, DNSFILTER_PROVIDER]
+  );
+}
+
+/** Drop this client's cached AI Visibility screens (after a sync or a decision). */
+function clearAiCache(tenantId) {
+  for (const key of [...wazuhCache.keys()]) {
+    if (key.indexOf(`ai:${tenantId}:`) === 0) wazuhCache.delete(key);
+  }
+}
+
+const dnsSyncInProgress = new Set();
+
+/**
+ * Collect AI Visibility telemetry for one tenant.
+ *
+ * Refused unless Test has verified THIS organisation id: every client shares
+ * the MSP key, so the organisation id is the only thing between one client's
+ * tab and another's traffic.
+ */
+async function runDnsFilterSync(tenantId) {
+  if (dnsSyncInProgress.has(tenantId)) {
+    return { ok: false, message: 'A DNSFilter sync for this client is already running.' };
+  }
+  dnsSyncInProgress.add(tenantId);
+  try {
+    const integration = await loadDnsFilterIntegration(tenantId);
+    const conf = integration.config;
+
+    if (!conf.verified_org_id || String(conf.verified_org_id) !== String(conf.organization_id)) {
+      const msg = 'This DNSFilter organisation has not been verified. Run Test Connection under Admin → Integrations before syncing.';
+      await recordDnsFilterSync(tenantId, 'error', msg);
+      throw Object.assign(new Error(msg), { httpStatus: 409 });
+    }
+
+    const tz = conf.timeZone || 'UTC';
+    const days = await dnsMetrics.daysNeedingSnapshot(pool, integration.id, tz);
+
+    let rows = 0;
+    const problems = [];
+    for (const day of days) {
+      try {
+        const r = await dnsMetrics.snapshotDay(pool, integration, day);
+        rows += r.rows;
+        if (r.problems.length) problems.push(`${day}: ${r.problems.join(', ')}`);
+      } catch (err) {
+        problems.push(`${day}: ${err.message}`);
+      }
+    }
+
+    const ok = problems.length === 0;
+    const message = `Collected ${days.length} day${days.length !== 1 ? 's' : ''} (${rows} metric rows)` +
+      (ok ? '' : ` — not everything could be read: ${problems[0]}`);
+    await recordDnsFilterSync(tenantId, ok ? 'ok' : 'error', message);
+    clearAiCache(tenantId);
+
+    console.log(`[integrations] dnsfilter: ${message} for tenant ${tenantId}`);
+    return { ok, synced: rows, days: days.length, message };
+  } finally {
+    dnsSyncInProgress.delete(tenantId);
+  }
+}
+
 /** POST /api/integrations/:provider/sync — fetch fresh data from the provider and store it */
 app.post('/api/integrations/:provider/sync', async (req, res) => {
   const provider = req.params.provider;
@@ -4243,6 +4603,7 @@ app.post('/api/integrations/:provider/sync', async (req, res) => {
     else if (provider === EDR_PROVIDER)    result = await runSentinelOneSync(tenantId);
     else if (provider === WAZUH_PROVIDER)  result = await runWazuhRollupSync(tenantId);
     else if (provider === FAZ_PROVIDER)    result = await runFortiAnalyzerSync(tenantId);
+    else if (provider === DNSFILTER_PROVIDER) result = await runDnsFilterSync(tenantId);
     else if (provider === IDENTITY_SYNC_PROVIDER) result = await runIdentitySync(tenantId);
     else if (provider === EMAIL_PROVIDER)  result = await runAcronisSync(tenantId);
     else if (provider === MSGRAPH_PROVIDER) result = await runMsGraphSync(tenantId);
@@ -4612,6 +4973,47 @@ if (process.env.NODE_ENV !== 'test') {
   setInterval(() => { runIdentitySyncs().catch(err => console.error('[integrations] managed identity crashed —', err.message)); }, IDENTITY_SYNC_INTERVAL_MS);
 }
 
+// ── AI Visibility collection (hourly) ────────────────────────────────────────
+// Tenants run one after another, and each client's calls are serial inside the
+// adapter: every client shares one DNSFilter MSP key and its rate limit.
+
+const DNS_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+let dnsSchedulerRunning = false;
+
+async function runDnsFilterSyncs() {
+  if (dnsSchedulerRunning) {
+    console.log('[integrations] dnsfilter collection still running — skipping this tick');
+    return;
+  }
+  dnsSchedulerRunning = true;
+  try {
+    let rows;
+    try {
+      rows = (await pool.query(
+        'SELECT tenant_id FROM integrations WHERE is_enabled = TRUE AND provider = $1',
+        [DNSFILTER_PROVIDER]
+      )).rows;
+    } catch (err) {
+      console.error('[integrations] dnsfilter: failed to load integrations —', err.message);
+      return;
+    }
+    for (const row of rows) {
+      try {
+        await runDnsFilterSync(row.tenant_id);
+      } catch (err) {
+        console.error(`[integrations] dnsfilter sync failed: tenant ${row.tenant_id} — ${err.message}`);
+      }
+    }
+  } finally {
+    dnsSchedulerRunning = false;
+  }
+}
+
+if (process.env.NODE_ENV !== 'test') {
+  setTimeout(() => { runDnsFilterSyncs().catch(err => console.error('[integrations] dnsfilter crashed —', err.message)); }, 180 * 1000);
+  setInterval(() => { runDnsFilterSyncs().catch(err => console.error('[integrations] dnsfilter crashed —', err.message)); }, DNS_SYNC_INTERVAL_MS);
+}
+
 // ── Managed NDR & Managed Identity (Wazuh) data routes ───────────────────
 
 function resolveWazuhTenant(req) {
@@ -4861,6 +5263,137 @@ app.get('/api/o365/summary', requireAuth, async (req, res) => {
   try {
     res.json(await wazuhScreenFor(req, 'o365'));
   } catch (err) { return serverError(res, err); }
+});
+
+// ── AI Visibility (DNSFilter) data routes ──────────────────────────────────
+
+const AI_SCREEN_KEYS = ['usage', 'apps', 'users', 'policy'];
+
+/** This client's sanctioned-app register as a Map, or null before the migration. */
+async function loadAiDecisions(tenantId) {
+  try {
+    const r = await pool.query(
+      'SELECT app_key, app_name, status, note, decided_at FROM ai_app_decisions WHERE tenant_id = $1',
+      [tenantId]
+    );
+    return new Map(r.rows.map(d => [d.app_key, d]));
+  } catch (err) {
+    if (err.code === '42P01') return null;
+    throw err;
+  }
+}
+
+/**
+ * The AI Visibility screen, from rollups only. Before the first collection,
+ * empty panels say "not collected yet" rather than "no AI use", which would
+ * read as a client with none.
+ */
+async function aiVisibilityScreen(tenantId, days) {
+  let integration;
+  try {
+    integration = await loadDnsFilterIntegration(tenantId);
+  } catch (err) {
+    if (!err.reason) throw err;
+    return wazuhUnavailable(days, AI_SCREEN_KEYS, err.reason, DNSFILTER_PROVIDER);
+  }
+
+  return wazuhCached(`ai:${tenantId}:${integration.id}:${days}`, async () => {
+    const [panels, decisions] = await Promise.all([
+      dnsMetrics.aiFromRollups(pool, tenantId, days, integration.id),
+      loadAiDecisions(tenantId),
+    ]);
+    const conf = integration.config;
+    const collected = !!integration.sync.last_synced_at;
+    const out = {
+      windowDays: days,
+      source: 'rollup',
+      provider: DNSFILTER_PROVIDER,
+      configured: true,
+      timeZone: conf.timeZone || 'UTC',
+      organisation: { id: conf.organization_id || null, name: conf.verified_org_name || null },
+      verified: !!conf.verified_org_id && String(conf.verified_org_id) === String(conf.organization_id),
+      decisionsAvailable: decisions !== null,
+      detected: null,
+      sync: integration.sync,
+      partial: [],
+    };
+    AI_SCREEN_KEYS.forEach((k) => {
+      const p = panels[k];
+      out[k] = !collected && p && p.reason === 'no_data_in_range'
+        ? { available: false, data: null, reason: 'not_synced', lastEventAt: null }
+        : p;
+    });
+    if (out.apps && out.apps.available && out.apps.data) {
+      const annotated = aiVisibility.annotateApps(out.apps.data.rows, decisions || new Map());
+      out.apps = Object.assign({}, out.apps, { data: Object.assign({}, out.apps.data, annotated) });
+    }
+    return out;
+  });
+}
+
+/** GET /api/ai-visibility/summary?days=30 — AI Visibility panels (staff only) */
+app.get('/api/ai-visibility/summary', requireAuth, async (req, res) => {
+  try {
+    const days = wazuhDays(req);
+    const { tenantId } = resolveWazuhTenant(req);
+    if (tenantId === null || tenantId === undefined) {
+      return res.json(wazuhUnavailable(days, AI_SCREEN_KEYS, 'no_tenant'));
+    }
+    res.json(await aiVisibilityScreen(tenantId, days));
+  } catch (err) { return serverError(res, err); }
+});
+
+/*
+ * The sanctioned-app register. WRITE on the AI Visibility page is required for
+ * PUT and DELETE — pageGate enforces it from API_PREFIX_TO_PAGE. The tenant
+ * comes from the session (or a superadmin's explicit tenantId) and is part of
+ * every WHERE clause, so a decision can only ever land on the caller's client.
+ */
+app.put('/api/ai-visibility/decisions/:appKey', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIntegrationTenant(req, 'body');
+    if (error) return res.status(error.status).json({ error: error.message });
+    const appKey = req.params.appKey;
+    if (!aiVisibility.validAppKey(appKey)) return res.status(400).json({ error: 'Invalid application key.' });
+    const v = aiVisibility.validateDecision(req.body);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+
+    const r = await pool.query(
+      `INSERT INTO ai_app_decisions (tenant_id, app_key, app_name, status, note, decided_by, decided_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+       ON CONFLICT ON CONSTRAINT ai_app_decisions_uniq DO UPDATE
+         SET status = EXCLUDED.status,
+             note = EXCLUDED.note,
+             app_name = COALESCE(EXCLUDED.app_name, ai_app_decisions.app_name),
+             decided_by = EXCLUDED.decided_by,
+             decided_at = CASE WHEN ai_app_decisions.status = EXCLUDED.status
+                               THEN ai_app_decisions.decided_at ELSE NOW() END,
+             updated_at = NOW()
+       RETURNING app_key, app_name, status, note, decided_at`,
+      [tenantId, appKey, v.value.appName, v.value.status, v.value.note, req.session.userId]
+    );
+    clearAiCache(tenantId);
+    res.json({ ok: true, decision: r.rows[0] });
+  } catch (err) {
+    if (err.code === '42P01') return res.status(503).json({ error: 'Run db/migrate-ai-visibility.sql first.' });
+    return serverError(res, err);
+  }
+});
+
+/** DELETE — the tool goes back to unreviewed. */
+app.delete('/api/ai-visibility/decisions/:appKey', requireAuth, async (req, res) => {
+  try {
+    const { tenantId, error } = resolveIntegrationTenant(req, 'query');
+    if (error) return res.status(error.status).json({ error: error.message });
+    const appKey = req.params.appKey;
+    if (!aiVisibility.validAppKey(appKey)) return res.status(400).json({ error: 'Invalid application key.' });
+    await pool.query('DELETE FROM ai_app_decisions WHERE tenant_id = $1 AND app_key = $2', [tenantId, appKey]);
+    clearAiCache(tenantId);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '42P01') return res.json({ ok: true });
+    return serverError(res, err);
+  }
 });
 
 // ── Managed EDR (SentinelOne) data routes ──────────────────────────────────

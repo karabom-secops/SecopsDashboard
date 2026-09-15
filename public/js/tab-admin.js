@@ -1077,7 +1077,175 @@
       keyLabel: 'Client Secret',
       keyHint:  'Paste the client secret VALUE (not the Secret ID) from the app registration…',
     },
+    {
+      id:   'dnsfilter',
+      name: 'DNSFilter',
+      icon: '🧭',
+      desc: 'AI Visibility — generative AI lookups, tools, users and policy for this client, collected hourly using the DNSFilter MSP key.',
+      // No URL and no key on this card: the MSP key is set once on the
+      // DNSFilter (MSP) card. This client's row is its organisation id only.
+      dnsFields: true,
+    },
   ];
+
+  // The superadmin-only MSP DNSFilter record (no key), for the organisation picker.
+  let mspDnsCache = null;
+
+  /** What the last per-client DNSFilter Test verified. */
+  function renderDnsFilterVerified(c) {
+    const note = html => `<p class="int-optional" style="margin:-.25rem 0 .75rem">${html}</p>`;
+    if (!c.verified_at) {
+      return note('Not verified yet — Save, then Test Connection. Sync is refused until the organisation has been checked.');
+    }
+    if (c.organization_id && c.verified_org_id && String(c.organization_id) !== String(c.verified_org_id)) {
+      return note('<strong>⚠ The organisation has changed since it was verified.</strong> Test Connection again — sync is refused until then.');
+    }
+    const when = new Date(c.verified_at).toLocaleString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const reports = c.detected && c.detected.reports
+      ? Object.keys(c.detected.reports).map(k => `${k} ${c.detected.reports[k].ok ? '✓' : '✗'}`).join(' · ')
+      : '';
+    return note(`Verified ${escHtmlInt(when)}: <strong>${escHtmlInt(c.verified_org_name || '')}</strong> ` +
+        `(<code>${escHtmlInt(c.verified_org_id)}</code>).` +
+        (c.verified_ai_category_id ? '' : ' <strong>No Generative AI category found.</strong>')) +
+      (reports ? `<div class="integration-sync-meta"><span class="int-sync-status">Reports: ${escHtmlInt(reports)}</span></div>` : '');
+  }
+
+  function renderDnsFilterCard(p, cfg) {
+    const c = (cfg && cfg.config_json) || {};
+    const enabled = cfg ? cfg.is_enabled : false;
+    const orgs = (mspDnsCache && mspDnsCache.config_json && mspDnsCache.config_json.organisations) || [];
+    const lastSync = cfg && cfg.last_synced_at
+      ? new Date(cfg.last_synced_at).toLocaleString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+      : null;
+    return `
+      <div class="integration-card" id="int-card-${p.id}">
+        <div class="integration-card-header">
+          <span class="integration-icon">${p.icon}</span>
+          <div class="integration-info">
+            <strong>${escHtmlInt(p.name)}</strong>
+            <span class="integration-desc">${escHtmlInt(p.desc)}</span>
+          </div>
+          <label class="integration-toggle" title="${enabled ? 'Disable' : 'Enable'}">
+            <input type="checkbox" class="int-enabled-cb" data-provider="${p.id}" ${enabled ? 'checked' : ''} ${!cfg ? 'disabled' : ''}>
+            <span class="int-toggle-slider"></span>
+          </label>
+        </div>
+        <div class="integration-form">
+          <div class="form-group">
+            <label class="modal-label">DNSFilter Organisation ID</label>
+            <input type="text" inputmode="numeric" class="int-dns-org form-input" data-provider="${p.id}"
+                   list="int-dns-orgs" placeholder="This client's organisation id in DNSFilter"
+                   value="${escHtmlInt(c.organization_id || '')}">
+            ${orgs.length ? `<datalist id="int-dns-orgs">${orgs.map(o =>
+              `<option value="${escHtmlInt(o.id)}">${escHtmlInt(o.name)}</option>`).join('')}</datalist>` : ''}
+          </div>
+          <div class="form-group">
+            <label class="modal-label">Time Zone</label>
+            <input type="text" class="int-timezone form-input" data-provider="${p.id}"
+                   placeholder="Africa/Johannesburg" value="${escHtmlInt(c.timeZone || 'Africa/Johannesburg')}">
+          </div>
+          ${renderDnsFilterVerified(c)}
+          ${lastSync ? `
+          <div class="integration-sync-meta">
+            <span class="int-sync-status int-sync-${cfg.last_sync_status || 'ok'}">
+              ${cfg.last_sync_status === 'ok' ? '✓' : '✗'} ${escHtmlInt(cfg.last_sync_message || '')}
+            </span>
+            <span class="int-sync-date">Last synced: ${lastSync}</span>
+          </div>` : ''}
+          <div class="integration-actions">
+            <button class="btn btn-sm int-test-btn" data-provider="${p.id}" ${!cfg ? 'disabled' : ''}>Test Connection</button>
+            <button class="btn btn-sm int-sync-btn" data-provider="${p.id}" ${!cfg ? 'disabled' : ''}>Sync Now</button>
+            <button class="btn btn-sm btn-primary int-save-btn" data-provider="${p.id}">Save</button>
+            ${cfg ? `<button class="btn btn-sm btn-danger int-remove-btn" data-provider="${p.id}">Remove</button>` : ''}
+          </div>
+          <p class="int-feedback" id="int-feedback-${p.id}"></p>
+        </div>
+      </div>`;
+  }
+
+  /** The MSP key card. Rendered for superadmins only; the server enforces it too. */
+  function renderMspDnsCard(m) {
+    const c = m.config_json || {};
+    const when = c.verified_at
+      ? new Date(c.verified_at).toLocaleString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+      : null;
+    const status = m.migrationNeeded
+      ? 'Run <code>db/migrate-ai-visibility.sql</code> before saving a key.'
+      : !m.configured ? 'No key saved yet.'
+      : !when ? 'Key saved — Test Connection to verify it.'
+      : `Verified ${escHtmlInt(when)}: ${escHtmlInt((c.organisations || []).length)} organisations visible; ` +
+        (c.ai_category_id ? `AI category "${escHtmlInt(c.ai_category_name)}".` : '<strong>no Generative AI category found.</strong>');
+    return `
+      <div class="integration-card" id="int-card-dnsfilter-msp">
+        <div class="integration-card-header">
+          <span class="integration-icon">🔑</span>
+          <div class="integration-info">
+            <strong>DNSFilter (MSP)</strong>
+            <span class="integration-desc">One MSP API key for every client's AI Visibility. Superadmin only — the key is never shown again after saving.</span>
+          </div>
+        </div>
+        <div class="integration-form">
+          <div class="form-group">
+            <label class="modal-label">API URL</label>
+            <input type="url" class="int-msp-dns-url form-input" value="${escHtmlInt(m.base_url || 'https://api.dnsfilter.com')}">
+          </div>
+          <div class="form-group">
+            <label class="modal-label">MSP API Key</label>
+            <input type="password" class="int-msp-dns-key form-input"
+                   placeholder="${m.configured ? '••••••••  (saved — enter a new key to replace it)' : 'Paste the DNSFilter MSP API key…'}">
+          </div>
+          <p class="int-optional" style="margin:-.25rem 0 .75rem">
+            Use a key created at the <strong>MSP</strong> level so it can see every client organisation. It is only
+            ever used to <strong>read</strong> reports and policies. ${status}
+          </p>
+          <div class="integration-actions">
+            <button class="btn btn-sm" id="int-msp-dns-test" ${!m.configured ? 'disabled' : ''}>Test Connection</button>
+            <button class="btn btn-sm btn-primary" id="int-msp-dns-save" ${m.migrationNeeded ? 'disabled' : ''}>Save</button>
+            ${m.configured ? '<button class="btn btn-sm btn-danger" id="int-msp-dns-remove">Remove</button>' : ''}
+          </div>
+          <p class="int-feedback" id="int-feedback-dnsfilter-msp"></p>
+        </div>
+      </div>`;
+  }
+
+  function wireMspDnsCard(container) {
+    const save = container.querySelector('#int-msp-dns-save');
+    const test = container.querySelector('#int-msp-dns-test');
+    const remove = container.querySelector('#int-msp-dns-remove');
+    const fb = (msg, err) => setIntFeedback('dnsfilter-msp', msg, err);
+    const call = async (method, path, body) => {
+      const res = await fetch('api/msp-integrations/dnsfilter' + path, {
+        method, credentials: 'same-origin',
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok && data.ok !== false, data };
+    };
+    if (save) save.addEventListener('click', async () => {
+      const url = (container.querySelector('.int-msp-dns-url') || {}).value || '';
+      const key = ((container.querySelector('.int-msp-dns-key') || {}).value || '').trim();
+      try {
+        const r = await call('POST', '', Object.assign({ base_url: url.trim() }, key ? { api_key: key } : {}));
+        if (!r.ok) return fb(r.data.error || 'Save failed.', true);
+        fb('Saved. Test Connection to verify the key.', false);
+        setTimeout(() => renderIntegrations(), 800);
+      } catch (err) { fb('Network error: ' + err.message, true); }
+    });
+    if (test) test.addEventListener('click', async () => {
+      fb('Testing connection…', false);
+      try {
+        const r = await call('POST', '/test');
+        if (!r.ok) return fb('✗ ' + (r.data.error || 'Connection failed.'), true);
+        fb('✓ ' + r.data.message, false);
+        setTimeout(() => renderIntegrations(), 1500);
+      } catch (err) { fb('Network error: ' + err.message, true); }
+    });
+    if (remove) remove.addEventListener('click', async () => {
+      if (!confirm('Remove the DNSFilter MSP key? AI Visibility stops collecting for every client.')) return;
+      try { await call('DELETE', ''); renderIntegrations(); } catch (_) {}
+    });
+  }
 
   // Last-rendered integration rows, keyed by provider.
   let configMapCache = {};
@@ -1223,7 +1391,17 @@
     // clobbering it with a fresh object.
     configMapCache = configMap;
 
-    container.innerHTML = PROVIDERS.map(p => {
+    let mspDns = null;
+    if (window.currentUser && window.currentUser.role === 'superadmin') {
+      try {
+        const r = await fetch('api/msp-integrations/dnsfilter', { credentials: 'same-origin' });
+        if (r.ok) mspDns = await r.json();
+      } catch (_) {}
+    }
+    mspDnsCache = mspDns;
+
+    container.innerHTML = (mspDns ? renderMspDnsCard(mspDns) : '') + PROVIDERS.map(p => {
+      if (p.dnsFields) return renderDnsFilterCard(p, configMap[p.id]);
       const cfg        = configMap[p.id];
       const enabled    = cfg ? cfg.is_enabled : false;
       const lastSync   = cfg && cfg.last_synced_at
@@ -1439,6 +1617,8 @@
         removeIntegration(btn.dataset.provider);
       });
     });
+
+    if (mspDns) wireMspDnsCard(container);
   }
 
   function setIntFeedback(providerId, msg, isError) {
@@ -1449,6 +1629,37 @@
   }
 
   async function saveIntegration(providerId, container) {
+    /*
+     * DNSFilter sends only the organisation id and time zone. The server builds
+     * the stored config from exactly those two fields, so verification can
+     * never be carried in from the browser.
+     */
+    if (providerId === 'dnsfilter') {
+      const val = sel => ((container.querySelector(`${sel}[data-provider="dnsfilter"]`) || {}).value || '').trim();
+      const orgId = val('.int-dns-org');
+      if (!/^\d{1,12}$/.test(orgId)) {
+        setIntFeedback(providerId, 'DNSFilter organisation id is required — digits only.', true);
+        return;
+      }
+      const cb = container.querySelector('.int-enabled-cb[data-provider="dnsfilter"]');
+      const body = Object.assign({}, tenantBody(), {
+        base_url: 'https://api.dnsfilter.com',
+        is_enabled: (cb && !cb.disabled) ? cb.checked : true,
+        configJson: { organization_id: orgId, timeZone: val('.int-timezone') || 'Africa/Johannesburg' },
+      });
+      try {
+        const res = await fetch('api/integrations/dnsfilter', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin', body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) { setIntFeedback(providerId, data.error || 'Save failed.', true); return; }
+        setIntFeedback(providerId, 'Saved. Test Connection to verify the organisation.', false);
+        setTimeout(() => renderIntegrations(), 800);
+      } catch (err) { setIntFeedback(providerId, 'Network error: ' + err.message, true); }
+      return;
+    }
+
     const keyInput  = container.querySelector(`.int-key-input[data-provider="${providerId}"]`);
     const enabled   = container.querySelector(`.int-enabled-cb[data-provider="${providerId}"]`);
 
@@ -1651,6 +1862,8 @@
         // its screens, so it gets a warning mark rather than a clean tick.
         const disabled = data.isEnabled === false;
         setIntFeedback(providerId, (disabled ? '⚠ ' : '✓ ') + data.message, disabled);
+        // The card shows what was verified; redraw it so the operator sees the organisation name.
+        if (providerId === 'dnsfilter') setTimeout(() => renderIntegrations(), 1500);
       } else {
         setIntFeedback(providerId, '✗ ' + (data.error || 'Connection failed.'), true);
       }
@@ -1679,7 +1892,7 @@
           window.renderAwareness().catch(() => {});
         }
         setTimeout(() => renderIntegrations(), 1500);
-      } else if (data.ok && (providerId === 'wazuh' || providerId === 'fortianalyzer')) {
+      } else if (data.ok && (providerId === 'wazuh' || providerId === 'fortianalyzer' || providerId === 'dnsfilter')) {
         setIntFeedback(providerId, `✓ ${data.message}`, false);
         setTimeout(() => renderIntegrations(), 1500);
       } else if (data.ok && providerId === 'sentinelone') {

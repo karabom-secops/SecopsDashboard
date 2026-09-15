@@ -1501,8 +1501,9 @@ const plainDec = decisions(null);
 check('a client with no recorded mix gets no upsell at all',
   !/Services not currently consumed/.test(plainDec), 'not recorded is not none');
 
-const fullDec = decisions(['mdr', 'vuln', 'awareness', 'edr', 'ndr', 'identity',
-                           'email', 'pentest', 'firewall', 'viso']);
+// The whole catalogue, read from it: a literal list here stopped meaning
+// "everything" the day AI Visibility was added, and began reporting an upsell.
+const fullDec = decisions(ALL_SERVICE_KEYS);
 check('and neither does a client who already buys everything',
   !/Services not currently consumed/.test(fullDec));
 

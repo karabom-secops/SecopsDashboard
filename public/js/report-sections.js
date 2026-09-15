@@ -3797,6 +3797,77 @@ window.ReportSections = (function () {
     return tiles + head + classTable + targetTable + sectionComment(ctx, 'emailSecurity');
   }
 
+  /*
+   * AI Visibility, from DNSFilter.
+   *
+   * AGGREGATES ONLY. The staff tab names the people using AI tools; this section
+   * never reads that panel. A board pack travels, and a named employee's AI use
+   * is an HR conversation, not a board finding.
+   *
+   * Every figure the source could not read renders as "No data", not 0: a
+   * client whose DNSFilter reports were unreadable has not stopped using AI.
+   */
+  function renderAiUsage(ctx) {
+    var s = ctx.data.ai;
+    if (!s || !s.configured) return null;
+    var u = envData(s.usage);
+    var a = envData(s.apps);
+    var p = envData(s.policy);
+    if (!u && !a) return null;
+
+    var lookups = u ? (u.allowed || 0) + (u.blocked || 0) : null;
+    var blockedPct = u && lookups ? Math.round((u.blocked / lookups) * 100) : null;
+    var rows = a && Array.isArray(a.rows) ? a.rows : [];
+    var shadow = a ? (a.shadowCount || 0) : null;
+    var unreviewed = a ? (a.unreviewedCount || 0) : null;
+
+    var policies = p && Array.isArray(p.rows) ? p.rows : [];
+    var known = policies.filter(function (r) { return r.aiBlocked !== null && r.aiBlocked !== undefined; });
+    var blockedPolicies = known.filter(function (r) { return r.aiBlocked; }).length;
+    var policyText = !known.length ? 'No data'
+      : blockedPolicies === known.length ? 'Blocked'
+      : blockedPolicies ? 'Partly blocked' : 'Allowed';
+
+    var nd = function (v) { return v == null ? ' nd' : ''; };
+    var tiles = '<div class="bi-grid tight">' +
+        '<div class="bi-cell"><div class="bi-v' + nd(lookups) + '">' + esc(lookups == null ? 'No data' : lookups) + '</div>' +
+          '<div class="bi-l">AI tool lookups</div></div>' +
+        '<div class="bi-cell"><div class="bi-v' + nd(a ? rows.length : null) + '">' + esc(a ? rows.length : 'No data') + '</div>' +
+          '<div class="bi-l">AI tools in use</div></div>' +
+        '<div class="bi-cell"><div class="bi-v' + nd(shadow) + '">' + esc(shadow == null ? 'No data' : shadow) + '</div>' +
+          '<div class="bi-l">Unsanctioned tools reached</div></div>' +
+        '<div class="bi-cell"><div class="bi-v' + (known.length ? '' : ' nd') + '">' + esc(policyText) + '</div>' +
+          '<div class="bi-l">Generative AI category</div></div>' +
+      '</div>';
+
+    var head = '<div class="rag-note" style="margin-bottom:4mm">' +
+      'Over the last ' + esc(s.windowDays) + ' days, DNSFilter recorded ' +
+      (lookups == null ? 'no readable AI usage figures' :
+        '<strong>' + esc(lookups) + '</strong> lookup' + (lookups === 1 ? '' : 's') + ' to generative AI services' +
+        (blockedPct == null ? '' : ', of which ' + esc(blockedPct) + '% were blocked')) +
+      (u && u.sharePct != null ? ' (' + esc(u.sharePct) + '% of all DNS lookups)' : '') + '. ' +
+      (a ? esc(rows.length) + ' distinct AI tool' + (rows.length === 1 ? ' was' : 's were') + ' seen; ' +
+        esc(shadow) + (shadow === 1 ? ' is' : ' are') + ' marked unsanctioned but still reachable, and ' +
+        esc(unreviewed) + ' ' + (unreviewed === 1 ? 'has' : 'have') + ' not yet been reviewed. ' : '') +
+      'Counts are DNS lookups, which measure how often a tool is reached, not how much is shared with it.</div>';
+
+    var labels = { sanctioned: 'Sanctioned', unsanctioned: 'Unsanctioned', under_review: 'Under review', unreviewed: 'Not yet reviewed' };
+    var table = rows.length ? D.dataTable({
+      cols: [
+        { label: 'AI tool',  key: 'name',    width: '40%' },
+        { label: 'Status',   key: 'state',   width: '24%' },
+        { label: 'Lookups',  key: 'lookups', width: '18%' },
+        { label: 'Blocked',  key: 'blocked', width: '18%' },
+      ],
+      rows: rows.slice(0, 8).map(function (r) {
+        return { name: r.name, state: labels[r.status] || labels.unreviewed,
+                 lookups: (r.allowed || 0) + (r.blocked || 0), blocked: r.blocked || 0 };
+      }),
+    }) : '';
+
+    return tiles + head + table + sectionComment(ctx, 'aiUsage');
+  }
+
   function renderFirewallAudit(ctx) {
     var payload = ctx.data.firewall;
     var a = payload && payload.audit;
@@ -4163,7 +4234,11 @@ window.ReportSections = (function () {
       services: ['email'],
       requires: ['email'], render: renderEmailSecurity, commentable: true },
 
-    { n: 18, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',
+    { n: 18, id: 'aiUsage',            label: 'AI Usage Dashboard',                      group: 'Dashboards',
+      services: ['ai_visibility'],
+      requires: ['ai'], render: renderAiUsage, commentable: true },
+
+    { n: 19, id: 'recommendations',    label: 'Executive Decisions and Recommendations', group: 'Executive',
       services: null,          // always offered, whatever the client buys
       requires: ['secureScore'], optional: ['vulnFindings'],
       render: renderDecisions, commentable: true },
