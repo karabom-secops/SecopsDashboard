@@ -1011,6 +1011,19 @@
       wazuhFields: true, // basic-auth username, timezone and per-source scoping
     },
     {
+      id:       'fortianalyzer',
+      name:     'FortiAnalyzer',
+      icon:     '🧱',
+      desc:     'Managed NDR telemetry read directly from FortiAnalyzer — traffic, IPS threats, source countries, VPN failures and firewall admin activity, collected hourly into daily rollups.',
+      urlLabel: 'FortiAnalyzer URL',
+      urlHint:  'e.g. https://faz.yourdomain.com',
+      fazFields: true,
+      // A token, not a password: a REST API admin restricted to this client's
+      // ADOM. Labelled so it is not mistaken for a GUI login.
+      keyLabel: 'REST API Token',
+      keyHint:  'Token of a read-only REST API admin restricted to this client\'s ADOM…',
+    },
+    {
       id:   'arctic_wolf_reports',
       name: 'Arctic Wolf Reports',
       icon: '📊',
@@ -1124,6 +1137,33 @@
       </div>`;
   }
 
+  /**
+   * What the last FortiAnalyzer Test verified: the ADOM, its FortiGates, and
+   * which log types and FortiView views answered. The device names are the
+   * operator's check that this is the right client's ADOM, so they are shown
+   * rather than summarised as a count.
+   */
+  function renderFazVerified(cfg) {
+    const c = (cfg && cfg.config_json) || {};
+    const note = html => `<p class="int-optional" style="margin:-.25rem 0 .75rem">${html}</p>`;
+    if (!c.verified_at) {
+      return note('Not verified yet — Save, then Test Connection. Sync is refused until this ' +
+        'ADOM and its FortiGates have been checked.');
+    }
+    const when = new Date(c.verified_at).toLocaleString('en-ZA',
+      { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const devices = (c.verified_devices || []).map(d => d.name || d.sn).join(', ') || 'none';
+    const changed = c.adom && c.verified_adom && c.adom !== c.verified_adom;
+    const marks = obj => Object.keys(obj || {}).map(k => `${k} ${obj[k] && obj[k].ok ? '✓' : '✗'}`).join(' · ');
+    const d = c.detected || {};
+    return (changed ? note('<strong>⚠ The ADOM has changed since it was verified.</strong> ' +
+        'Test Connection again — sync is refused until then.') : '') +
+      note(`Verified ${escHtmlInt(when)} against ADOM <code>${escHtmlInt(c.verified_adom)}</code>` +
+        `${c.faz_version ? ` (FortiAnalyzer ${escHtmlInt(c.faz_version)})` : ''}: ${escHtmlInt(devices)}.`) +
+      (d.logtypes ? `<div class="integration-sync-meta"><span class="int-sync-status">Logs: ${escHtmlInt(marks(d.logtypes))}</span></div>` : '') +
+      (d.views ? `<div class="integration-sync-meta"><span class="int-sync-status">FortiView: ${escHtmlInt(marks(d.views))}</span></div>` : '');
+  }
+
   /** "a, b , c" → ['a','b','c'], empty entries dropped. */
   function csvList(value) {
     return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -1219,6 +1259,24 @@
                      value="${escHtmlInt(scopeVal(cfg, 'o365OrganizationIds'))}">
             </div>
             ${renderDetected(cfg)}` : ''}
+            ${p.fazFields ? `
+            <div class="form-group">
+              <label class="modal-label">ADOM</label>
+              <input type="text" class="int-faz-adom form-input" data-provider="${p.id}"
+                     placeholder="This client's ADOM, exactly as named in FortiAnalyzer"
+                     value="${escHtmlInt(cfgVal(cfg, 'adom'))}">
+            </div>
+            <div class="form-group">
+              <label class="modal-label">Time Zone</label>
+              <input type="text" class="int-timezone form-input" data-provider="${p.id}"
+                     placeholder="Africa/Johannesburg"
+                     value="${escHtmlInt(cfgVal(cfg, 'timeZone') || 'Africa/Johannesburg')}">
+            </div>
+            <p class="int-optional" style="margin:-.25rem 0 .75rem">
+              Use a <strong>read-only REST API admin restricted to this ADOM</strong>, with trusted
+              hosts set to this dashboard's server. The time zone must match the FortiAnalyzer's.
+            </p>
+            ${renderFazVerified(cfg)}` : ''}
             ${p.scopeFields ? `
             <div class="form-group">
               <label class="modal-label">Site IDs <span class="int-optional">(optional)</span></label>
@@ -1480,6 +1538,28 @@
       });
     }
 
+    if (providerId === 'fortianalyzer') {
+      const get = sel => {
+        const el = container.querySelector(`${sel}[data-provider="${providerId}"]`);
+        return el ? el.value.trim() : '';
+      };
+      const adom = get('.int-faz-adom');
+      // Same rule as the server: the ADOM becomes part of an API path.
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(adom)) {
+        setIntFeedback(providerId,
+          'ADOM is required — letters, digits, "-" and "_" only, exactly as named in FortiAnalyzer.', true);
+        return;
+      }
+      // Preserve the verification the server wrote on Test (verified_adom,
+      // verified_devices, tlsFingerprint, detected). A changed ADOM no longer
+      // matches verified_adom, which is what makes the sync refuse until re-tested.
+      const existing = (configMapCache[providerId] && configMapCache[providerId].config_json) || {};
+      body.configJson = Object.assign({}, existing, {
+        adom,
+        timeZone: get('.int-timezone') || 'Africa/Johannesburg',
+      });
+    }
+
     try {
       const res = await fetch(`api/integrations/${providerId}`, {
         method: 'POST',
@@ -1537,7 +1617,7 @@
           window.renderAwareness().catch(() => {});
         }
         setTimeout(() => renderIntegrations(), 1500);
-      } else if (data.ok && providerId === 'wazuh') {
+      } else if (data.ok && (providerId === 'wazuh' || providerId === 'fortianalyzer')) {
         setIntFeedback(providerId, `✓ ${data.message}`, false);
         setTimeout(() => renderIntegrations(), 1500);
       } else if (data.ok && providerId === 'sentinelone') {

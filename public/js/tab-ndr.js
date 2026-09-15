@@ -1,4 +1,5 @@
-/* tab-ndr.js — Managed NDR: FortiGate firewall monitoring via Wazuh.
+/* tab-ndr.js — Managed NDR: FortiGate firewall monitoring, from FortiAnalyzer
+   (or Wazuh, for clients not yet migrated). Both sources return the same shape.
 
    Four independent panel groups (traffic, IPS threats, geo, VPN/admin). Each
    renders or explains itself on its own, so the screen is fully useful when
@@ -11,6 +12,15 @@ const NdrTab = (() => {
   const charts = {};
   let bound   = false;
   let summary = null;
+  // Which integration answered last, so Sync Now reaches the right one even
+  // when the screen is showing its empty state.
+  let lastProvider = 'wazuh';
+
+  /** "Not available" text for a table the source cannot produce, else undefined. */
+  function notAvailable(d, key) {
+    return (d && Array.isArray(d.unavailable) && d.unavailable.indexOf(key) >= 0)
+      ? 'Not available from this log source.' : undefined;
+  }
 
   const SEVERITY_COLOR = {
     critical: U.COLORS.red,
@@ -61,17 +71,20 @@ const NdrTab = (() => {
 
     U.panel('ndr-talkers-panel', s.traffic, d => {
       U.fillTable('ndr-talkers-table', d.topSources, 3, r => `
-        <tr><td class="edr-mono">${U.esc(r.label)}</td><td>${U.esc(r.country || '—')}</td><td>${U.fmtNum(r.count)}</td></tr>`);
+        <tr><td class="edr-mono">${U.esc(r.label)}</td><td>${U.esc(r.country || '—')}</td><td>${U.fmtNum(r.count)}</td></tr>`,
+        notAvailable(d, 'topSources'));
     });
 
     U.panel('ndr-ports-panel', s.traffic, d => {
       U.fillTable('ndr-ports-table', d.topPorts, 3, r => `
-        <tr><td class="edr-mono">${U.esc(r.label)}</td><td>${U.esc(r.service || '—')}</td><td>${U.fmtNum(r.count)}</td></tr>`);
+        <tr><td class="edr-mono">${U.esc(r.label)}</td><td>${U.esc(r.service || '—')}</td><td>${U.fmtNum(r.count)}</td></tr>`,
+        notAvailable(d, 'topPorts'));
     });
 
     U.panel('ndr-policies-panel', s.traffic, d => {
       U.fillTable('ndr-policies-table', d.topPolicies, 3, r => `
-        <tr><td class="edr-mono">${U.esc(r.label)}</td><td>${U.esc(r.name || '—')}</td><td>${U.fmtNum(r.count)}</td></tr>`);
+        <tr><td class="edr-mono">${U.esc(r.label)}</td><td>${U.esc(r.name || '—')}</td><td>${U.fmtNum(r.count)}</td></tr>`,
+        notAvailable(d, 'topPolicies'));
     });
   }
 
@@ -148,6 +161,8 @@ const NdrTab = (() => {
       s = null;
     }
 
+    if (s && s.provider) lastProvider = s.provider;
+
     const empty   = document.getElementById('ndr-empty');
     const content = document.getElementById('ndr-content');
 
@@ -157,7 +172,7 @@ const NdrTab = (() => {
     // showing the onboarding card because one source is quiet would hide the
     // sources that are working.
     if (!s || !s.configured) {
-      U.renderEmptyState('ndr-empty', s, 'your FortiGate is forwarding syslog to Wazuh');
+      U.renderEmptyState('ndr-empty', s, 'your FortiGates are logging to FortiAnalyzer');
       if (empty)   empty.hidden = false;
       if (content) content.hidden = true;
       U.renderSyncMeta('ndr-sync-meta', s && s.sync);
@@ -179,6 +194,12 @@ const NdrTab = (() => {
       'firewall threats': s.threats,
     });
     U.renderSourceNote('ndr-source-note', s);
+
+    // Scaled IPS counts must be labelled as such, wherever they appear.
+    const note = document.getElementById('ndr-source-note');
+    if (note && U.isReady(s.threats) && s.threats.data.estimated) {
+      note.textContent += ' On some days the IPS blocked/allowed figures are estimated from a sample of the logs.';
+    }
   }
 
   function bind() {
@@ -192,7 +213,7 @@ const NdrTab = (() => {
     if (refresh) refresh.addEventListener('click', () => loadAndRender());
 
     const sync = document.getElementById('ndr-sync-btn');
-    if (sync) sync.addEventListener('click', () => U.syncNow('ndr-sync-btn', 'ndr-sync-meta', loadAndRender));
+    if (sync) sync.addEventListener('click', () => U.syncNow('ndr-sync-btn', 'ndr-sync-meta', loadAndRender, lastProvider));
 
   }
 

@@ -45,6 +45,8 @@ const { PLAYBOOKS: IR_PLAYBOOKS } = require('./public/js/ir-playbooks-data');
 const mdrMetrics = require('./public/js/mdr-metrics');
 const scoreEvidence = require('./lib/score-evidence');
 const riskAcceptance = require('./lib/risk-acceptance');
+const fazAdapter = require('./lib/integrations/fortianalyzer');
+const fazMetrics = require('./lib/fortianalyzer-metrics');
 const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports');
 const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
 const sentinelOneAdapter = require('./lib/integrations/sentinelone');
@@ -2916,7 +2918,16 @@ const EMAIL_PROVIDER = 'acronis';
  */
 const MSGRAPH_PROVIDER = 'ms_graph';
 
-const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER]);
+/*
+ * FortiAnalyzer backs Managed NDR, replacing the Wazuh route for firewall
+ * telemetry. The REST API token goes in the encrypted api_key column; the ADOM
+ * and time zone in config_json, alongside the device list verified at Test.
+ * While a client is being migrated both may be configured — the NDR screen
+ * prefers FortiAnalyzer when it is enabled. See lib/integrations/fortianalyzer.js.
+ */
+const FAZ_PROVIDER = 'fortianalyzer';
+
+const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER, FAZ_PROVIDER]);
 
 /*
  * Degrade-open probe for the email-security tables, matching hasFirewallTables.
@@ -3131,6 +3142,47 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
         message: probe.message + disabledNote,
         latest: probe.latest,
         azureTenantId: probe.azureTenantId || null,
+        isEnabled: is_enabled,
+      });
+    } else if (provider === FAZ_PROVIDER) {
+      /*
+       * The device list is the check that matters. A token that works against
+       * the wrong ADOM fills the NDR screen with another client's real traffic,
+       * and nothing downstream can tell. So the FortiGates found are echoed back
+       * for the operator to confirm, and stored: every sync compares against
+       * them and refuses an ADOM that shares none (fazAdapter.checkDevices).
+       *
+       * Test also re-pins the TLS certificate — the one explicit operator
+       * action allowed to accept a changed one.
+       */
+      const cfg  = { ...fazAdapter.sanitiseStoredConfig(config_json || {}), base_url, api_key };
+      const info = await fazAdapter.testConnection(cfg);
+
+      let detected = null;
+      try {
+        detected = await fazAdapter.probe({ ...cfg, tlsFingerprint: info.tlsFingerprint || cfg.tlsFingerprint });
+      } catch (probeErr) {
+        console.warn('[fortianalyzer] probe failed after a successful connection —', probeErr.message);
+      }
+
+      const merged = Object.assign({}, config_json || {}, {
+        verified_adom:    info.adom,
+        verified_devices: info.devices.map(d => ({ name: d.name, sn: d.sn })),
+        verified_at:      new Date().toISOString(),
+        faz_version:      info.version,
+      },
+      info.tlsFingerprint ? { tlsFingerprint: info.tlsFingerprint } : {},
+      detected ? { detected } : {});
+      await pool.query(
+        'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
+        [JSON.stringify(merged), tenantId, provider]
+      );
+      return res.json({
+        ok: true,
+        message: info.message + disabledNote,
+        version: info.version,
+        devices: info.devices,
+        detected,
         isEnabled: is_enabled,
       });
     } else if (provider === WAZUH_PROVIDER) {
@@ -3909,6 +3961,119 @@ async function runWazuhRollupSync(tenantId) {
   return { ok, synced: rows, days: days.length, message };
 }
 
+/** Load an enabled FortiAnalyzer integration, or throw with `.reason` — the
+ *  same contract as loadWazuhIntegration(). Stored config is sanitised so
+ *  nothing in the database can install an adapter test seam. */
+async function loadFortiAnalyzerIntegration(tenantId) {
+  const row = await pool.query(
+    `SELECT id, tenant_id, base_url, api_key_enc, api_key_iv, config_json, is_enabled,
+            last_synced_at, last_sync_status, last_sync_message
+       FROM integrations WHERE tenant_id = $1 AND provider = $2`,
+    [tenantId, FAZ_PROVIDER]
+  );
+  if (!row.rows.length) {
+    throw Object.assign(new Error('FortiAnalyzer integration not configured.'),
+      { httpStatus: 404, reason: 'not_configured' });
+  }
+  const r = row.rows[0];
+  if (!r.is_enabled) {
+    throw Object.assign(new Error('FortiAnalyzer integration is disabled.'),
+      { httpStatus: 409, reason: 'disabled' });
+  }
+  return {
+    id:        r.id,
+    tenant_id: r.tenant_id,
+    base_url:  r.base_url,
+    api_key:   decryptKey(r.api_key_enc, r.api_key_iv),
+    config:    fazAdapter.sanitiseStoredConfig(r.config_json || {}),
+    sync: {
+      last_synced_at:    r.last_synced_at,
+      last_sync_status:  r.last_sync_status,
+      last_sync_message: r.last_sync_message,
+    },
+  };
+}
+
+async function recordFortiAnalyzerSync(tenantId, status, message) {
+  await pool.query(
+    `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = $1, last_sync_message = $2
+      WHERE tenant_id = $3 AND provider = $4`,
+    [status, message, tenantId, FAZ_PROVIDER]
+  );
+}
+
+const fazSyncInProgress = new Set();
+
+/**
+ * Collect FortiAnalyzer telemetry for one tenant into the daily rollups.
+ *
+ * Two refusals come BEFORE any day is collected, because both mean the data
+ * could belong to someone else:
+ *   - the ADOM has not been verified by Test (or changed since it was);
+ *   - the ADOM's FortiGates share none of the verified devices.
+ */
+async function runFortiAnalyzerSync(tenantId) {
+  if (fazSyncInProgress.has(tenantId)) {
+    return { ok: false, message: 'A FortiAnalyzer sync for this client is already running.' };
+  }
+  fazSyncInProgress.add(tenantId);
+  try {
+    const integration = await loadFortiAnalyzerIntegration(tenantId);
+    const conf = integration.config;
+
+    if (!conf.verified_adom || conf.verified_adom !== conf.adom) {
+      const msg = 'This ADOM has not been verified. Run Test connection under Admin → Integrations before syncing.';
+      await recordFortiAnalyzerSync(tenantId, 'error', msg);
+      throw Object.assign(new Error(msg), { httpStatus: 409 });
+    }
+
+    const cfg = Object.assign({}, conf, { base_url: integration.base_url, api_key: integration.api_key });
+
+    let warning = null;
+    try {
+      warning = (await fazAdapter.checkDevices(cfg, conf.verified_devices)).warning;
+    } catch (err) {
+      await recordFortiAnalyzerSync(tenantId, 'error', err.message);
+      throw err;
+    }
+
+    const tz    = conf.timeZone || 'UTC';
+    const today = wazuhMetrics.localDay(new Date(), tz);
+    const days  = await fazMetrics.daysNeedingSnapshot(pool, integration.id, tz);
+
+    let rows = 0;
+    const failures = [];
+    for (const day of days) {
+      try {
+        const r = await fazMetrics.snapshotDay(pool, integration, day, { isToday: day === today });
+        rows += r.rows;
+        if (r.error) failures.push(`${day}: ${r.error}`);
+        else if (r.partialPanels.length) failures.push(`${day}: panels unavailable (${r.partialPanels.join(', ')})`);
+      } catch (err) {
+        failures.push(`${day}: ${err.message}`);
+      }
+    }
+
+    const ok = failures.length === 0;
+    const message = (ok
+      ? `Collected ${days.length} day${days.length !== 1 ? 's' : ''} (${rows} metric rows)`
+      : `Collected ${days.length} day${days.length !== 1 ? 's' : ''} with problems — ${failures[0]}`) +
+      (warning ? ' ' + warning : '');
+
+    await recordFortiAnalyzerSync(tenantId, ok ? 'ok' : 'error', message);
+
+    // The screen caches for 45 seconds; a fresh collection should show at once.
+    for (const key of [...wazuhCache.keys()]) {
+      if (key.indexOf(`faz:${integration.id}:`) === 0) wazuhCache.delete(key);
+    }
+
+    console.log(`[integrations] fortianalyzer: ${message} for tenant ${tenantId}`);
+    return { ok, synced: rows, days: days.length, message };
+  } finally {
+    fazSyncInProgress.delete(tenantId);
+  }
+}
+
 /** POST /api/integrations/:provider/sync — fetch fresh data from the provider and store it */
 app.post('/api/integrations/:provider/sync', async (req, res) => {
   const provider = req.params.provider;
@@ -3920,6 +4085,7 @@ app.post('/api/integrations/:provider/sync', async (req, res) => {
     if (provider === REPORTS_PROVIDER)     result = await runArcticWolfReportsSync(tenantId, req.session.userId);
     else if (provider === EDR_PROVIDER)    result = await runSentinelOneSync(tenantId);
     else if (provider === WAZUH_PROVIDER)  result = await runWazuhRollupSync(tenantId);
+    else if (provider === FAZ_PROVIDER)    result = await runFortiAnalyzerSync(tenantId);
     else if (provider === EMAIL_PROVIDER)  result = await runAcronisSync(tenantId);
     else if (provider === MSGRAPH_PROVIDER) result = await runMsGraphSync(tenantId);
     else                                   result = await runTicketIntegrationSync(provider, tenantId, req.session.userId);
@@ -4207,6 +4373,47 @@ async function runWazuhRollups() {
 setTimeout(() => { runWazuhRollups().catch(err => console.error('[integrations] wazuh rollup crashed —', err.message)); }, 90 * 1000);
 setInterval(() => { runWazuhRollups().catch(err => console.error('[integrations] wazuh rollup crashed —', err.message)); }, WAZUH_ROLLUP_INTERVAL_MS);
 
+// ── FortiAnalyzer collection (hourly) ────────────────────────────────────────
+// Tenants run one after another; the adapter additionally caps concurrent
+// tasks per appliance, because every client shares the same FortiAnalyzer.
+
+const FAZ_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+let fazSchedulerRunning = false;
+
+async function runFortiAnalyzerSyncs() {
+  if (fazSchedulerRunning) {
+    console.log('[integrations] fortianalyzer collection still running — skipping this tick');
+    return;
+  }
+  fazSchedulerRunning = true;
+  try {
+    let rows;
+    try {
+      rows = (await pool.query(
+        'SELECT tenant_id FROM integrations WHERE is_enabled = TRUE AND provider = $1',
+        [FAZ_PROVIDER]
+      )).rows;
+    } catch (err) {
+      console.error('[integrations] fortianalyzer: failed to load integrations —', err.message);
+      return;
+    }
+    for (const row of rows) {
+      try {
+        await runFortiAnalyzerSync(row.tenant_id);
+      } catch (err) {
+        console.error(`[integrations] fortianalyzer sync failed: tenant ${row.tenant_id} — ${err.message}`);
+      }
+    }
+  } finally {
+    fazSchedulerRunning = false;
+  }
+}
+
+if (process.env.NODE_ENV !== 'test') {
+  setTimeout(() => { runFortiAnalyzerSyncs().catch(err => console.error('[integrations] fortianalyzer crashed —', err.message)); }, 120 * 1000);
+  setInterval(() => { runFortiAnalyzerSyncs().catch(err => console.error('[integrations] fortianalyzer crashed —', err.message)); }, FAZ_SYNC_INTERVAL_MS);
+}
+
 // ── Managed NDR & Managed Identity (Wazuh) data routes ───────────────────
 
 function resolveWazuhTenant(req) {
@@ -4252,10 +4459,11 @@ async function wazuhCached(key, produce) {
  *  `reason` is 'not_configured' | 'disabled' — the screens word their empty
  *  state from it, because "you have not set this up" and "you set this up and
  *  then disabled it" call for completely different next steps. */
-function wazuhUnavailable(days, keys, reason) {
+function wazuhUnavailable(days, keys, reason, provider) {
   const out = {
     windowDays: days,
     source: null,
+    provider: provider || null,
     configured: false,
     reason: reason || 'not_configured',
     detected: null,
@@ -4277,11 +4485,31 @@ function wazuhUnavailable(days, keys, reason) {
 async function wazuhScreen(tenantId, screen, days) {
   const keys = screen === 'ndr' ? ['traffic', 'threats', 'geo', 'vpnAdmin'] : ['o365', 'graph'];
 
+  /*
+   * NDR prefers FortiAnalyzer when it is configured and enabled; Wazuh remains
+   * the fallback while clients are migrated. A disabled FortiAnalyzer with no
+   * Wazuh behind it reports 'disabled', so the screen says "switched off"
+   * rather than "never set up".
+   */
+  let fazReason = null;
+  if (screen === 'ndr') {
+    try {
+      const faz = await loadFortiAnalyzerIntegration(tenantId);
+      return fortiAnalyzerNdrScreen(tenantId, faz, days);
+    } catch (err) {
+      if (!err.reason) throw err;
+      fazReason = err.reason;
+    }
+  }
+
   let integration;
   try {
     integration = await loadWazuhIntegration(tenantId);
   } catch (err) {
-    return wazuhUnavailable(days, keys, err.reason);
+    if (fazReason === 'disabled' && err.reason === 'not_configured') {
+      return wazuhUnavailable(days, keys, 'disabled', FAZ_PROVIDER);
+    }
+    return wazuhUnavailable(days, keys, err.reason, WAZUH_PROVIDER);
   }
 
   const tz  = integration.config.timeZone || 'UTC';
@@ -4298,8 +4526,10 @@ async function wazuhScreen(tenantId, screen, days) {
         ? await wazuhAdapter.fetchNdr(cfg, range)
         : await wazuhAdapter.fetchO365(cfg, range);
     } else {
+      // Scoped to THIS integration: a FortiAnalyzer running alongside writes
+      // the same 'fortigate' rows, and must not be summed in.
       panels = screen === 'ndr'
-        ? await wazuhMetrics.ndrFromRollups(pool, tenantId, days)
+        ? await wazuhMetrics.ndrFromRollups(pool, tenantId, days, integration.id)
         : await wazuhMetrics.o365FromRollups(pool, tenantId, days);
     }
 
@@ -4312,6 +4542,7 @@ async function wazuhScreen(tenantId, screen, days) {
     const out = {
       windowDays: days,
       source: live ? 'live' : 'rollup',
+      provider: WAZUH_PROVIDER,
       configured: true,
       timeZone: tz,
       detected: integration.config.detected || null,
@@ -4319,6 +4550,37 @@ async function wazuhScreen(tenantId, screen, days) {
       partial: panels._partial || [],
     };
     keys.forEach(k => { out[k] = panels[k]; });
+    return out;
+  });
+}
+
+/**
+ * The NDR screen from FortiAnalyzer's rollups — always rollups, never live
+ * (see lib/fortianalyzer-metrics.js for why). Before the first collection has
+ * run, empty panels say "not collected yet" rather than "no events", which
+ * would read as a quiet network.
+ */
+async function fortiAnalyzerNdrScreen(tenantId, integration, days) {
+  return wazuhCached(`faz:${integration.id}:${days}`, async () => {
+    const panels = await wazuhMetrics.ndrFromRollups(pool, tenantId, days, integration.id);
+    const collected = !!integration.sync.last_synced_at;
+    const out = {
+      windowDays: days,
+      source: 'rollup',
+      provider: FAZ_PROVIDER,
+      configured: true,
+      timeZone: integration.config.timeZone || 'UTC',
+      adom: integration.config.adom || null,
+      detected: null,
+      sync: integration.sync,
+      partial: [],
+    };
+    ['traffic', 'threats', 'geo', 'vpnAdmin'].forEach((k) => {
+      const p = panels[k];
+      out[k] = !collected && p && p.reason === 'no_data_in_range'
+        ? { available: false, data: null, reason: 'not_synced', lastEventAt: null }
+        : p;
+    });
     return out;
   });
 }

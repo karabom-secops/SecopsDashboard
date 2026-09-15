@@ -75,17 +75,21 @@ const WazuhUI = (() => {
 
   // ── Panel availability ───────────────────────────────────────────────────
 
+  // Worded for either log source: Managed NDR now reads FortiAnalyzer, and
+  // Managed Identity still reads Wazuh until it moves to Microsoft Graph.
   const REASON_TEXT = {
-    not_ingesting:     'This log source is not reaching Wazuh yet.',
+    not_ingesting:     'This log source is not reaching the dashboard yet.',
     no_data_in_range:  'No matching events in this period.',
-    query_error:       'Wazuh could not answer this query.',
-    not_permitted:     'This query was refused — check the integration scope and indexer permissions.',
+    query_error:       'The log source could not answer this query.',
+    not_permitted:     'This query was refused — check the integration\'s permissions.',
+    not_synced:        'Nothing has been collected yet.',
   };
 
   const REASON_HINT = {
-    not_ingesting:    'Configure ingestion on the Wazuh manager, then re-test the integration under Admin → Integrations.',
-    query_error:      'Check the indexer logs, then re-test the integration under Admin → Integrations.',
-    not_permitted:    'The indexer user may lack read access to wazuh-alerts-4.x-*.',
+    not_ingesting:    'Check the log source is sending this data, then re-test the integration under Admin → Integrations.',
+    query_error:      'Re-test the integration under Admin → Integrations; the last sync message says what failed.',
+    not_permitted:    'The API user may lack read access to these logs.',
+    not_synced:       'Press Sync Now, or wait for the hourly collection.',
   };
 
   function isReady(envelope) {
@@ -136,12 +140,16 @@ const WazuhUI = (() => {
 
   // ── Tables ───────────────────────────────────────────────────────────────
 
-  /** Fill a table body from rows, or show a single muted "no data" line. */
-  function fillTable(tableId, rows, cols, rowHtml) {
+  /**
+   * Fill a table body from rows, or show a single muted line. `emptyText`
+   * overrides "No data" for a table the source cannot produce at all — "not
+   * available" and "nothing happened" are different findings.
+   */
+  function fillTable(tableId, rows, cols, rowHtml, emptyText) {
     const tbody = document.querySelector(`#${tableId} tbody`);
     if (!tbody) return;
-    if (!rows || !rows.length) {
-      tbody.innerHTML = `<tr><td colspan="${cols}" class="edr-muted">No data for this period.</td></tr>`;
+    if (emptyText || !rows || !rows.length) {
+      tbody.innerHTML = `<tr><td colspan="${cols}" class="edr-muted">${esc(emptyText || 'No data for this period.')}</td></tr>`;
       return;
     }
     tbody.innerHTML = rows.map(rowHtml).join('');
@@ -290,6 +298,12 @@ const WazuhUI = (() => {
     const el = document.getElementById(elId);
     if (!el) return;
     if (!summary || !summary.source) { el.textContent = ''; return; }
+    if (summary.provider === 'fortianalyzer') {
+      el.textContent = `Collected from FortiAnalyzer${summary.adom ? ` (ADOM ${summary.adom})` : ''} into daily ` +
+        `rollups, refreshed hourly — the last ${summary.windowDays} days, with today still in progress ` +
+        `(${summary.timeZone || 'UTC'}).`;
+      return;
+    }
     el.textContent = summary.source === 'live'
       ? `Queried live from the Wazuh Indexer over the last ${summary.windowDays} days (${summary.timeZone || 'UTC'}).`
       : `Built from stored daily rollups over the last ${summary.windowDays} days — ranges beyond 30 days exceed the indexer's retention.`;
@@ -337,12 +351,13 @@ const WazuhUI = (() => {
            administrator to assign your account to an organisation — every screen on this dashboard
            is scoped to one.</p>`;
     } else if (reason === 'disabled') {
-      body = `<p><strong>The Wazuh integration is switched off.</strong></p>
+      const name = summary.provider === 'fortianalyzer' ? 'FortiAnalyzer' : 'Wazuh';
+      body = `<p><strong>The ${name} integration is switched off.</strong></p>
         <p>Its connection may be working fine — but while it is disabled nothing syncs and
         this screen stays empty. Enable it under ${link}, then press Save.</p>`;
     } else {
       body = `<p><strong>No data yet.</strong></p>
-        <p>Configure the Wazuh Indexer integration under ${link}, and make sure ${esc(sourceHint)}.</p>`;
+        <p>Configure the integration under ${link}, and make sure ${esc(sourceHint)}.</p>`;
     }
 
     el.innerHTML = body;
@@ -359,15 +374,21 @@ const WazuhUI = (() => {
     });
   }
 
-  /** Shared "Sync Now" handler — both tabs sync the same Wazuh integration. */
-  async function syncNow(btnId, metaId, reload) {
+  /**
+   * Shared "Sync Now" handler. `provider` is whichever integration served the
+   * screen — FortiAnalyzer for NDR once configured, Wazuh otherwise.
+   */
+  async function syncNow(btnId, metaId, reload, provider) {
     const btn  = document.getElementById(btnId);
     const meta = document.getElementById(metaId);
+    const p    = provider === 'fortianalyzer' ? 'fortianalyzer' : 'wazuh';
     if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
-    if (meta) meta.textContent = 'Snapshotting daily rollups from Wazuh…';
+    if (meta) meta.textContent = p === 'fortianalyzer'
+      ? 'Collecting from FortiAnalyzer — this can take a minute…'
+      : 'Snapshotting daily rollups from Wazuh…';
 
     try {
-      const res = await fetch('api/integrations/wazuh/sync', {
+      const res = await fetch(`api/integrations/${p}/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
