@@ -75,14 +75,16 @@ const WazuhUI = (() => {
 
   // ── Panel availability ───────────────────────────────────────────────────
 
-  // Worded for either log source: Managed NDR now reads FortiAnalyzer, and
-  // Managed Identity still reads Wazuh until it moves to Microsoft Graph.
+  // Worded for any log source: Managed NDR reads FortiAnalyzer and Managed
+  // Identity reads Microsoft directly, with Wazuh kept for clients not yet moved.
   const REASON_TEXT = {
     not_ingesting:     'This log source is not reaching the dashboard yet.',
     no_data_in_range:  'No matching events in this period.',
     query_error:       'The log source could not answer this query.',
     not_permitted:     'This query was refused — check the integration\'s permissions.',
     not_synced:        'Nothing has been collected yet.',
+    not_licensed:      'Not available — this needs a Microsoft Entra ID P1 or P2 licence on the client\'s tenant.',
+    beyond_retention:  'Not available for this period — Microsoft keeps this data for a limited time only.',
   };
 
   const REASON_HINT = {
@@ -90,6 +92,8 @@ const WazuhUI = (() => {
     query_error:      'Re-test the integration under Admin → Integrations; the last sync message says what failed.',
     not_permitted:    'The API user may lack read access to these logs.',
     not_synced:       'Press Sync Now, or wait for the hourly collection.',
+    not_licensed:     'Sign-ins need Entra ID P1; risky users and risk detections need P2.',
+    beyond_retention: 'Office 365 audit content is kept for 7 days; shorter ranges will show it.',
   };
 
   function isReady(envelope) {
@@ -304,6 +308,12 @@ const WazuhUI = (() => {
         `(${summary.timeZone || 'UTC'}).`;
       return;
     }
+    if (summary.provider === 'ms_graph') {
+      el.textContent = `Collected from Microsoft Graph and the Office 365 Management Activity API into daily ` +
+        `rollups, refreshed hourly — the last ${summary.windowDays} days (${summary.timeZone || 'UTC'}). ` +
+        `Today and yesterday are still filling in: Office 365 audit events can arrive hours late.`;
+      return;
+    }
     el.textContent = summary.source === 'live'
       ? `Queried live from the Wazuh Indexer over the last ${summary.windowDays} days (${summary.timeZone || 'UTC'}).`
       : `Built from stored daily rollups over the last ${summary.windowDays} days — ranges beyond 30 days exceed the indexer's retention.`;
@@ -351,7 +361,7 @@ const WazuhUI = (() => {
            administrator to assign your account to an organisation — every screen on this dashboard
            is scoped to one.</p>`;
     } else if (reason === 'disabled') {
-      const name = summary.provider === 'fortianalyzer' ? 'FortiAnalyzer' : 'Wazuh';
+      const name = { fortianalyzer: 'FortiAnalyzer', ms_graph: 'Microsoft Graph' }[summary.provider] || 'Wazuh';
       body = `<p><strong>The ${name} integration is switched off.</strong></p>
         <p>Its connection may be working fine — but while it is disabled nothing syncs and
         this screen stays empty. Enable it under ${link}, then press Save.</p>`;
@@ -381,11 +391,15 @@ const WazuhUI = (() => {
   async function syncNow(btnId, metaId, reload, provider) {
     const btn  = document.getElementById(btnId);
     const meta = document.getElementById(metaId);
-    const p    = provider === 'fortianalyzer' ? 'fortianalyzer' : 'wazuh';
+    // Only known targets: the value becomes part of the request path.
+    const SYNC_LABEL = {
+      fortianalyzer: 'Collecting from FortiAnalyzer — this can take a minute…',
+      ms_identity:   'Collecting from Microsoft Graph and Office 365 — this can take a minute…',
+      wazuh:         'Snapshotting daily rollups from Wazuh…',
+    };
+    const p    = Object.prototype.hasOwnProperty.call(SYNC_LABEL, provider) ? provider : 'wazuh';
     if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
-    if (meta) meta.textContent = p === 'fortianalyzer'
-      ? 'Collecting from FortiAnalyzer — this can take a minute…'
-      : 'Snapshotting daily rollups from Wazuh…';
+    if (meta) meta.textContent = SYNC_LABEL[p];
 
     try {
       const res = await fetch(`api/integrations/${p}/sync`, {
@@ -414,6 +428,7 @@ const WazuhUI = (() => {
     destroyChart, lineChart, doughnutChart, barChart,
     renderStats, renderSyncMeta, renderStaleBanner, renderSourceNote,
     renderEmptyState, bindAdminLink, syncNow,
+    reasonText: reason => REASON_TEXT[reason] || REASON_TEXT.not_ingesting,
   };
 })();
 

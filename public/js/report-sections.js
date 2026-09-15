@@ -1262,8 +1262,21 @@ window.ReportSections = (function () {
     var d = envData(o.o365);
     if (!g && !d) return null;
 
-    var signins = (g && g.signins) || {};
-    var risky   = (g && g.riskyUsers) || {};
+    /*
+     * A part the direct Microsoft APIs could not read (not licensed, not
+     * permitted) is carried as zeros in the data with its key in `unavailable`.
+     * Those zeros must not reach a board slide as measurements.
+     */
+    var missing = function (env, key) {
+      var dd = envData(env);
+      return !!(dd && Array.isArray(dd.unavailable) && dd.unavailable.some(function (u) {
+        return (u && (u.key || u)) === key;
+      }));
+    };
+
+    var signins = (g && !missing(o.graph, 'signins') && g.signins) || {};
+    var risky   = (g && !missing(o.graph, 'riskyUsers') && g.riskyUsers) || {};
+    var auditSignins = !!(d && d.signins && !missing(o.o365, 'signins'));
     var legacy  = (signins.legacyAuth && signins.legacyAuth.total) || 0;
     var total   = signins.total || 0;
 
@@ -1274,8 +1287,8 @@ window.ReportSections = (function () {
       return RISK_HANDLED_STATES[String(u.state || '').toLowerCase()];
     }).length;
 
-    var ok   = d && d.signins ? (d.signins.success || 0) : null;
-    var bad  = d && d.signins ? (d.signins.failed  || 0) : null;
+    var ok   = auditSignins ? (d.signins.success || 0) : null;
+    var bad  = auditSignins ? (d.signins.failed  || 0) : null;
     var attempts = ok != null && bad != null ? ok + bad : 0;
 
     var m = {
@@ -1291,12 +1304,12 @@ window.ReportSections = (function () {
       riskOpen:     users.length ? users.length - handled : null,
       failedLogins: bad,
       // Sources whose failures look like spraying rather than a stuck client.
-      sprayIps: d && d.failedLogins && Array.isArray(d.failedLogins.byIp)
+      sprayIps: auditSignins && d.failedLogins && Array.isArray(d.failedLogins.byIp)
         ? d.failedLogins.byIp.filter(function (r) { return r.spray; }).length
         : null,
-      adminOps:     d && d.admin        ? d.admin.total        : null,
-      mailboxRules: d && d.mailboxRules ? d.mailboxRules.total : null,
-      dlpEvents:    d && d.dlp          ? d.dlp.total          : null,
+      adminOps:     d && d.admin && !missing(o.o365, 'admin')               ? d.admin.total        : null,
+      mailboxRules: d && d.mailboxRules && !missing(o.o365, 'mailboxRules') ? d.mailboxRules.total : null,
+      dlpEvents:    d && d.dlp && !missing(o.o365, 'dlp')                   ? d.dlp.total          : null,
     };
 
     // Weighted composite over whichever terms are actually measured.

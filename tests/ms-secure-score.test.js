@@ -343,8 +343,10 @@ check('a directory mismatch is detected and warned about',
 check('a mismatch warns rather than refusing — a human adjudicates',
   /warnings\.push\('DIRECTORY MISMATCH/.test(serverJs), 'non-fatal by design');
 
+// Either form: the Test branch now builds one config object for Secure Score
+// and Managed Identity together, and assigns the field rather than spreading it.
 check('the verified directory is recorded on a successful Test',
-  /verified_azure_tenant_id: probe\.azureTenantId/.test(srvCode), 'stored');
+  /verified_azure_tenant_id(: |\s*=\s*)probe\.azureTenantId/.test(srvCode), 'stored');
 
 check('a warning does not report as a clean "ok" sync',
   /warnings\.length \? 'partial' : 'ok'/.test(srvCode), 'honest status');

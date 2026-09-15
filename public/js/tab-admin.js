@@ -1164,6 +1164,37 @@
       (d.views ? `<div class="integration-sync-meta"><span class="int-sync-status">FortiView: ${escHtmlInt(marks(d.views))}</span></div>` : '');
   }
 
+  /**
+   * What the last Test found for Managed Identity: each Graph resource, and the
+   * Office 365 audit subscriptions. Shown per resource because a tenant commonly
+   * has some (sign-ins on P1) and not others (risky users need P2).
+   */
+  function renderIdentityProbe(cfg) {
+    const c = (cfg && cfg.config_json) || {};
+    if (!c.identity_enabled) return '';
+    const p = c.identity_probe;
+    if (!p) {
+      return '<p class="int-optional" style="margin:-.25rem 0 .75rem">Managed Identity not verified yet — ' +
+        'Save, then Test Connection. Sync is refused until then.</p>';
+    }
+    const labels = { signins: 'Sign-ins', admin: 'Admin changes', alerts: 'Alerts',
+      riskyUsers: 'Risky users', riskDetections: 'Risk detections' };
+    const graph = Object.keys(labels).map((k) => {
+      const g = (p.graph || {})[k] || {};
+      if (g.ok) return `${labels[k]} ✓`;
+      return `${labels[k]} ✗ ${g.reason === 'not_licensed' ? '(licence)' : g.permission ? `(${g.permission})` : ''}`;
+    }).join(' · ');
+    const a = p.audit || { enabled: [], failed: [] };
+    const audit = `Audit: ${(a.enabled || []).join(', ') || 'none enabled'}` +
+      ((a.failed || []).length ? ` · failed: ${(a.failed || []).map(f => f.contentType).join(', ')}` : '');
+    const changed = c.identity_verified_tenant && c.azure_tenant_id &&
+      String(c.identity_verified_tenant).toLowerCase() !== String(c.azure_tenant_id).toLowerCase();
+    return (changed ? '<p class="int-optional" style="margin:-.25rem 0 .75rem"><strong>⚠ The directory has ' +
+        'changed since Managed Identity was verified.</strong> Test Connection again — sync is refused until then.</p>' : '') +
+      `<div class="integration-sync-meta"><span class="int-sync-status">${escHtmlInt(graph)}</span></div>` +
+      `<div class="integration-sync-meta"><span class="int-sync-status">${escHtmlInt(audit)}</span></div>`;
+  }
+
   /** "a, b , c" → ['a','b','c'], empty entries dropped. */
   function csvList(value) {
     return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -1327,6 +1358,30 @@
               <strong>application</strong> permission with admin consent.
               A delegated grant authenticates and then fails on every read.
             </p>
+            <div class="form-group">
+              <label class="int-optional" style="display:flex;gap:.5rem;align-items:flex-start">
+                <input type="checkbox" class="int-identity-enabled" data-provider="${p.id}"
+                       ${cfg && cfg.config_json && cfg.config_json.identity_enabled ? 'checked' : ''}>
+                <span><strong>Collect Managed Identity telemetry</strong> — sign-ins, admin changes,
+                alerts, risky users, mailbox rules, external sharing and DLP, read directly from
+                Microsoft (no Wazuh).</span>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="modal-label">Identity Time Zone</label>
+              <input type="text" class="int-identity-tz form-input" data-provider="${p.id}"
+                     placeholder="Africa/Johannesburg"
+                     value="${escHtmlInt(cfgVal(cfg, 'identity_time_zone') || 'Africa/Johannesburg')}">
+            </div>
+            <p class="int-optional" style="margin:-.25rem 0 .75rem">
+              Managed Identity also needs these <strong>application</strong> permissions with admin consent —
+              Microsoft Graph: <strong>AuditLog.Read.All</strong>, <strong>SecurityAlert.Read.All</strong>,
+              <strong>IdentityRiskyUser.Read.All</strong>, <strong>IdentityRiskEvent.Read.All</strong>;
+              Office 365 Management APIs: <strong>ActivityFeed.Read</strong> and <strong>ActivityFeed.ReadDlp</strong>.
+              Sign-ins need Entra ID P1; risky users and risk detections need P2. Test Connection starts
+              the Office 365 audit subscriptions and checks each permission.
+            </p>
+            ${renderIdentityProbe(cfg)}
             ${cfgVal(cfg, 'verified_azure_tenant_id') ? `
             <p class="int-optional" style="margin:-.25rem 0 .75rem">
               Last verified against directory
@@ -1503,6 +1558,10 @@
       if (authority) body.configJson.authority_url = authority;
       else delete body.configJson.authority_url;
 
+      const idCb = container.querySelector(`.int-identity-enabled[data-provider="${providerId}"]`);
+      body.configJson.identity_enabled = !!(idCb && idCb.checked);
+      body.configJson.identity_time_zone = get('.int-identity-tz') || 'Africa/Johannesburg';
+
       /*
        * Changing the directory invalidates the earlier verification: the stored
        * "verified" id would then belong to a different client, and the sync's
@@ -1511,6 +1570,9 @@
       if (existing.azure_tenant_id &&
           existing.azure_tenant_id.toLowerCase() !== azureTenantId.toLowerCase()) {
         delete body.configJson.verified_azure_tenant_id;
+        // Identity was verified against the old directory too.
+        delete body.configJson.identity_verified_tenant;
+        delete body.configJson.identity_probe;
       }
     }
 

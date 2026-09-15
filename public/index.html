@@ -1857,7 +1857,7 @@
   <section id="tab-o365" class="tab-panel" role="tabpanel" hidden>
     <div class="section-header">
       <h2 class="section-title">Managed Identity</h2>
-      <p class="section-subtitle">Office 365 and Microsoft Graph activity via Wazuh — sign-ins, privileged changes, data sharing and identity risk</p>
+      <p class="section-subtitle">Microsoft 365 identity activity via Microsoft Graph and the Office 365 Management API — sign-ins, privileged changes, data sharing and identity risk</p>
     </div>
 
     <div class="edr-toolbar">
@@ -1880,7 +1880,7 @@
 
     <div id="o365-empty" class="edr-empty" hidden>
       <p><strong>No Office 365 data yet.</strong></p>
-      <p>Configure the Wazuh Indexer integration under <a href="#" id="o365-goto-admin">Admin → Integrations</a>, and enable the <code>office365</code> module on your Wazuh manager.</p>
+      <p>Switch on Managed Identity collection on the Microsoft Graph integration under <a href="#" id="o365-goto-admin">Admin → Integrations</a>, grant the listed permissions, then press Test Connection.</p>
     </div>
 
     <div id="o365-content" hidden>

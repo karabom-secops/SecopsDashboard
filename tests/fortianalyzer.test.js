@@ -493,7 +493,8 @@ function dayAnswer(over) {
   section('the pages');
   const ui = read('public', 'js', 'wazuh-ui.js');
   check('Sync Now reaches the provider that served the screen, and only a known one',
-    /const p\s*= provider === 'fortianalyzer' \? 'fortianalyzer' : 'wazuh'/.test(ui) && /api\/integrations\/\$\{p\}\/sync/.test(ui));
+    /const p\s*= Object\.prototype\.hasOwnProperty\.call\(SYNC_LABEL, provider\) \? provider : 'wazuh'/.test(ui) &&
+    /fortianalyzer:\s*'Collecting from FortiAnalyzer/.test(ui) && /api\/integrations\/\$\{p\}\/sync/.test(ui));
   check('"not collected yet" is worded', /not_synced:\s*'Nothing has been collected yet\.'/.test(ui));
   check('an unavailable table is escaped and says so', /esc\(emptyText \|\| 'No data for this period\.'\)/.test(ui));
   const ndr = read('public', 'js', 'tab-ndr.js');

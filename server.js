@@ -47,6 +47,8 @@ const scoreEvidence = require('./lib/score-evidence');
 const riskAcceptance = require('./lib/risk-acceptance');
 const fazAdapter = require('./lib/integrations/fortianalyzer');
 const fazMetrics = require('./lib/fortianalyzer-metrics');
+const msIdentity = require('./lib/integrations/ms-identity');
+const identityMetrics = require('./lib/identity-metrics');
 const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports');
 const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
 const sentinelOneAdapter = require('./lib/integrations/sentinelone');
@@ -2927,6 +2929,15 @@ const MSGRAPH_PROVIDER = 'ms_graph';
  */
 const FAZ_PROVIDER = 'fortianalyzer';
 
+/*
+ * Managed Identity is NOT a separate integration row: it reuses the Microsoft
+ * Graph registration (config_json.identity_enabled switches it on), because
+ * it is the same app, directory and secret with extra permissions. It has its
+ * own sync target so "Sync Now" on the Identity tab collects identity rather
+ * than re-reading Secure Score. See lib/integrations/ms-identity.js.
+ */
+const IDENTITY_SYNC_PROVIDER = 'ms_identity';
+
 const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER, FAZ_PROVIDER]);
 
 /*
@@ -3121,27 +3132,61 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
        * So the directory id Microsoft answered with is echoed back for the
        * operator to check by eye, along with the score actually read.
        */
-      const probe = await msGraphAdapter.testConnection({
-        base_url, api_key, ...(config_json || {}),
-      });
+      const cfgAll = { base_url, api_key, ...(config_json || {}) };
+      const identityOn = !!(config_json && config_json.identity_enabled);
+
+      /*
+       * Secure Score and Managed Identity share this registration but need
+       * different permissions. With Identity switched on, a Secure Score
+       * failure must not hide whether the Identity permissions work, so both
+       * are tried and both reported.
+       */
+      let probe = null;
+      let scoreError = null;
+      try {
+        probe = await msGraphAdapter.testConnection(cfgAll);
+      } catch (err) {
+        if (!identityOn) throw err;
+        scoreError = err.message;
+      }
 
       // Record the directory we saw. It is not a secret, and having it stored
       // lets the sync notice later if the credential starts answering for a
       // different tenant than the one that was verified here.
-      if (probe.azureTenantId) {
-        const merged = Object.assign({}, config_json || {},
-          { verified_azure_tenant_id: probe.azureTenantId });
-        await pool.query(
-          'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
-          [JSON.stringify(merged), tenantId, provider]
-        );
+      const merged = Object.assign({}, config_json || {});
+      if (probe && probe.azureTenantId) merged.verified_azure_tenant_id = probe.azureTenantId;
+
+      /*
+       * The Identity probe records which resources this tenant allows, and
+       * starts the Office 365 audit subscriptions — the one write this
+       * integration makes to a client tenant, so it happens here, on an
+       * explicit operator action. identity_verified_tenant is what the sync
+       * checks before collecting anything.
+       */
+      let identity = null;
+      if (identityOn) {
+        identity = await msIdentity.probe(cfgAll);
+        merged.identity_probe = identity;
+        if (identity.anyOk) merged.identity_verified_tenant = String(config_json.azure_tenant_id || '');
+        else delete merged.identity_verified_tenant;
+      }
+
+      await pool.query(
+        'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
+        [JSON.stringify(merged), tenantId, provider]
+      );
+
+      if (!probe && !(identity && identity.anyOk)) {
+        return res.status(400).json({ ok: false, error: scoreError || 'Connection failed.' });
       }
 
       return res.json({
         ok: true,
-        message: probe.message + disabledNote,
-        latest: probe.latest,
-        azureTenantId: probe.azureTenantId || null,
+        message: (probe ? probe.message : `Secure Score could not be read (${scoreError}).`) +
+          (identity ? ' ' + msIdentity.describeProbe(identity) : '') + disabledNote,
+        latest: probe ? probe.latest : null,
+        azureTenantId: probe ? (probe.azureTenantId || null) : null,
+        identity,
         isEnabled: is_enabled,
       });
     } else if (provider === FAZ_PROVIDER) {
@@ -4002,6 +4047,118 @@ async function recordFortiAnalyzerSync(tenantId, status, message) {
   );
 }
 
+/** The Graph integration row with Managed Identity switched on, or throw with `.reason`. */
+async function loadIdentityIntegration(tenantId) {
+  const row = await pool.query(
+    `SELECT id, tenant_id, base_url, api_key_enc, api_key_iv, config_json, is_enabled
+       FROM integrations WHERE tenant_id = $1 AND provider = $2`,
+    [tenantId, MSGRAPH_PROVIDER]
+  );
+  const r = row.rows[0];
+  // Graph configured for Secure Score only is "not configured" for Identity,
+  // so the screen falls back to Wazuh rather than claiming to be switched off.
+  if (!r || !(r.config_json && r.config_json.identity_enabled)) {
+    throw Object.assign(new Error('Managed Identity collection is not switched on.'),
+      { httpStatus: 404, reason: 'not_configured' });
+  }
+  if (!r.is_enabled) {
+    throw Object.assign(new Error('The Microsoft Graph integration is disabled.'),
+      { httpStatus: 409, reason: 'disabled' });
+  }
+  return {
+    id:        r.id,
+    tenant_id: r.tenant_id,
+    base_url:  r.base_url,
+    api_key:   decryptKey(r.api_key_enc, r.api_key_iv),
+    config:    r.config_json || {},
+  };
+}
+
+/**
+ * The last Identity collection, from its rollup bookkeeping. The integration
+ * row's last_sync_* columns belong to the Secure Score sync on the same row,
+ * and sharing them would let one overwrite the other's status.
+ */
+async function identitySyncMeta(integrationId) {
+  try {
+    const r = await pool.query(
+      `SELECT ran_at, status, message FROM wazuh_rollup_run
+        WHERE integration_id = $1 AND source = ANY($2::text[])
+        ORDER BY ran_at DESC LIMIT 1`,
+      [integrationId, identityMetrics.SOURCES]
+    );
+    if (!r.rows.length) return null;
+    const row = r.rows[0];
+    return {
+      last_synced_at: row.ran_at,
+      last_sync_status: ['ok', 'no_data', 'partial_day'].includes(row.status) ? 'ok' : 'error',
+      last_sync_message: row.message,
+    };
+  } catch (err) {
+    if (err.code === '42P01') return null;
+    throw err;
+  }
+}
+
+const identitySyncInProgress = new Set();
+
+/**
+ * Collect Managed Identity telemetry for one tenant.
+ *
+ * Refused unless Test has verified Identity against THIS directory: a mistyped
+ * directory id that happens to be another real tenant where the app has
+ * consent would otherwise fill the screen with someone else's sign-ins.
+ */
+async function runIdentitySync(tenantId) {
+  if (identitySyncInProgress.has(tenantId)) {
+    return { ok: false, message: 'A Managed Identity sync for this client is already running.' };
+  }
+  identitySyncInProgress.add(tenantId);
+  try {
+    const integration = await loadIdentityIntegration(tenantId);
+    const conf = integration.config;
+    const configured = String(conf.azure_tenant_id || '').toLowerCase();
+
+    if (!conf.identity_verified_tenant || String(conf.identity_verified_tenant).toLowerCase() !== configured) {
+      throw Object.assign(new Error(
+        'Managed Identity has not been verified for this directory. Run Test Connection on the ' +
+        'Microsoft Graph integration under Admin → Integrations before syncing.'), { httpStatus: 409 });
+    }
+    if (conf.verified_azure_tenant_id && String(conf.verified_azure_tenant_id).toLowerCase() !== configured) {
+      throw Object.assign(new Error(
+        'Microsoft answered for a different directory than the one configured. Sync stopped — ' +
+        'check the Directory (tenant) ID and re-test.'), { httpStatus: 409 });
+    }
+
+    const tz = conf.identity_time_zone || 'UTC';
+    const days = await identityMetrics.daysNeedingSnapshot(pool, integration.id, tz);
+
+    let rows = 0;
+    const problems = [];
+    for (const day of days) {
+      try {
+        const r = await identityMetrics.snapshotDay(pool, integration, day, { timeZone: tz });
+        rows += r.rows;
+        if (r.problems.length) problems.push(`${day}: ${r.problems.join(', ')}`);
+      } catch (err) {
+        problems.push(`${day}: ${err.message}`);
+      }
+    }
+
+    for (const key of [...wazuhCache.keys()]) {
+      if (key.indexOf(`idn:${integration.id}:`) === 0) wazuhCache.delete(key);
+    }
+
+    const ok = problems.length === 0;
+    const message = `Collected ${days.length} day${days.length !== 1 ? 's' : ''} (${rows} metric rows)` +
+      (ok ? '' : ` — not everything could be read: ${problems[0]}`);
+    console.log(`[integrations] managed identity: ${message} for tenant ${tenantId}`);
+    return { ok, synced: rows, days: days.length, message };
+  } finally {
+    identitySyncInProgress.delete(tenantId);
+  }
+}
+
 const fazSyncInProgress = new Set();
 
 /**
@@ -4086,6 +4243,7 @@ app.post('/api/integrations/:provider/sync', async (req, res) => {
     else if (provider === EDR_PROVIDER)    result = await runSentinelOneSync(tenantId);
     else if (provider === WAZUH_PROVIDER)  result = await runWazuhRollupSync(tenantId);
     else if (provider === FAZ_PROVIDER)    result = await runFortiAnalyzerSync(tenantId);
+    else if (provider === IDENTITY_SYNC_PROVIDER) result = await runIdentitySync(tenantId);
     else if (provider === EMAIL_PROVIDER)  result = await runAcronisSync(tenantId);
     else if (provider === MSGRAPH_PROVIDER) result = await runMsGraphSync(tenantId);
     else                                   result = await runTicketIntegrationSync(provider, tenantId, req.session.userId);
@@ -4414,6 +4572,46 @@ if (process.env.NODE_ENV !== 'test') {
   setInterval(() => { runFortiAnalyzerSyncs().catch(err => console.error('[integrations] fortianalyzer crashed —', err.message)); }, FAZ_SYNC_INTERVAL_MS);
 }
 
+// ── Managed Identity collection (hourly) ─────────────────────────────────────
+
+const IDENTITY_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+let identitySchedulerRunning = false;
+
+async function runIdentitySyncs() {
+  if (identitySchedulerRunning) {
+    console.log('[integrations] managed identity collection still running — skipping this tick');
+    return;
+  }
+  identitySchedulerRunning = true;
+  try {
+    let rows;
+    try {
+      rows = (await pool.query(
+        `SELECT tenant_id FROM integrations
+          WHERE is_enabled = TRUE AND provider = $1 AND (config_json->>'identity_enabled') = 'true'`,
+        [MSGRAPH_PROVIDER]
+      )).rows;
+    } catch (err) {
+      console.error('[integrations] managed identity: failed to load integrations —', err.message);
+      return;
+    }
+    for (const row of rows) {
+      try {
+        await runIdentitySync(row.tenant_id);
+      } catch (err) {
+        console.error(`[integrations] managed identity sync failed: tenant ${row.tenant_id} — ${err.message}`);
+      }
+    }
+  } finally {
+    identitySchedulerRunning = false;
+  }
+}
+
+if (process.env.NODE_ENV !== 'test') {
+  setTimeout(() => { runIdentitySyncs().catch(err => console.error('[integrations] managed identity crashed —', err.message)); }, 150 * 1000);
+  setInterval(() => { runIdentitySyncs().catch(err => console.error('[integrations] managed identity crashed —', err.message)); }, IDENTITY_SYNC_INTERVAL_MS);
+}
+
 // ── Managed NDR & Managed Identity (Wazuh) data routes ───────────────────
 
 function resolveWazuhTenant(req) {
@@ -4492,10 +4690,21 @@ async function wazuhScreen(tenantId, screen, days) {
    * rather than "never set up".
    */
   let fazReason = null;
+  const directProvider = screen === 'ndr' ? FAZ_PROVIDER : MSGRAPH_PROVIDER;
   if (screen === 'ndr') {
     try {
       const faz = await loadFortiAnalyzerIntegration(tenantId);
       return fortiAnalyzerNdrScreen(tenantId, faz, days);
+    } catch (err) {
+      if (!err.reason) throw err;
+      fazReason = err.reason;
+    }
+  }
+  // Managed Identity likewise prefers the direct Microsoft APIs.
+  if (screen === 'o365') {
+    try {
+      const idn = await loadIdentityIntegration(tenantId);
+      return identityScreen(tenantId, idn, days);
     } catch (err) {
       if (!err.reason) throw err;
       fazReason = err.reason;
@@ -4507,7 +4716,7 @@ async function wazuhScreen(tenantId, screen, days) {
     integration = await loadWazuhIntegration(tenantId);
   } catch (err) {
     if (fazReason === 'disabled' && err.reason === 'not_configured') {
-      return wazuhUnavailable(days, keys, 'disabled', FAZ_PROVIDER);
+      return wazuhUnavailable(days, keys, 'disabled', directProvider);
     }
     return wazuhUnavailable(days, keys, err.reason, WAZUH_PROVIDER);
   }
@@ -4530,7 +4739,7 @@ async function wazuhScreen(tenantId, screen, days) {
       // the same 'fortigate' rows, and must not be summed in.
       panels = screen === 'ndr'
         ? await wazuhMetrics.ndrFromRollups(pool, tenantId, days, integration.id)
-        : await wazuhMetrics.o365FromRollups(pool, tenantId, days);
+        : await wazuhMetrics.o365FromRollups(pool, tenantId, days, integration.id);
     }
 
     const meta = await pool.query(
@@ -4578,6 +4787,37 @@ async function fortiAnalyzerNdrScreen(tenantId, integration, days) {
     ['traffic', 'threats', 'geo', 'vpnAdmin'].forEach((k) => {
       const p = panels[k];
       out[k] = !collected && p && p.reason === 'no_data_in_range'
+        ? { available: false, data: null, reason: 'not_synced', lastEventAt: null }
+        : p;
+    });
+    return out;
+  });
+}
+
+/**
+ * The Managed Identity screen from the direct Microsoft APIs' rollups, scoped
+ * to the Graph integration. Before the first collection, empty panels say
+ * "not collected yet" rather than "no sign-ins".
+ */
+async function identityScreen(tenantId, integration, days) {
+  return wazuhCached(`idn:${integration.id}:${days}`, async () => {
+    const [panels, sync] = await Promise.all([
+      wazuhMetrics.o365FromRollups(pool, tenantId, days, integration.id),
+      identitySyncMeta(integration.id),
+    ]);
+    const out = {
+      windowDays: days,
+      source: 'rollup',
+      provider: MSGRAPH_PROVIDER,
+      configured: true,
+      timeZone: integration.config.identity_time_zone || 'UTC',
+      detected: null,
+      sync,
+      partial: [],
+    };
+    ['o365', 'graph'].forEach((k) => {
+      const p = panels[k];
+      out[k] = !sync && p && p.reason === 'no_data_in_range'
         ? { available: false, data: null, reason: 'not_synced', lastEventAt: null }
         : p;
     });
