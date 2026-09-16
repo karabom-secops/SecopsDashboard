@@ -91,6 +91,7 @@ const WazuhUI = (() => {
     rate_limited:      'The log source was busy and refused this query — it will be collected again on the next run.',
     source_error:      'The log source failed on this query — it will be collected again on the next run.',
     unreachable:       'The log source could not be reached for this query.',
+    category_filter_unsupported: 'Not available — this DNSFilter will not limit the report to the AI category, and the results carry nothing to limit them by here.',
   };
 
   const REASON_HINT = {
@@ -105,6 +106,7 @@ const WazuhUI = (() => {
     rate_limited:     'Nothing to fix — press Sync Now, or wait for the hourly collection to pick the day up.',
     source_error:     'Nothing to fix here yet — press Sync Now. If it keeps happening, the sync message names the error.',
     unreachable:      'Check that this dashboard can reach the log source.',
+    category_filter_unsupported: 'Run Test Connection: it records which filters this DNSFilter accepts.',
   };
 
   function isReady(envelope) {

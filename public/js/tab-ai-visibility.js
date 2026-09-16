@@ -125,6 +125,14 @@ const AiVisibilityTab = (() => {
     }
     if (U.isReady(s.apps) && s.apps.data.sampled) extra.push('On busy days only the top AI domains were read.');
     if (U.isReady(s.users) && s.users.data.sampled) extra.push('Users are limited to the 50 most active per day.');
+    // When DNSFilter would not filter by category, these figures are a floor.
+    ['apps', 'users'].forEach((k) => {
+      const d = U.isReady(s[k]) ? s[k].data : null;
+      if (d && d.filterMode === 'catalogue') {
+        extra.push(`DNSFilter would not limit the ${k} report to the AI category, so it covers only AI tools in ` +
+          'DNSFilter\'s application catalogue — treat these counts as a minimum.');
+      }
+    });
     ['usage', 'apps', 'users', 'policy'].forEach((k) => {
       const d = U.isReady(s[k]) ? s[k].data : null;
       if (d && d.unavailableOnSomeDays) {

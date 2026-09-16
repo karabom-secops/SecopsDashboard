@@ -54,7 +54,13 @@ const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 const res = (attrs, id) => ({ id: String(id), type: 'x', attributes: attrs });
 
 function fakeDns(over) {
+  /*
+   * `categoryParam` is what this DNSFilter accepts on the domain reports:
+   * a parameter name, or null for "rejects every one of them". Anything else
+   * gets 400 "Invalid query definition" — which is what the pilot hit.
+   */
   const o = Object.assign({ bearer: false, rateLimitOnce: false, rateLimitAlways: false,
+    categoryParam: 'category_ids', rowsCarryCategory: false,
     fail: {}, failTimes: {}, override: {} }, over || {});
   const log = [];
   const sleeps = [];
@@ -94,14 +100,29 @@ function fakeDns(over) {
       case '/v1/traffic_reports/total_requests':
         return ok({ data: { values: [{ time: '2026-09-01T00:00:00Z', total: 10000 }] } });
       case '/v1/traffic_reports/total_domains':
-        return ok({ data: q.type === 'blocked'
-          ? [{ domain: 'claude.ai', total: 30 }]
-          : [{ domain: 'chat.openai.com', total: 80 }, { domain: 'api.openai.com', total: 20 }, { domain: 'unknown-ai.io', total: 20 }] });
-      case '/v1/traffic_reports/total_domains_users':
-        return ok({ data: [
-          { user_name: 'alice@client.example', domain: 'chat.openai.com', total: 50 },
-          { user_name: 'bob@client.example', domain: 'claude.ai', total: 10 },
-        ] });
+      case '/v1/traffic_reports/total_domains_users': {
+        const catKeys = Object.keys(q).filter(k => /^categor/.test(k));
+        const accepted = o.categoryParam === null
+          ? catKeys.length === 0
+          : catKeys.length === 1 && catKeys[0] === o.categoryParam;
+        if (!accepted) return { status: 400, json: { error: 'Invalid query definition' }, headers: {} };
+
+        const withCat = r => (o.rowsCarryCategory
+          ? Object.assign({}, r, { category_name: /openai|claude|unknown-ai/.test(r.domain) ? 'Generative AI' : 'News' })
+          : r);
+        const users = p.endsWith('_users');
+        const ai = users
+          ? [{ user_name: 'alice@client.example', domain: 'chat.openai.com', total: 50 },
+             { user_name: 'bob@client.example', domain: 'claude.ai', total: 10 }]
+          : (q.type === 'blocked'
+            ? [{ domain: 'claude.ai', total: 30 }]
+            : [{ domain: 'chat.openai.com', total: 80 }, { domain: 'api.openai.com', total: 20 }, { domain: 'unknown-ai.io', total: 20 }]);
+        // Unfiltered, the report also carries traffic that is nothing to do with AI.
+        const rest = users
+          ? [{ user_name: 'carol@client.example', domain: 'news.example.com', total: 500 }]
+          : [{ domain: 'news.example.com', total: 500 }];
+        return ok({ data: (catKeys.length ? ai : ai.concat(rest)).map(withCat) });
+      }
       case '/v1/policies/all':
         return ok({ data: [
           res({ name: 'Default', organization_id: 101, blacklist_categories: [77, 5], allow_list_only: false }, 1),
@@ -322,6 +343,65 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('a refused report says not permitted', !forbidden.users.available && forbidden.users.reason === 'not_permitted');
   check('with the API\'s own words', /403/.test(forbidden.users.detail || ''), forbidden.users.detail);
 
+  section('the AI category filter is asked for in whatever form DNSFilter takes');
+
+  /*
+   * THE PILOT'S SECOND FAILURE. Test probed the domain reports WITHOUT the
+   * category filter and they answered; the sync added `category_ids` and every
+   * day came back 400 "Invalid query definition".
+   */
+  const clearAll = () => { DNS._clearCatalogueCache(); DNS._clearCategoryParamCache(); };
+
+  clearAll();
+  const fAlt = fakeDns({ categoryParam: 'categories' });
+  const alt = await DNS.fetchAiDay(cfgFor(fAlt), '2026-09-01', { now: NOW });
+  check('a rejected filter is retried in the other spellings',
+    alt.apps.available && alt.apps.data.rows.length === 3, alt.apps.reason || `${alt.apps.data.rows.length} tools`);
+  check('and the one that works is the one used',
+    fAlt.log.some(l => l.path === '/v1/traffic_reports/total_domains' && l.q.categories === '77') &&
+    alt.apps.data.filter === null);
+
+  clearAll();
+  const fRowCat = fakeDns({ categoryParam: null, rowsCarryCategory: true });
+  const rowCat = await DNS.fetchAiDay(cfgFor(fRowCat), '2026-09-01', { now: NOW });
+  check('when no filter is accepted, rows are narrowed by their own category',
+    rowCat.apps.available && rowCat.apps.data.filter === 'row_category' &&
+    !rowCat.apps.data.rows.some(r => /news/.test(r.name)), JSON.stringify(rowCat.apps.data.rows.map(r => r.name)));
+
+  clearAll();
+  const fCatalogue = fakeDns({ categoryParam: null });
+  const byCatalogue = await DNS.fetchAiDay(cfgFor(fCatalogue), '2026-09-01', { now: NOW });
+  check('otherwise only domains in the AI application catalogue are kept',
+    byCatalogue.apps.available && byCatalogue.apps.data.filter === 'catalogue' &&
+    byCatalogue.apps.data.rows.every(r => r.mapped) &&
+    !byCatalogue.apps.data.rows.some(r => /news/.test(r.name)),
+    byCatalogue.apps.data.rows.map(r => r.name).join(', '));
+  check('users are narrowed the same way, so a non-AI user is not listed',
+    byCatalogue.users.data.filter === 'catalogue' &&
+    !byCatalogue.users.data.rows.some(r => /carol/.test(r.user)),
+    byCatalogue.users.data.rows.map(r => r.user).join(', '));
+
+  clearAll();
+  const fNoWay = fakeDns({ categoryParam: null, fail: {
+    '/v1/application_categories': 500, '/v1/applications/all': 500,
+  } });
+  const noWay = await DNS.fetchAiDay(cfgFor(fNoWay), '2026-09-01', { now: NOW });
+  check('with no way to tell AI traffic apart, the panel is unavailable rather than counting everything',
+    !noWay.apps.available && noWay.apps.reason === 'category_filter_unsupported', noWay.apps.reason);
+  check('which is the opposite of reporting a news site as an AI tool',
+    noWay.apps.data === null);
+
+  clearAll();
+  const fProbe = fakeDns({ categoryParam: 'categories' });
+  const probed = await DNS.probe(cfgFor(fProbe), '2026-09-01');
+  check('Test probes the domain reports WITH the filter, and records the form that worked',
+    probed.reports.total_domains.ok && probed.categoryParam === 'categories', JSON.stringify(probed.categoryParam));
+  check('the server stores it and the sync uses it without rediscovering it',
+    /verified_category_param: detected\.categoryParam/.test(codeOnly(read('server.js'))) &&
+    /categoryParam: conf\.verified_category_param/.test(codeOnly(read('server.js'))));
+
+  clearAll();
+
   // ══ Rollups ═══════════════════════════════════════════════════════════════
 
   section('flatten → store → rebuild');
@@ -460,6 +540,17 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('Sync Now reaches it', /provider === DNSFILTER_PROVIDER\) result = await runDnsFilterSync/.test(srv));
   check('the hourly collection does not run under test',
     /NODE_ENV !== 'test'\) \{\s*setTimeout\(\(\) => \{ runDnsFilterSyncs/.test(srv));
+
+  /*
+   * The daily ticket sweep takes every enabled integration EXCEPT the ones
+   * listed, and calls fetchTickets on it. DNSFilter has no such method, so its
+   * absence from that list logged "Unknown provider: dnsfilter" once a day on
+   * the pilot — and FortiAnalyzer had been missing from it in the same way.
+   */
+  const sweep = (srv.match(/provider <> ALL\(\$1::text\[\]\)',\s*\[\[([^\]]*)\]\]/) || [])[1] || '';
+  check('the ticket sweep skips every provider that is not ticket-shaped',
+    ['EDR_PROVIDER', 'WAZUH_PROVIDER', 'EMAIL_PROVIDER', 'MSGRAPH_PROVIDER', 'FAZ_PROVIDER', 'DNSFILTER_PROVIDER']
+      .every(p => sweep.indexOf(p) >= 0), sweep.replace(/\s+/g, ' '));
 
   const saveFn = srv.slice(srv.indexOf('async function saveDnsFilterIntegration'), srv.indexOf('async function testDnsFilterIntegration'));
   check('a save builds config from an allowlist, so verification cannot be sent in',

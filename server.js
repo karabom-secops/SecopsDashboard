@@ -3204,7 +3204,11 @@ async function testDnsFilterIntegration(res, tenantId) {
     verified_org_name:       info.orgName,
     verified_at:             new Date().toISOString(),
     verified_ai_category_id: info.aiCategory ? info.aiCategory.id : null,
-  }, detected ? { detected } : {});
+  }, detected ? { detected } : {},
+  // Which category-filter spelling this DNSFilter accepts, learned by the probe.
+  // null is a real answer ("it accepts none — narrow the rows here"), so it is
+  // only stored when the probe actually reached that question.
+  detected && detected.categoryParam !== undefined ? { verified_category_param: detected.categoryParam } : {});
   await pool.query(
     'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
     [JSON.stringify(merged), tenantId, DNSFILTER_PROVIDER]
@@ -4515,7 +4519,7 @@ async function loadDnsFilterIntegration(tenantId) {
     api_key:   msp.api_key,
     config:    Object.assign({}, conf, {
       aiCategoryId: conf.verified_ai_category_id || msp.config.ai_category_id || null,
-    }),
+    }, conf.verified_category_param !== undefined ? { categoryParam: conf.verified_category_param } : {}),
     sync: {
       last_synced_at:    r.last_synced_at,
       last_sync_status:  r.last_sync_status,
@@ -4579,8 +4583,14 @@ async function runDnsFilterSync(tenantId) {
     }
 
     const ok = problems.length === 0;
+    /*
+     * EVERY failing day, not just the first. The first pilot's message named one
+     * date, which read as one bad day when in fact the same query was being
+     * rejected on all of them.
+     */
     const message = `Collected ${days.length} day${days.length !== 1 ? 's' : ''} (${rows} metric rows)` +
-      (ok ? '' : ` — not everything could be read: ${problems[0]}`);
+      (ok ? '' : ` — not everything could be read: ${problems.slice(0, 3).join(' | ')}` +
+        (problems.length > 3 ? ` (+${problems.length - 3} more)` : ''));
     await recordDnsFilterSync(tenantId, ok ? 'ok' : 'error', message);
     clearAiCache(tenantId);
 
@@ -4627,13 +4637,18 @@ const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 async function runScheduledSyncs() {
   let rows;
   try {
-    // SentinelOne, Wazuh, Acronis and Microsoft Graph are excluded — each runs
-    // on its own cadence below. A provider missing from this list would be
-    // swept into runTicketIntegrationSync, which would call fetchTickets on an
-    // adapter that has no such method.
+    /*
+     * Every provider that is NOT ticket-shaped, each of which runs on its own
+     * cadence below. A provider missing from this list is swept into
+     * runTicketIntegrationSync, which calls fetchTickets on an adapter that has
+     * no such method — FortiAnalyzer and DNSFilter were both missing, and the
+     * DNSFilter one showed up in the log as "Unknown provider: dnsfilter" every
+     * 24 hours. Anything added to KNOWN_PROVIDERS that is not a ticket feed
+     * belongs here too; tests/dnsfilter.test.js checks this list.
+     */
     rows = (await pool.query(
       'SELECT tenant_id, provider FROM integrations WHERE is_enabled = TRUE AND provider <> ALL($1::text[])',
-      [[EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER]]
+      [[EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER, FAZ_PROVIDER, DNSFILTER_PROVIDER]]
     )).rows;
   } catch (err) {
     console.error('[integrations] scheduled sync: failed to load integrations —', err.message);
