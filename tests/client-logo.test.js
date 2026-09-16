@@ -205,15 +205,29 @@ section('every page has a browser-tab icon');
 const PAGES = ['index.html', 'login.html', 'manager.html', 'portal.html', 'upload.html'];
 const icons = PAGES.map(p => ({ p, src: read('public', p) }));
 check('all five entry points link the icon',
-  icons.every(x => /<link rel="icon" href="img\/favicon\.svg"/.test(x.src)),
+  icons.every(x => /<link rel="icon" href="img\/favicon\.png"/.test(x.src)),
   icons.filter(x => !/rel="icon"/.test(x.src)).map(x => x.p).join(', ') || 'all five');
 check('each links it exactly once, so there is one source of truth',
   icons.every(x => (x.src.match(/rel="icon"/g) || []).length === 1),
   icons.map(x => x.p + '=' + (x.src.match(/rel="icon"/g) || []).length).join(' '));
-check('the icon file exists and is a real SVG',
-  /<svg[\s\S]*<\/svg>/.test(read('public', 'img', 'favicon.svg')));
-check('there is a raster fallback for browsers that refuse SVG icons',
-  icons.every(x => /rel="alternate icon" href="img\/reflex-logo\.png"/.test(x.src)));
+check('and uses it for the phone home screen too',
+  icons.every(x => /rel="apple-touch-icon" href="img\/favicon\.png"/.test(x.src)));
+
+/*
+ * The icon IS the Reflex mark, generated from the one logo asset — not a
+ * lookalike drawn by hand. A square, reasonably sized PNG: the stacked lockup
+ * itself would be illegible in a 16px tab, which is why the mark is cropped out
+ * of it rather than linked directly.
+ */
+const ico = fs.readFileSync(path.join(ROOT, 'public', 'img', 'favicon.png'));
+check('the icon file exists and is a real PNG', ico.slice(1, 4).toString('ascii') === 'PNG');
+const icoW = ico.readUInt32BE(16), icoH = ico.readUInt32BE(20);
+check('it is square and big enough for a retina tab and a home screen',
+  icoW === icoH && icoW >= 128, icoW + 'x' + icoH);
+check('and the source lockup is still the only brand asset it comes from',
+  fs.existsSync(path.join(ROOT, 'public', 'img', 'reflex-logo.png')));
+check('the hand-drawn placeholder icon is gone',
+  !fs.existsSync(path.join(ROOT, 'public', 'img', 'favicon.svg')), 'favicon.svg removed');
 check('no page still points at the logo file that never existed',
   !icons.some(x => /src="img\/logo\.png"/.test(x.src)), 'img/logo.png');
 
