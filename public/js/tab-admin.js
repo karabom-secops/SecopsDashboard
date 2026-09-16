@@ -1219,8 +1219,9 @@
         headers: body ? { 'Content-Type': 'application/json' } : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
-      const data = await res.json().catch(() => ({}));
-      return { ok: res.ok && data.ok !== false, data };
+      const r = await readIntJson(res);
+      const data = r.data || {};
+      return { ok: r.ok && data.ok !== false, data: r.error ? Object.assign({ error: r.error }, data) : data };
     };
     if (save) save.addEventListener('click', async () => {
       const url = (container.querySelector('.int-msp-dns-url') || {}).value || '';
@@ -1621,6 +1622,18 @@
     if (mspDns) wireMspDnsCard(container);
   }
 
+  /*
+   * Integration calls go through WazuhUI.readJson: a 502 from a proxy, a
+   * restarting server or an expired session answers with HTML, and reporting
+   * that as "Unexpected token '<'" sends the operator hunting for the wrong
+   * thing. The fallback keeps this working if wazuh-ui.js ever isn't loaded.
+   */
+  async function readIntJson(res) {
+    if (window.WazuhUI && window.WazuhUI.readJson) return window.WazuhUI.readJson(res);
+    try { return { ok: res.ok, data: await res.json(), error: null }; }
+    catch (_) { return { ok: false, data: null, error: `HTTP ${res.status} — the server did not return JSON.` }; }
+  }
+
   function setIntFeedback(providerId, msg, isError) {
     const el = document.getElementById(`int-feedback-${providerId}`);
     if (!el) return;
@@ -1652,8 +1665,8 @@
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin', body: JSON.stringify(body),
         });
-        const data = await res.json();
-        if (!res.ok) { setIntFeedback(providerId, data.error || 'Save failed.', true); return; }
+        const r = await readIntJson(res);
+        if (!r.ok) { setIntFeedback(providerId, r.error || (r.data && r.data.error) || 'Save failed.', true); return; }
         setIntFeedback(providerId, 'Saved. Test Connection to verify the organisation.', false);
         setTimeout(() => renderIntegrations(), 800);
       } catch (err) { setIntFeedback(providerId, 'Network error: ' + err.message, true); }
@@ -1840,8 +1853,8 @@
         credentials: 'same-origin',
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) { setIntFeedback(providerId, data.error || 'Save failed.', true); return; }
+      const r = await readIntJson(res);
+      if (!r.ok) { setIntFeedback(providerId, r.error || (r.data && r.data.error) || 'Save failed.', true); return; }
       setIntFeedback(providerId, 'Saved successfully.', false);
       setTimeout(() => renderIntegrations(), 800);
     } catch (err) { setIntFeedback(providerId, 'Network error: ' + err.message, true); }
@@ -1856,7 +1869,9 @@
         credentials: 'same-origin',
         body: JSON.stringify(tenantBody()),
       });
-      const data = await res.json();
+      const r = await readIntJson(res);
+      const data = r.data || {};
+      if (!r.ok && r.error) { setIntFeedback(providerId, '✗ ' + r.error, true); return; }
       if (data.ok) {
         // A working connection on a disabled integration still shows nothing on
         // its screens, so it gets a warning mark rather than a clean tick.
@@ -1883,7 +1898,9 @@
         credentials: 'same-origin',
         body: JSON.stringify(tenantBody()),
       });
-      const data = await res.json();
+      const sync = await readIntJson(res);
+      const data = sync.data || {};
+      if (!sync.ok && sync.error) { setIntFeedback(providerId, '✗ Sync failed: ' + sync.error, true); return; }
       if (res.status === 202 && data.stillGenerating) {
         setIntFeedback(providerId, '⏳ ' + (data.message || 'Report is still generating — click Sync Now again shortly.'), true);
       } else if (data.ok && isReports) {

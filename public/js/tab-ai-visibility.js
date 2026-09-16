@@ -162,9 +162,10 @@ const AiVisibilityTab = (() => {
           credentials: 'same-origin',
           body: JSON.stringify(Object.assign({ status: sel.value, appName: sel.dataset.name }, U.tenantBody())),
         });
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        if (meta) meta.innerHTML = `<span class="edr-tone-red">✗</span> ${U.esc(d.error || 'Could not save the decision.')}`;
+      const r = await U.readJson(res);
+      if (!r.ok) {
+        const msg = r.error || (r.data && r.data.error) || 'Could not save the decision.';
+        if (meta) meta.innerHTML = `<span class="edr-tone-red">✗</span> ${U.esc(msg)}`;
         sel.disabled = false;
         return;
       }
@@ -182,7 +183,9 @@ const AiVisibilityTab = (() => {
     let s = null;
     try {
       const res = await fetch('api/ai-visibility/summary' + U.tenantQS({ days: selectedDays() }), { credentials: 'same-origin' });
-      s = res.ok ? await res.json() : null;
+      const r = await U.readJson(res);
+      if (!r.ok && r.error) console.error('AI Visibility load failed:', r.error);
+      s = r.ok ? r.data : null;
     } catch (err) {
       console.error('AI Visibility load failed:', err);
       s = null;

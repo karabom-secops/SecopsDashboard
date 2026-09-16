@@ -409,6 +409,38 @@ const WazuhUI = (() => {
   }
 
   /**
+   * Read a response that SHOULD be JSON, and say what arrived when it isn't.
+   *
+   * A reverse proxy returning 502, a server still starting, an expired session
+   * bouncing to the login page, or a route missing from the running build all
+   * answer with HTML. res.json() then throws "Unexpected token '<'", which
+   * sends the reader looking for a bug in the request instead of at the
+   * deployment. The body is read ONCE, as text, so nothing here can throw.
+   *
+   * @returns {{ok: boolean, data: object|null, error: string|null}}
+   */
+  async function readJson(res) {
+    let body = '';
+    try { body = await res.text(); } catch (_) { /* connection died mid-read */ }
+
+    const type = (res.headers && res.headers.get && res.headers.get('content-type')) || '';
+    if (type.indexOf('json') >= 0 || /^\s*[{[]/.test(body)) {
+      try {
+        return { ok: res.ok, data: JSON.parse(body), error: null };
+      } catch (_) { /* truncated or mislabelled — fall through to the report */ }
+    }
+
+    const hint = res.status === 401 || res.status === 403
+      ? 'you may have been signed out — reload the page and sign in again'
+      : res.status === 404
+        ? 'that endpoint is not in the running build — the server may need redeploying'
+        : res.status >= 500
+          ? 'the server, or a proxy in front of it, returned an error page'
+          : 'the server did not return JSON';
+    return { ok: false, data: null, error: `HTTP ${res.status} — ${hint}.` };
+  }
+
+  /**
    * Shared "Sync Now" handler. `provider` is whichever integration served the
    * screen — FortiAnalyzer for NDR once configured, Wazuh otherwise.
    */
@@ -433,9 +465,10 @@ const WazuhUI = (() => {
         credentials: 'same-origin',
         body: JSON.stringify(tenantBody()),
       });
-      const data = await res.json();
-      if (!data.ok) {
-        if (meta) meta.innerHTML = `<span class="edr-tone-red">✗</span> ${esc(data.error || data.message || 'Sync failed.')}`;
+      const r = await readJson(res);
+      const data = r.data || {};
+      if (!r.ok || !data.ok) {
+        if (meta) meta.innerHTML = `<span class="edr-tone-red">✗</span> ${esc(r.error || data.error || data.message || 'Sync failed.')}`;
         return;
       }
       await reload();
@@ -452,7 +485,7 @@ const WazuhUI = (() => {
     isReady, placeholder, restore, panel, fillTable,
     destroyChart, lineChart, doughnutChart, barChart,
     renderStats, renderSyncMeta, renderStaleBanner, renderSourceNote,
-    renderEmptyState, bindAdminLink, syncNow,
+    renderEmptyState, bindAdminLink, syncNow, readJson,
     reasonText: reason => REASON_TEXT[reason] || REASON_TEXT.not_ingesting,
   };
 })();

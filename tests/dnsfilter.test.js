@@ -602,6 +602,55 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('the decision editor appears only for writers', /canWrite\('ai-visibility'\)/.test(tab));
   check('and an undecided tool shows as unreviewed', /STATUS\[r\.status\] \|\| STATUS\.unreviewed/.test(tab));
 
+  section('an HTML error page is reported as what it is');
+
+  /*
+   * The pilot saw "Unexpected token '<', "<html> <h"... is not valid JSON" on
+   * the integration card. That is a proxy, a restarting server, an expired
+   * session or a route missing from the running build — and res.json() turns
+   * every one of them into a parser message about the wrong thing.
+   */
+  const uiBox = { console };
+  uiBox.window = uiBox;
+  vm.createContext(uiBox);
+  vm.runInContext(read('public', 'js', 'wazuh-ui.js'), uiBox);
+  const U = uiBox.window.WazuhUI;
+
+  const fakeRes = (status, type, body) => ({
+    ok: status >= 200 && status < 300, status,
+    headers: { get: () => type },
+    text: async () => body,
+  });
+
+  const htmlErr = await U.readJson(fakeRes(502, 'text/html', '<html> <head><title>502</title></head></html>'));
+  check('an HTML error page names the status and a likely cause, not a parse error',
+    !htmlErr.ok && /HTTP 502/.test(htmlErr.error) && /proxy/.test(htmlErr.error) && !/token/.test(htmlErr.error),
+    htmlErr.error);
+  const signedOut = await U.readJson(fakeRes(401, 'text/html', '<html>login</html>'));
+  check('a signed-out session says so', /signed out/.test(signedOut.error), signedOut.error);
+  const missing = await U.readJson(fakeRes(404, 'text/html', '<html>Cannot POST</html>'));
+  check('a missing endpoint points at the deployment', /redeploying/.test(missing.error), missing.error);
+  const good = await U.readJson(fakeRes(200, 'application/json', '{"ok":true,"message":"hi"}'));
+  check('and real JSON still comes through', good.ok && good.data.message === 'hi');
+  const jsonErr = await U.readJson(fakeRes(400, 'application/json', '{"error":"Invalid organisation id."}'));
+  check('as does a JSON error body, so the server\'s own message still wins',
+    !jsonErr.ok && jsonErr.data.error === 'Invalid organisation id.');
+
+  /*
+   * Scoped to the integration calls that REPORT to the operator — save, test
+   * and sync — which is where the parser message appeared. The user and tenant
+   * admin code reads responses its own way and is not this change's business;
+   * the two integration READS left alone are guarded by `if (res.ok)` and
+   * degrade to an empty card rather than throwing.
+   */
+  const adminSrc = codeOnly(read('public', 'js', 'tab-admin.js'));
+  const intFns = adminSrc.slice(adminSrc.indexOf('async function saveIntegration'));
+  check('the integration save, test and sync paths all read responses that way',
+    !/await res\.json\(\)/.test(intFns) && (intFns.match(/readIntJson\(res\)/g) || []).length >= 5,
+    (intFns.match(/readIntJson\(res\)/g) || []).length + ' call sites');
+  check('and so does the AI Visibility tab',
+    !/await res\.json\(\)/.test(codeOnly(read('public', 'js', 'tab-ai-visibility.js'))));
+
   section('the board section counts, it does not name');
 
   const sandbox = { console };
