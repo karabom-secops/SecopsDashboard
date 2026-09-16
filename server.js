@@ -2970,6 +2970,9 @@ const IDENTITY_SYNC_PROVIDER = 'ms_identity';
  * its DNSFilter organisation id and time zone — see saveDnsFilterIntegration.
  */
 const DNSFILTER_PROVIDER = 'dnsfilter';
+// Rollups written below this version are dropped and collected again once —
+// see runDnsFilterSync for why version 1 cannot be trusted.
+const DNS_ROLLUP_VERSION = 2;
 
 const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER, FAZ_PROVIDER, DNSFILTER_PROVIDER]);
 
@@ -3162,7 +3165,8 @@ async function saveDnsFilterIntegration(req, res, tenantId) {
   const prev = (prevRow.rows[0] && prevRow.rows[0].config_json) || {};
   const next = { organization_id: orgId, timeZone: tz };
   if (prev.verified_org_id && String(prev.verified_org_id) === orgId) {
-    ['verified_org_id', 'verified_org_name', 'verified_at', 'verified_ai_category_id', 'detected']
+    ['verified_org_id', 'verified_org_name', 'verified_at', 'verified_ai_category_id', 'detected',
+     'verified_category_filters', 'rollup_version']
       .forEach((k) => { if (prev[k] !== undefined) next[k] = prev[k]; });
   }
 
@@ -3227,10 +3231,13 @@ async function testDnsFilterIntegration(res, tenantId) {
     verified_at:             new Date().toISOString(),
     verified_ai_category_id: info.aiCategory ? info.aiCategory.id : null,
   }, detected ? { detected } : {},
-  // Which category-filter spelling this DNSFilter accepts, learned by the probe.
-  // null is a real answer ("it accepts none — narrow the rows here"), so it is
-  // only stored when the probe actually reached that question.
-  detected && detected.categoryParam !== undefined ? { verified_category_param: detected.categoryParam } : {});
+  // Per report, the category-filter spelling the probe PROVED takes effect
+  // (null: none does, so the rows are narrowed here). Nothing is stored for a
+  // report the probe could not prove — an empty day, say.
+  detected && detected.categoryFilters && Object.keys(detected.categoryFilters).length
+    ? { verified_category_filters: detected.categoryFilters } : {});
+  // Written by the build before "accepted" was checked against "applied".
+  delete merged.verified_category_param;
   await pool.query(
     'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
     [JSON.stringify(merged), tenantId, DNSFILTER_PROVIDER]
@@ -4541,7 +4548,9 @@ async function loadDnsFilterIntegration(tenantId) {
     api_key:   msp.api_key,
     config:    Object.assign({}, conf, {
       aiCategoryId: conf.verified_ai_category_id || msp.config.ai_category_id || null,
-    }, conf.verified_category_param !== undefined ? { categoryParam: conf.verified_category_param } : {}),
+    }, conf.verified_category_filters ? { categoryFilters: conf.verified_category_filters } : {}),
+    // As stored, for writing back without the runtime fields above.
+    rawConfig: r.config_json || {},
     sync: {
       last_synced_at:    r.last_synced_at,
       last_sync_status:  r.last_sync_status,
@@ -4587,6 +4596,26 @@ async function runDnsFilterSync(tenantId) {
       const msg = 'This DNSFilter organisation has not been verified. Run Test Connection under Admin → Integrations before syncing.';
       await recordDnsFilterSync(tenantId, 'error', msg);
       throw Object.assign(new Error(msg), { httpStatus: 409 });
+    }
+
+    /*
+     * ONE-TIME RE-COLLECTION. Rollups written before version 2 may count
+     * ordinary traffic as AI: the first pilot's DNSFilter accepted a category
+     * parameter it then ignored, and the adapter took "accepted" for "applied".
+     * Those figures cannot be corrected in place, so they are dropped and every
+     * day is collected again, MAX_DAYS_PER_RUN at a time.
+     */
+    if ((Number(integration.rawConfig.rollup_version) || 1) < DNS_ROLLUP_VERSION) {
+      await pool.query('DELETE FROM wazuh_daily_metric WHERE integration_id = $1 AND source = $2',
+        [integration.id, dnsMetrics.SOURCE]);
+      await pool.query('DELETE FROM wazuh_rollup_run WHERE integration_id = $1 AND source = $2',
+        [integration.id, dnsMetrics.SOURCE]);
+      await pool.query('UPDATE integrations SET config_json = $1 WHERE id = $2', [
+        JSON.stringify(Object.assign({}, integration.rawConfig, { rollup_version: DNS_ROLLUP_VERSION })),
+        integration.id,
+      ]);
+      console.log(`[integrations] dnsfilter: rollups for tenant ${tenantId} predate version ` +
+        `${DNS_ROLLUP_VERSION} — dropped and re-collecting`);
     }
 
     const tz = conf.timeZone || 'UTC';

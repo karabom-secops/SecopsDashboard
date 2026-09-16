@@ -91,6 +91,15 @@ const AiVisibilityTab = (() => {
     });
   }
 
+  /*
+   * Said when the users report was read and named nobody. The usual reason is
+   * not a fault: DNSFilter knows who made a lookup only when it came through
+   * the roaming client, and lookups from an office network carry no user.
+   */
+  const NO_USERS_TEXT = 'No AI lookups were attributed to a user in this period. DNSFilter can only name ' +
+    'the user for traffic from its roaming client (the DNSFilter agent); lookups from office networks ' +
+    'carry no user.';
+
   function renderUsers(s) {
     U.panel('ai-users-panel', s.users, (d) => {
       U.fillTable('ai-users-table', d.rows, 3, r => `
@@ -98,7 +107,7 @@ const AiVisibilityTab = (() => {
           <td>${U.esc(r.user)}</td>
           <td>${U.fmtNum(r.count)}</td>
           <td>${U.esc((r.apps || []).map(a => a.name).join(', ') || '—')}</td>
-        </tr>`);
+        </tr>`, d.rows && d.rows.length ? undefined : NO_USERS_TEXT);
     });
   }
 

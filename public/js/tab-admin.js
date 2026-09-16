@@ -1104,10 +1104,34 @@
     const reports = c.detected && c.detected.reports
       ? Object.keys(c.detected.reports).map(k => `${k} ${c.detected.reports[k].ok ? '✓' : '✗'}`).join(' · ')
       : '';
+    /*
+     * What DNSFilter actually returned. When a panel comes back empty, these
+     * field names are the difference between guessing and knowing — and the
+     * pilot's empty users table was exactly that case.
+     */
+    const rep = (c.detected && c.detected.reports) || {};
+    const proved = c.verified_category_filters || {};
+    const filterText = (k) => {
+      if (!Object.prototype.hasOwnProperty.call(proved, k)) return 'not proved yet (no AI traffic that day)';
+      return proved[k] === null ? 'applied here — DNSFilter ignored every filter form' : `applied by DNSFilter as "${proved[k]}"`;
+    };
+    const detail = Object.keys(rep).length
+      ? '<details class="int-optional" style="margin:.25rem 0 .75rem"><summary>What DNSFilter returned</summary>' +
+        Object.keys(rep).map((k) => {
+          const r = rep[k] || {};
+          const body = r.ok
+            ? `fields: ${escHtmlInt((r.fields || []).join(', ') || 'none')}` +
+              (/domains/.test(k) ? ` · AI filter ${escHtmlInt(filterText(k))}` : '')
+            : `${escHtmlInt(r.reason || 'failed')}${r.detail ? ': ' + escHtmlInt(r.detail) : ''}`;
+          return `<div><code>${escHtmlInt(k)}</code> — ${body}</div>`;
+        }).join('') +
+        '</details>'
+      : '';
     return note(`Verified ${escHtmlInt(when)}: <strong>${escHtmlInt(c.verified_org_name || '')}</strong> ` +
         `(<code>${escHtmlInt(c.verified_org_id)}</code>).` +
         (c.verified_ai_category_id ? '' : ' <strong>No Generative AI category found.</strong>')) +
-      (reports ? `<div class="integration-sync-meta"><span class="int-sync-status">Reports: ${escHtmlInt(reports)}</span></div>` : '');
+      (reports ? `<div class="integration-sync-meta"><span class="int-sync-status">Reports: ${escHtmlInt(reports)}</span></div>` : '') +
+      detail;
   }
 
   function renderDnsFilterCard(p, cfg) {

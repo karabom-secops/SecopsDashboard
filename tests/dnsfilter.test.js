@@ -61,6 +61,9 @@ function fakeDns(over) {
    */
   const o = Object.assign({ bearer: false, rateLimitOnce: false, rateLimitAlways: false,
     categoryParam: 'category_ids', rowsCarryCategory: false,
+    // Accepted with a 200 and silently ignored — what the first pilot's
+    // DNSFilter did with the spellings after `category_ids`.
+    ignoredParams: [], usersWithoutDomain: false,
     fail: {}, failTimes: {}, override: {} }, over || {});
   const log = [];
   const sleeps = [];
@@ -102,10 +105,12 @@ function fakeDns(over) {
       case '/v1/traffic_reports/total_domains':
       case '/v1/traffic_reports/total_domains_users': {
         const catKeys = Object.keys(q).filter(k => /^categor/.test(k));
-        const accepted = o.categoryParam === null
-          ? catKeys.length === 0
-          : catKeys.length === 1 && catKeys[0] === o.categoryParam;
+        // An ignored parameter is accepted and has no effect at all.
+        const live = catKeys.filter(k => o.ignoredParams.indexOf(k) < 0);
+        const accepted = live.length === 0 ||
+          (o.categoryParam !== null && live.length === 1 && live[0] === o.categoryParam);
         if (!accepted) return { status: 400, json: { error: 'Invalid query definition' }, headers: {} };
+        const filtered = live.length > 0;
 
         const withCat = r => (o.rowsCarryCategory
           ? Object.assign({}, r, { category_name: /openai|claude|unknown-ai/.test(r.domain) ? 'Generative AI' : 'News' })
@@ -121,7 +126,8 @@ function fakeDns(over) {
         const rest = users
           ? [{ user_name: 'carol@client.example', domain: 'news.example.com', total: 500 }]
           : [{ domain: 'news.example.com', total: 500 }];
-        return ok({ data: (catKeys.length ? ai : ai.concat(rest)).map(withCat) });
+        const strip = r => (o.usersWithoutDomain && users ? { user_name: r.user_name, total: r.total } : r);
+        return ok({ data: (filtered ? ai : ai.concat(rest)).map(withCat).map(strip) });
       }
       case '/v1/policies/all':
         return ok({ data: [
@@ -391,14 +397,59 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('which is the opposite of reporting a news site as an AI tool',
     noWay.apps.data === null);
 
+  /*
+   * THE PILOT, EXACTLY. `category_ids` is refused; every other spelling is
+   * accepted with a 200 and ignored. Taking "accepted" for "applied" counted
+   * every domain the client visited as an AI tool.
+   */
+  clearAll();
+  const fIgnored = fakeDns({ categoryParam: 'not-a-real-param',
+    ignoredParams: ['categories', 'category_ids[]', 'category_id'] });
+  const ignored = await DNS.fetchAiDay(cfgFor(fIgnored), '2026-09-01', { now: NOW });
+  check('a filter DNSFilter accepts but ignores is not trusted',
+    ignored.apps.available && ignored.apps.data.filter === 'catalogue',
+    `${ignored.apps.data && ignored.apps.data.filter}: ${(ignored.apps.data && ignored.apps.data.rows || []).map(r => r.name).join(', ')}`);
+  check('so ordinary traffic is never counted as an AI tool',
+    !ignored.apps.data.rows.some(r => /news/.test(r.name)));
+  check('and users are narrowed the same way',
+    ignored.users.available && !ignored.users.data.rows.some(r => /carol/.test(r.user)) &&
+    ignored.users.data.rows.some(r => /alice/.test(r.user)),
+    ignored.users.data && ignored.users.data.rows.map(r => r.user).join(', '));
+  const probedIgnored = await DNS.probe(cfgFor(fakeDns({ categoryParam: 'not-a-real-param',
+    ignoredParams: ['categories', 'category_ids[]', 'category_id'] })), '2026-09-01');
+  check('Test records that no spelling takes effect, rather than the one that was merely accepted',
+    probedIgnored.categoryFilters.total_domains === null, JSON.stringify(probedIgnored.categoryFilters));
+
+  clearAll();
+  const fNoDomain = fakeDns({ categoryParam: null, usersWithoutDomain: true });
+  const noDomain = await DNS.fetchAiDay(cfgFor(fNoDomain), '2026-09-01', { now: NOW });
+  check('user rows that name no domain cannot be narrowed, so users are unavailable — not zero',
+    !noDomain.users.available && noDomain.users.reason === 'category_filter_unsupported', noDomain.users.reason);
+
+  clearAll();
+  const fOdd = fakeDns({ override: {
+    '/v1/traffic_reports/total_domains_users': () => ({ data: [{ principal: 'alice@client.example', n: 5 }] }),
+  } });
+  const odd = await DNS.fetchAiDay(cfgFor(fOdd), '2026-09-01', { now: NOW });
+  check('user records in a shape we do not read are unreadable, not an empty list',
+    !odd.users.available && odd.users.reason === 'unrecognised_response', odd.users.reason);
+  check('and the message names the fields that DID arrive',
+    /principal/.test(odd.users.detail || '') && /\bn\b/.test(odd.users.detail || ''), odd.users.detail);
+  check('a genuinely empty report is still zero',
+    DNS.collectRows({ values: [{ time: 't', categories: [] }] }, () => false).length === 0);
+
   clearAll();
   const fProbe = fakeDns({ categoryParam: 'categories' });
   const probed = await DNS.probe(cfgFor(fProbe), '2026-09-01');
-  check('Test probes the domain reports WITH the filter, and records the form that worked',
-    probed.reports.total_domains.ok && probed.categoryParam === 'categories', JSON.stringify(probed.categoryParam));
+  check('Test probes the domain reports WITH the filter, and records the form PROVED to work',
+    probed.reports.total_domains.ok && probed.categoryFilters.total_domains === 'categories',
+    JSON.stringify(probed.categoryFilters));
+  const srvNow = codeOnly(read('server.js'));
   check('the server stores it and the sync uses it without rediscovering it',
-    /verified_category_param: detected\.categoryParam/.test(codeOnly(read('server.js'))) &&
-    /categoryParam: conf\.verified_category_param/.test(codeOnly(read('server.js'))));
+    /verified_category_filters: detected\.categoryFilters/.test(srvNow) &&
+    /categoryFilters: conf\.verified_category_filters/.test(srvNow));
+  check('and discards the unproved choice an earlier build stored',
+    /delete merged\.verified_category_param/.test(srvNow));
 
   clearAll();
 
@@ -552,7 +603,22 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
     ['EDR_PROVIDER', 'WAZUH_PROVIDER', 'EMAIL_PROVIDER', 'MSGRAPH_PROVIDER', 'FAZ_PROVIDER', 'DNSFILTER_PROVIDER']
       .every(p => sweep.indexOf(p) >= 0), sweep.replace(/\s+/g, ' '));
 
+  /*
+   * Rollups from before "accepted" was checked against "applied" may count
+   * ordinary traffic as AI. They are dropped once and collected again.
+   */
+  check('rollups older than the current version are dropped and re-collected once',
+    /DNS_ROLLUP_VERSION = 2/.test(srv) &&
+    /rollup_version\) \|\| 1\) < DNS_ROLLUP_VERSION/.test(syncFn) &&
+    /DELETE FROM wazuh_daily_metric WHERE integration_id = \$1 AND source = \$2/.test(syncFn) &&
+    /DELETE FROM wazuh_rollup_run WHERE integration_id = \$1 AND source = \$2/.test(syncFn) &&
+    syncFn.indexOf('DNS_ROLLUP_VERSION') < syncFn.indexOf('daysNeedingSnapshot'));
+  check('and the version is recorded, so it happens once rather than every hour',
+    /rollup_version: DNS_ROLLUP_VERSION/.test(syncFn));
+
   const saveFn = srv.slice(srv.indexOf('async function saveDnsFilterIntegration'), srv.indexOf('async function testDnsFilterIntegration'));
+  check('a save keeps the proved filters and the rollup version, so it does not trigger a re-collection',
+    /'verified_category_filters', 'rollup_version'/.test(saveFn));
   check('a save builds config from an allowlist, so verification cannot be sent in',
     /const next = \{ organization_id: orgId, timeZone: tz \}/.test(saveFn) &&
     !/\.\.\.c\b|\.\.\.configJson|assign\([^)]*configJson/.test(saveFn));
@@ -601,6 +667,11 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('Sync Now is a known target', /dnsfilter:\s*'Collecting from DNSFilter/.test(ui));
   check('the decision editor appears only for writers', /canWrite\('ai-visibility'\)/.test(tab));
   check('and an undecided tool shows as unreviewed', /STATUS\[r\.status\] \|\| STATUS\.unreviewed/.test(tab));
+  check('an empty users table explains that only roaming-client traffic names a user',
+    /roaming client/.test(read('public', 'js', 'tab-ai-visibility.js')) && /NO_USERS_TEXT/.test(tab));
+  check('the integration card shows the fields DNSFilter returned and which filter was proved',
+    /What DNSFilter returned/.test(read('public', 'js', 'tab-admin.js')) &&
+    /verified_category_filters/.test(codeOnly(read('public', 'js', 'tab-admin.js'))));
 
   section('an HTML error page is reported as what it is');
 
