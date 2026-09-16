@@ -644,10 +644,37 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
    * degrade to an empty card rather than throwing.
    */
   const adminSrc = codeOnly(read('public', 'js', 'tab-admin.js'));
-  const intFns = adminSrc.slice(adminSrc.indexOf('async function saveIntegration'));
-  check('the integration save, test and sync paths all read responses that way',
-    !/await res\.json\(\)/.test(intFns) && (intFns.match(/readIntJson\(res\)/g) || []).length >= 5,
-    (intFns.match(/readIntJson\(res\)/g) || []).length + ' call sites');
+  /*
+   * From the MSP card's helper onwards: every integration call that REPORTS to
+   * the operator — the MSP key card, save, test and sync — which is where the
+   * parser message appeared. The user, tenant and MFA code above reads
+   * responses its own way and is not this change's business; the two
+   * integration READS left alone are guarded by `if (res.ok)` and degrade to an
+   * empty card rather than throwing.
+   */
+  /*
+   * Asserted per function rather than over a slice of the file. An earlier
+   * version scanned a region and had to cut readIntJson's own `await
+   * res.json()` fallback back out of it by regex — a test that depends on where
+   * a brace sits is a test that breaks on reformatting.
+   */
+  const fnBody = (src, start) => {
+    const from = src.indexOf(start);
+    if (from < 0) return '';
+    const next = src.indexOf('\n  async function ', from + start.length);
+    return src.slice(from, next < 0 ? src.length : next);
+  };
+  const reporting = {
+    'the MSP key card':  fnBody(adminSrc, 'const call = async (method, path, body)'),
+    saveIntegration:     fnBody(adminSrc, 'async function saveIntegration'),
+    testIntegration:     fnBody(adminSrc, 'async function testIntegration'),
+    syncIntegration:     fnBody(adminSrc, 'async function syncIntegration'),
+  };
+  const offenders = Object.keys(reporting).filter(k => /await res\.json\(\)/.test(reporting[k]));
+  const converted = Object.keys(reporting).filter(k => /await readIntJson\(res\)/.test(reporting[k]));
+  check('every integration call that reports to the operator reads responses that way',
+    offenders.length === 0 && converted.length === 4,
+    offenders.length ? 'still bare: ' + offenders.join(', ') : converted.join(', '));
   check('and so does the AI Visibility tab',
     !/await res\.json\(\)/.test(codeOnly(read('public', 'js', 'tab-ai-visibility.js'))));
 
