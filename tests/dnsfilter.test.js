@@ -64,6 +64,9 @@ function fakeDns(over) {
     // Accepted with a 200 and silently ignored — what the first pilot's
     // DNSFilter did with the spellings after `category_ids`.
     ignoredParams: [], usersWithoutDomain: false,
+    // Per-user rows are returned only for show_individual_users=true, as the
+    // real API does; this forces the pilot's case where they never are.
+    ignoreUserBreakdown: false,
     fail: {}, failTimes: {}, override: {} }, over || {});
   const log = [];
   const sleeps = [];
@@ -116,17 +119,34 @@ function fakeDns(over) {
           ? Object.assign({}, r, { category_name: /openai|claude|unknown-ai/.test(r.domain) ? 'Generative AI' : 'News' })
           : r);
         const users = p.endsWith('_users');
-        const ai = users
-          ? [{ user_name: 'alice@client.example', domain: 'chat.openai.com', total: 50 },
-             { user_name: 'bob@client.example', domain: 'claude.ai', total: 10 }]
-          : (q.type === 'blocked'
+        // Per-user rows ONLY when asked for — the parameter the pilot never sent.
+        const perUser = users && q.show_individual_users === 'true' && !o.ignoreUserBreakdown;
+        const U = (id, name, login, domain, total) => ({ user_id: id, user_name: name, user_login: login, domain, total });
+        let ai;
+        if (!users) {
+          ai = q.type === 'blocked'
             ? [{ domain: 'claude.ai', total: 30 }]
-            : [{ domain: 'chat.openai.com', total: 80 }, { domain: 'api.openai.com', total: 20 }, { domain: 'unknown-ai.io', total: 20 }]);
+            : [{ domain: 'chat.openai.com', total: 80 }, { domain: 'api.openai.com', total: 20 }, { domain: 'unknown-ai.io', total: 20 }];
+        } else if (!perUser) {
+          // Exactly the pilot's shape: per-domain totals, no user at all.
+          ai = [{ bucket: '2026-09-01', domain: 'chat.openai.com', total: 90, total_agents: 0, total_networks: 90 },
+                { bucket: '2026-09-01', domain: 'claude.ai', total: 10, total_agents: 0, total_networks: 10 }];
+        } else {
+          // Alice through the agent; 40 more from the office network, with no user.
+          const allowedRows = [U(11, 'Alice Adams', 'alice@client.example', 'chat.openai.com', 50),
+                               U(null, null, null, 'chat.openai.com', 40)];
+          const blockedRows = [U(12, 'Bob Brown', 'bob@client.example', 'claude.ai', 10)];
+          ai = q.type === 'allowed' ? allowedRows
+            : q.type === 'blocked' ? blockedRows
+            : allowedRows.concat(blockedRows);
+        }
         // Unfiltered, the report also carries traffic that is nothing to do with AI.
-        const rest = users
-          ? [{ user_name: 'carol@client.example', domain: 'news.example.com', total: 500 }]
+        const rest = users && perUser
+          ? [U(13, 'Carol Chen', 'carol@client.example', 'news.example.com', 500)]
           : [{ domain: 'news.example.com', total: 500 }];
-        const strip = r => (o.usersWithoutDomain && users ? { user_name: r.user_name, total: r.total } : r);
+        const strip = r => (o.usersWithoutDomain && users
+          ? { user_id: r.user_id, user_name: r.user_name, user_login: r.user_login, total: r.total }
+          : r);
         return ok({ data: (filtered ? ai : ai.concat(rest)).map(withCat).map(strip) });
       }
       case '/v1/policies/all':
@@ -300,8 +320,34 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('a domain with no catalogue entry is kept under its own name, not dropped',
     other && other.allowed === 20 && other.mapped === false, JSON.stringify(other));
 
+  /*
+   * THE PILOT'S EMPTY USERS TABLE. total_domains_users names users only when
+   * asked with show_individual_users=true; without it, it returns per-domain
+   * totals. Every request for users must ask.
+   */
+  const userCalls = f1.log.filter(l => l.path === '/v1/traffic_reports/total_domains_users');
+  check('the users report is asked for a per-user breakdown, every time',
+    userCalls.length >= 2 && userCalls.every(l => l.q.show_individual_users === 'true'),
+    `${userCalls.length} calls`);
   const alice = day1.users.data.rows.find(r => r.user === 'alice@client.example');
-  check('users are read with the tool they used', alice && alice.count === 50 && alice.appKey === 'app:31');
+  check('users are read with the tool they used',
+    alice && alice.allowed === 50 && alice.blocked === 0 && alice.appKey === 'app:31', JSON.stringify(alice));
+  check('keyed by login, shown by name', alice && alice.name === 'Alice Adams');
+  const bob = day1.users.data.rows.find(r => r.user === 'bob@client.example');
+  check('blocked attempts are attributed to the user who made them',
+    bob && bob.blocked === 10 && bob.allowed === 0, JSON.stringify(bob));
+  check('office-network lookups with no user are counted, not dropped or invented',
+    day1.users.data.unattributed === 40 && !day1.users.data.rows.some(r => /null|undefined|^User /.test(r.user)),
+    day1.users.data.unattributed);
+
+  DNS._clearCatalogueCache();
+  const fNoBreakdown = fakeDns({ ignoreUserBreakdown: true });
+  const noBreakdown = await DNS.fetchAiDay(cfgFor(fNoBreakdown), '2026-09-01', { now: NOW });
+  check('a users report that names nobody is unreadable, not "no users"',
+    !noBreakdown.users.available && noBreakdown.users.reason === 'unrecognised_response', noBreakdown.users.reason);
+  check('and says what arrived instead — the pilot\'s fields',
+    /bucket/.test(noBreakdown.users.detail || '') && /domain/.test(noBreakdown.users.detail || ''),
+    noBreakdown.users.detail);
 
   check('policy status shows whether Generative AI is blocked',
     day1.policy.data.rows.length === 1 && day1.policy.data.rows[0].aiBlocked === true,
@@ -472,8 +518,15 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('the AI share of all DNS is computed', back.usage.data.sharePct === 1.5, back.usage.data.sharePct);
   check('tools rebuild with their names',
     back.apps.data.rows.length === 3 && back.apps.data.rows[0].name === 'ChatGPT', back.apps.data.rows.map(r => r.name).join(', '));
-  check('users rebuild with their main tools',
-    back.users.data.rows[0].user === 'alice@client.example' && back.users.data.rows[0].apps[0].name === 'ChatGPT');
+  const topUser = back.users.data.rows[0] || {};
+  check('users rebuild with their name, login and main tools',
+    topUser.user === 'Alice Adams' && topUser.login === 'alice@client.example' &&
+    topUser.apps[0].name === 'ChatGPT', JSON.stringify(topUser));
+  const bobBack = back.users.data.rows.find(r => r.login === 'bob@client.example') || {};
+  check('allowed and blocked survive the rollup separately',
+    topUser.allowed === 50 && topUser.blocked === 0 && bobBack.blocked === 10 && bobBack.allowed === 0,
+    `alice ${topUser.allowed}/${topUser.blocked}, bob ${bobBack.allowed}/${bobBack.blocked}`);
+  check('and so does the unattributed count', back.users.data.unattributed === 40, back.users.data.unattributed);
   check('policy rebuilds', back.policy.data.rows[0].aiBlocked === true && back.policy.data.asOf === '2026-09-01');
   check('rows are scoped to the integration they were written for',
     (await DM.aiFromRollups(pool, 3, 30, 8)).usage.reason === 'no_data_in_range');

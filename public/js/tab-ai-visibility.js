@@ -102,12 +102,22 @@ const AiVisibilityTab = (() => {
 
   function renderUsers(s) {
     U.panel('ai-users-panel', s.users, (d) => {
-      U.fillTable('ai-users-table', d.rows, 3, r => `
+      const rows = d.rows || [];
+      // When lookups arrived but none named a user, say how many and why.
+      const empty = rows.length ? undefined
+        : d.unattributed
+          ? `None of this period's ${U.fmtNum(d.unattributed)} AI lookups could be attributed to a user. ` +
+            'They came through office networks, where DNSFilter sees the site but not the person — only its ' +
+            'roaming client (the DNSFilter agent) knows who made a lookup.'
+          : NO_USERS_TEXT;
+      U.fillTable('ai-users-table', rows, 4, r => `
         <tr>
-          <td>${U.esc(r.user)}</td>
-          <td>${U.fmtNum(r.count)}</td>
+          <td>${U.esc(r.user)}${r.login && r.login !== r.user
+            ? `<div class="edr-muted" style="font-size:.78rem">${U.esc(r.login)}</div>` : ''}</td>
+          <td>${U.fmtNum(r.allowed)}</td>
+          <td class="${r.blocked > 0 ? 'edr-tone-green' : ''}">${U.fmtNum(r.blocked)}</td>
           <td>${U.esc((r.apps || []).map(a => a.name).join(', ') || '—')}</td>
-        </tr>`, d.rows && d.rows.length ? undefined : NO_USERS_TEXT);
+        </tr>`, empty);
     });
   }
 
@@ -134,6 +144,10 @@ const AiVisibilityTab = (() => {
     }
     if (U.isReady(s.apps) && s.apps.data.sampled) extra.push('On busy days only the top AI domains were read.');
     if (U.isReady(s.users) && s.users.data.sampled) extra.push('Users are limited to the 50 most active per day.');
+    if (U.isReady(s.users) && s.users.data.unattributed && (s.users.data.rows || []).length) {
+      extra.push(`A further ${U.fmtNum(s.users.data.unattributed)} AI lookups came through office networks ` +
+        'and cannot be attributed to a user.');
+    }
     // When DNSFilter would not filter by category, these figures are a floor.
     ['apps', 'users'].forEach((k) => {
       const d = U.isReady(s[k]) ? s[k].data : null;
