@@ -61,8 +61,8 @@ window.ReportsTab = (function () {
     // Managed Email Security. Takes a trailing day window like edr/o365, so it
     // asks for enough days to span the reporting period.
     email:            function (ctx) { return 'api/email/summary?days=' + edrWindowDays(ctx) + tenantParam('&'); },
-    // AI Visibility. The payload includes the staff-only users panel; the
-    // report section never reads it (see renderAiUsage).
+    // AI Visibility. The report names the top users by display name only —
+    // never their login — and only the top few (see renderAiUsage).
     ai:               function (ctx) { return 'api/ai-visibility/summary?days=' + edrWindowDays(ctx) + tenantParam('&'); },
   };
 

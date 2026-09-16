@@ -3800,13 +3800,31 @@ window.ReportSections = (function () {
   /*
    * AI Visibility, from DNSFilter.
    *
-   * AGGREGATES ONLY. The staff tab names the people using AI tools; this section
-   * never reads that panel. A board pack travels, and a named employee's AI use
-   * is an HR conversation, not a board finding.
+   * TOP USERS ARE NAMED — deliberately few, and by name only. The section was
+   * first built as aggregates only; Reflex asked for the people behind the use,
+   * because "who do we talk to" is the question a board asks next. This deck can
+   * be published to the client's portal, so the naming is kept narrow:
+   *
+   *   - the top AI_REPORT_TOP_USERS, not the full list the staff tab shows;
+   *   - the display name, never the login: an email address in a board pack is
+   *     one more thing to leak, and adds nothing a name does not;
+   *   - allowed and blocked side by side, so repeated attempts at a blocked tool
+   *     read as a policy conversation rather than an accusation.
    *
    * Every figure the source could not read renders as "No data", not 0: a
    * client whose DNSFilter reports were unreadable has not stopped using AI.
    */
+  var AI_REPORT_TOP_USERS = 5;
+
+  /* The name to print: the display name, or the part of a login before the @. */
+  function aiReportName(r) {
+    var name = String((r && r.user) || '').trim();
+    var login = String((r && r.login) || '').trim();
+    if (!name || name === login) name = login;
+    if (name.indexOf('@') >= 0) name = name.split('@')[0];
+    return name || 'Unnamed user';
+  }
+
   function renderAiUsage(ctx) {
     var s = ctx.data.ai;
     if (!s || !s.configured) return null;
@@ -3859,13 +3877,47 @@ window.ReportSections = (function () {
         { label: 'Lookups',  key: 'lookups', width: '18%' },
         { label: 'Blocked',  key: 'blocked', width: '18%' },
       ],
-      rows: rows.slice(0, 8).map(function (r) {
+      // Six, not eight: the users table below shares this fixed-height slide.
+      rows: rows.slice(0, 6).map(function (r) {
         return { name: r.name, state: labels[r.status] || labels.unreviewed,
                  lookups: (r.allowed || 0) + (r.blocked || 0), blocked: r.blocked || 0 };
       }),
     }) : '';
 
-    return tiles + head + table + sectionComment(ctx, 'aiUsage');
+    // Every value goes through dataTable, which escapes it: these names come
+    // from DNSFilter, not from us.
+    var us = envData(s.users);
+    var topUsers = us && Array.isArray(us.rows) ? us.rows.slice(0, AI_REPORT_TOP_USERS) : [];
+    var usersTable = topUsers.length
+      ? '<div class="sec-sub">Top users of AI tools</div>' + D.dataTable({
+          cols: [
+            { label: 'User',       key: 'user',    width: '32%' },
+            { label: 'Allowed',    key: 'allowed', width: '14%' },
+            { label: 'Blocked',    key: 'blocked', width: '14%' },
+            { label: 'Main tools', key: 'tools',   width: '40%' },
+          ],
+          rows: topUsers.map(function (r) {
+            return {
+              user: aiReportName(r),
+              allowed: r.allowed || 0,
+              blocked: r.blocked || 0,
+              tools: (r.apps || []).map(function (x) { return x.name; }).join(', ') || '—',
+            };
+          }),
+        })
+      : '';
+
+    // Said, not hidden: lookups from an office network name nobody, and a
+    // table of five people would otherwise read as the whole story.
+    var unattributed = us && us.unattributed ? us.unattributed : 0;
+    var usersNote = unattributed
+      ? '<div class="rag-note">' + esc(unattributed) + ' AI lookup' + (unattributed === 1 ? '' : 's') +
+        ' came through office networks, where DNSFilter cannot see who made ' +
+        (unattributed === 1 ? 'it; it is' : 'them; they are') +
+        ' counted above but not attributed to anyone.</div>'
+      : '';
+
+    return tiles + head + table + usersTable + usersNote + sectionComment(ctx, 'aiUsage');
   }
 
   function renderFirewallAudit(ctx) {

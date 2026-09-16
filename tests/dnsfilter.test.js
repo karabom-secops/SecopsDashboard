@@ -22,8 +22,9 @@
  *                                not shown
  *   re-collection is honest      a panel read empty clears yesterday's run; a
  *                                panel that failed keeps it
- *   names stay staff-side        the board section never prints a user; the
- *                                portal has no route
+ *   names stay narrow            the board section names only the top users,
+ *                                by display name, never by login; the portal
+ *                                has no AI Visibility route
  *
  *   node tests/dnsfilter.test.js <repoRoot>
  */
@@ -802,7 +803,7 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('and so does the AI Visibility tab',
     !/await res\.json\(\)/.test(codeOnly(read('public', 'js', 'tab-ai-visibility.js'))));
 
-  section('the board section counts, it does not name');
+  section('the board section names the top users, and no more');
 
   const sandbox = { console };
   sandbox.window = sandbox;
@@ -821,8 +822,41 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   const deckSummary = { configured: true, windowDays: 30, usage: back.usage, apps: annotatedBack, users: back.users, policy: back.policy };
   const deck = String(sec.render({ data: { ai: deckSummary }, comments: {} }));
   check('it reports the figures', /150/.test(deck) && /ChatGPT/.test(deck) && /Blocked/.test(deck));
-  check('it never prints a user, although the payload carries them',
-    back.users.data.rows.length > 0 && !/alice|bob|client\.example/i.test(deck));
+  /*
+   * REFRAMED, NOT REMOVED. This used to assert that the deck printed no user at
+   * all. Reflex asked for the top users in the report, so the property that
+   * remains is narrower and still worth holding: names, few of them, never a
+   * login.
+   */
+  check('it lists the top users by name, with allowed and blocked',
+    /Top users of AI tools/.test(deck) && /Alice Adams/.test(deck) && /Bob Brown/.test(deck));
+  check('but never their login — the email address stays on the staff tab',
+    !/client\.example/i.test(deck), 'no login in the deck');
+
+  const withUsers = users => String(sec.render({
+    data: { ai: Object.assign({}, deckSummary, { users }) }, comments: {},
+  }));
+  const manyUsers = withUsers({ available: true, reason: null, data: { unattributed: 40, rows:
+    Array.from({ length: 7 }, (_, i) => ({
+      user: `Person ${i + 1}`, login: `p${i + 1}@client.example`, allowed: 70 - i, blocked: 0, apps: [],
+    })) } });
+  check('only the top five are named', /Person 5/.test(manyUsers) && !/Person 6/.test(manyUsers));
+  check('office-network lookups are said, not hidden',
+    /40 AI lookups came through office networks/.test(manyUsers));
+
+  const loginOnly = withUsers({ available: true, reason: null, data: { rows: [
+    { user: 'dave@client.example', login: 'dave@client.example', allowed: 3, blocked: 0, apps: [] }] } });
+  check('a user with no display name is shown by the name part of their login, not the address',
+    /<td>dave<\/td>/.test(loginOnly) && !/dave@/.test(loginOnly));
+
+  const hostile = withUsers({ available: true, reason: null, data: { rows: [
+    { user: '<img src=x onerror=alert(1)>', login: 'x', allowed: 1, blocked: 0, apps: [] }] } });
+  check('a name from DNSFilter cannot inject markup into the deck',
+    !/<img src=x/.test(hostile) && /&lt;img/.test(hostile));
+
+  const noUsers = withUsers({ available: false, data: null, reason: 'not_permitted' });
+  check('without a users panel the section still renders, just without the table',
+    /ChatGPT/.test(noUsers) && !/Top users of AI tools/.test(noUsers));
 
   const noUsage = String(sec.render({ data: { ai: Object.assign({}, deckSummary, {
     usage: { available: false, data: null, reason: 'unrecognised_response' },
