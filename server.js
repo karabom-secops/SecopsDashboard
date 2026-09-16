@@ -189,6 +189,23 @@ const evidenceUpload = multer({
   },
 });
 
+/*
+ * Client logos, uploaded on the Client Profile tab at onboarding.
+ *
+ * RASTER ONLY, and the limit is small. An SVG is a script-bearing document:
+ * served from our own origin it would run in the viewer's session, and this
+ * image is rendered in the client portal. 512 KB is generous for a logo and
+ * keeps the row small enough to travel in every portal page load.
+ */
+const logoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: 512 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^image\/(png|jpeg|webp)$/.test(file.mimetype)) return cb(null, true);
+    cb(new Error('Logo must be a PNG, JPEG or WebP image.'));
+  },
+});
+
 const rateLimit = require('express-rate-limit');
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -954,9 +971,14 @@ app.get('/api/tenants', async (req, res) => {
     // report treats those two very differently.
     const servicesCol = await hasTenantServicesColumn()
       ? 't.services' : 'NULL::text[] AS services';
+    // A flag, never the bytes: this list is fetched to fill a dropdown, and a
+    // logo per row would put megabytes through it. The switcher asks for the
+    // image itself only for the client it is showing.
+    const logoCol = await hasTenantLogoColumns()
+      ? '(t.logo_mime IS NOT NULL) AS has_logo' : 'FALSE AS has_logo';
 
     const result = await pool.query(
-      `SELECT t.id, t.name, t.slug, t.created_at, ${servicesCol},
+      `SELECT t.id, t.name, t.slug, t.created_at, ${servicesCol}, ${logoCol},
               COUNT(u.id)::int AS user_count
        FROM tenants t
        LEFT JOIN users u ON u.tenant_id = t.id
@@ -8124,8 +8146,23 @@ async function buildClientProfile(tenantId) {
   const hasEdr = !!(inputs.edrHealth && inputs.edrHealth.agents &&
                     (Number(inputs.edrHealth.agents.total) || 0) > 0);
 
+  /*
+   * Whether a logo is set — a flag, never the bytes. The tab renders the image
+   * from /api/client-profile/logo, so this payload stays small and the picture
+   * is fetched once by the browser rather than base64'd into every profile read.
+   * False on an un-migrated deployment, which shows an empty upload box.
+   */
+  let hasLogo = false;
+  try {
+    if (await hasTenantLogoColumns()) {
+      const l = await pool.query('SELECT logo_mime FROM tenants WHERE id = $1', [tenantId]);
+      hasLogo = !!(l.rows.length && l.rows[0].logo_mime);
+    }
+  } catch (_) { hasLogo = false; }
+
   return {
     tenantId,
+    hasLogo,
     available: {
       estate:   estateAvailable,
       services: await hasTenantServicesColumn(),
@@ -8511,6 +8548,113 @@ app.get('/api/client-profile', requireAuth, async (req, res) => {
     const tenantId = resolveProfileTenant(req);
     if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
     return res.json(await buildClientProfile(tenantId));
+  } catch (err) { return serverError(res, err); }
+});
+
+/*
+ * ── Client logo ─────────────────────────────────────────────────────────────
+ *
+ * Degrade-open probe, cached on a positive answer only, exactly like
+ * hasTenantServicesColumn: a deployment that has not run db/migrate-tenant-logo.sql
+ * shows no logo rather than failing, and running the migration takes effect
+ * without a restart.
+ */
+let _hasTenantLogo = false;
+async function hasTenantLogoColumns() {
+  if (_hasTenantLogo) return true;
+  try {
+    await pool.query('SELECT logo_mime, logo_data FROM tenants LIMIT 1');
+    _hasTenantLogo = true;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** The stored logo for one tenant, or null. Shared by the staff and portal routes. */
+async function loadTenantLogo(tenantId) {
+  if (!await hasTenantLogoColumns()) return null;
+  const r = await pool.query(
+    'SELECT logo_mime, logo_data, logo_updated_at FROM tenants WHERE id = $1', [tenantId]);
+  const row = r.rows[0];
+  if (!row || !row.logo_mime || !row.logo_data) return null;
+  return row;
+}
+
+/*
+ * Serve the bytes. The Content-Type is the STORED mime, which the upload route
+ * allowlisted and the schema constrains — never sniffed from the bytes — and
+ * nosniff stops a browser second-guessing it. Cached privately: a logo changes
+ * rarely, but it belongs to one client and must not sit in a shared cache.
+ */
+function sendTenantLogo(res, row) {
+  res.set('Content-Type', row.logo_mime);
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Cache-Control', 'private, max-age=300');
+  return res.send(row.logo_data);
+}
+
+/** GET /api/client-profile/logo — the client's logo, for staff screens. */
+app.get('/api/client-profile/logo', requireAuth, async (req, res) => {
+  try {
+    const tenantId = resolveProfileTenant(req);
+    if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
+    const row = await loadTenantLogo(tenantId);
+    if (!row) return res.status(404).json({ error: 'No logo set for this client.' });
+    return sendTenantLogo(res, row);
+  } catch (err) { return serverError(res, err); }
+});
+
+/*
+ * POST /api/client-profile/logo — upload or replace it.
+ *
+ * A WRITE on the client-profile page, so pageGate has already required that
+ * level before this runs (same as the PUT below). The tenant comes from the
+ * session, or from a superadmin's explicit tenantId — never from the form.
+ */
+app.post('/api/client-profile/logo', (req, res) => {
+  logoUpload.single('logo')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      const tooBig = uploadErr.code === 'LIMIT_FILE_SIZE';
+      return res.status(400).json({ error: tooBig ? 'Logo must be 512 KB or smaller.' : uploadErr.message });
+    }
+    try {
+      const tenantId = resolveProfileTenant(req);
+      if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
+      if (!await hasTenantLogoColumns()) {
+        return res.status(503).json({ error: 'Client logos are not available yet. Run db/migrate-tenant-logo.sql.' });
+      }
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+      // Belt and braces over multer's fileFilter: the allowlist that decides
+      // what may be stored is the same one the serve route echoes back.
+      if (!/^image\/(png|jpeg|webp)$/.test(req.file.mimetype)) {
+        return res.status(400).json({ error: 'Logo must be a PNG, JPEG or WebP image.' });
+      }
+
+      await pool.query(
+        `UPDATE tenants
+            SET logo_mime = $1, logo_data = $2, logo_filename = $3,
+                logo_updated_at = NOW(), logo_updated_by = $4
+          WHERE id = $5`,
+        [req.file.mimetype, req.file.buffer,
+         String(req.file.originalname || '').slice(0, 200), req.session.userId, tenantId]
+      );
+      return res.json({ ok: true, bytes: req.file.size, mime: req.file.mimetype });
+    } catch (err) { return serverError(res, err); }
+  });
+});
+
+/** DELETE /api/client-profile/logo — back to no logo. */
+app.delete('/api/client-profile/logo', async (req, res) => {
+  try {
+    const tenantId = resolveProfileTenant(req);
+    if (!tenantId) return res.status(400).json({ error: 'No tenant context.' });
+    if (!await hasTenantLogoColumns()) return res.json({ ok: true });
+    await pool.query(
+      `UPDATE tenants SET logo_mime = NULL, logo_data = NULL, logo_filename = NULL,
+              logo_updated_at = NULL, logo_updated_by = NULL
+        WHERE id = $1`, [tenantId]);
+    return res.json({ ok: true });
   } catch (err) { return serverError(res, err); }
 });
 

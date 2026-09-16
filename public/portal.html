@@ -18,6 +18,10 @@
     things that differ are what is in the nav and the absence of every write
     control.
   -->
+  <link rel="icon" href="img/favicon.svg" type="image/svg+xml" />
+  <link rel="alternate icon" href="img/reflex-logo.png" />
+  <link rel="apple-touch-icon" href="img/reflex-logo.png" />
+  <meta name="theme-color" content="#0066CC" />
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="stylesheet" href="css/portal.css" />
 
@@ -57,6 +61,8 @@
              stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
       <img class="header-logo-svg" src="img/reflex-logo.png" alt="Reflex logo" />
+      <!-- The client's own logo, filled in by portal-boot.js when one is set. -->
+      <img id="portalClientLogo" class="header-client-logo" src="" alt="" hidden />
       <div class="header-brand">
         <span class="brand-secops">SECOPS</span>
       </div>

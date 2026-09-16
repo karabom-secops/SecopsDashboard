@@ -214,15 +214,36 @@
           const tRes = await fetch(apiUrl('tenants'), { credentials: 'same-origin' });
           if (tRes.ok) {
             const tenants = await tRes.json();
+            const hasLogo = {};
             tenants.forEach(function (t) {
               var opt = document.createElement('option');
               opt.value = t.id;
               opt.textContent = t.name;
               globalSel.appendChild(opt);
+              hasLogo[t.id] = !!t.has_logo;
             });
+
+            /*
+             * The selected client's logo, so a superadmin can see at a glance
+             * whose data is on screen. The list carries a FLAG, not the image:
+             * one request per selection, not one per client in the dropdown.
+             * The cache-buster keeps a replaced logo from showing stale.
+             */
+            var logoImg = document.getElementById('globalTenantLogo');
+            var showLogo = function (id) {
+              if (!logoImg) return;
+              if (!id || !hasLogo[id]) { logoImg.hidden = true; logoImg.removeAttribute('src'); return; }
+              logoImg.src = apiUrl('client-profile/logo') + '?tenantId=' + encodeURIComponent(id) +
+                '&v=' + Date.now();
+              logoImg.alt = (globalSel.options[globalSel.selectedIndex] || {}).textContent || 'Client logo';
+              logoImg.hidden = false;
+            };
+            logoImg && logoImg.addEventListener('error', function () { logoImg.hidden = true; });
+
             globalWrap.hidden = false;
             globalSel.addEventListener('change', function () {
               window.globalTenantId = globalSel.value ? parseInt(globalSel.value, 10) : null;
+              showLogo(window.globalTenantId);
               // app.js re-renders the active tab. Announcing the change rather
               // than naming tabs here is what keeps this correct as tabs are
               // added — the old version listed Vulns and Awareness by hand and

@@ -5,13 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Login — SecOps Dashboard</title>
   <base href="/secops/" />
+  <link rel="icon" href="img/favicon.svg" type="image/svg+xml" />
+  <link rel="alternate icon" href="img/reflex-logo.png" />
+  <link rel="apple-touch-icon" href="img/reflex-logo.png" />
+  <meta name="theme-color" content="#0066CC" />
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body class="login-page">
 
   <div class="login-card">
     <div class="login-logo-wrap">
-      <img class="login-logo" src="img/logo.png" alt="Reflex Solutions" onerror="this.style.display='none'" />
+      <!-- img/logo.png has never existed; the onerror below was hiding it on
+           every page load. The real asset is reflex-logo.png. -->
+      <img class="login-logo" src="img/reflex-logo.png" alt="Reflex Solutions" onerror="this.style.display='none'" />
       <span class="login-title">SecOps Dashboard</span>
     </div>
 

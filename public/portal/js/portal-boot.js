@@ -226,6 +226,21 @@
     var chip = document.getElementById('portalClientName');
     if (chip && me.clientName) { chip.textContent = me.clientName; chip.hidden = false; }
 
+    /*
+     * The client's own mark, beside ours. A flag from /me rather than a URL:
+     * the image route resolves the tenant from the session, so there is nothing
+     * here a client could point at another client's logo.
+     *
+     * Ours stays. This is a Reflex product delivered to them, not a white-label
+     * — and a portal showing only their logo would imply they built it.
+     */
+    var clientLogo = document.getElementById('portalClientLogo');
+    if (clientLogo && me.hasLogo) {
+      clientLogo.src = P.BASE + 'api/portal/logo';
+      clientLogo.alt = (me.clientName || 'Client') + ' logo';
+      clientLogo.hidden = false;
+    }
+
     if (me.preview) {
       var banner = document.getElementById('portalPreviewBanner');
       if (banner) {

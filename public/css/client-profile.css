@@ -39,6 +39,62 @@
   border-radius: 4px;
 }
 
+/* The client logo control. The preview box keeps its size whether or not a
+   logo is set, so the card does not jump as one is uploaded or removed. */
+.cp-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.cp-logo-preview {
+  height: 56px;
+  max-width: 200px;
+  width: auto;
+  object-fit: contain;
+  /* A chequerboard, so a transparent PNG is visibly transparent rather than
+     looking like a white block that will show as a white block on dark. */
+  background-image:
+    linear-gradient(45deg, rgba(127, 127, 127, .12) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(127, 127, 127, .12) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(127, 127, 127, .12) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(127, 127, 127, .12) 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 4px;
+  padding: 0.35rem;
+}
+
+.cp-logo-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  font-size: 0.78rem;
+  color: var(--text-muted, #8C8C8C);
+  font-style: italic;
+}
+
+.cp-logo-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* A <label> acting as the file-picker button: it must look and disable like
+   the buttons beside it. */
+.cp-logo-actions .btn {
+  cursor: pointer;
+  margin: 0;
+}
+
+.cp-logo-actions .btn.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .cp-panel.cp-ok {
   border-left: 3px solid #2E9E5B;
   font-size: 0.85rem;

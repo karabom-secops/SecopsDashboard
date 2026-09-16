@@ -316,6 +316,8 @@ window.ClientProfileTab = (function () {
 
       servicesBlock(d) +
 
+      logoBlock(d) +
+
       '<div class="admin-card">' +
         '<h3 class="admin-card-title">What they have</h3>' +
         '<p class="admin-card-hint">Leave a field <em>blank</em> for "not ' +
@@ -451,6 +453,116 @@ window.ClientProfileTab = (function () {
     if (save) save.onclick = handleSave;
     var rev = document.getElementById('cp-review');
     if (rev) rev.onclick = handleReview;
+    var logo = document.getElementById('cp-logo-file');
+    if (logo) logo.onchange = handleLogoUpload;
+    var rm = document.getElementById('cp-logo-remove');
+    if (rm) rm.onclick = handleLogoRemove;
+  }
+
+  // ── Client logo ───────────────────────────────────────────────────────────
+
+  /*
+   * A separate call from Save, deliberately: the profile PUT is JSON and this
+   * is multipart, and an image that failed to upload must not take a set of
+   * estate edits down with it.
+   *
+   * The cache-buster on the preview matters — the URL never changes, so without
+   * it the browser shows the old mark after a replacement and the operator
+   * believes the upload failed.
+   */
+  function logoUrl(bust) {
+    var qs = tenantQS();
+    return apiUrl('client-profile/logo') + qs +
+      (bust ? (qs ? '&' : '?') + 'v=' + Date.now() : '');
+  }
+
+  function logoBlock(d) {
+    var ro = !canWriteProfile();
+    var has = !!d.hasLogo;
+    return '<div class="admin-card">' +
+      '<h3 class="admin-card-title">Client logo</h3>' +
+      '<p class="admin-card-hint">Shown in this client\'s portal and beside their name ' +
+        'when staff switch organisation. PNG, JPEG or WebP, up to 512 KB. ' +
+        'A transparent PNG sits best on both the light and dark themes.</p>' +
+      '<div class="cp-logo-row">' +
+        (has
+          ? '<img id="cp-logo-img" class="cp-logo-preview" src="' + esc(logoUrl(true)) + '" alt="Client logo">'
+          : '<span id="cp-logo-img" class="cp-logo-preview cp-logo-empty">No logo</span>') +
+        '<div class="cp-logo-actions">' +
+          '<label class="btn btn-sm' + (ro ? ' disabled' : '') + '">' +
+            (has ? 'Replace logo' : 'Upload logo') +
+            '<input id="cp-logo-file" type="file" accept="image/png,image/jpeg,image/webp" hidden' +
+              (ro ? ' disabled' : '') + '>' +
+          '</label>' +
+          (has && !ro
+            ? '<button id="cp-logo-remove" type="button" class="btn btn-sm btn-danger">Remove</button>'
+            : '') +
+        '</div>' +
+      '</div>' +
+      '<p id="cp-logo-msg" class="admin-form-msg" hidden></p>' +
+    '</div>';
+  }
+
+  function logoMsg(text, isError) {
+    var el = document.getElementById('cp-logo-msg');
+    if (!el) return;
+    el.hidden = false;
+    el.textContent = text;
+    el.style.color = isError ? 'var(--red)' : 'var(--green)';
+  }
+
+  async function handleLogoUpload(ev) {
+    var input = ev && ev.target;
+    var file = input && input.files && input.files[0];
+    if (!file) return;
+
+    // Checked here as well as server-side, so the common mistakes are named
+    // before a megabyte goes up the wire.
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+      logoMsg('That file is not a PNG, JPEG or WebP image.', true);
+      input.value = '';
+      return;
+    }
+    if (file.size > 512 * 1024) {
+      logoMsg('That image is ' + Math.round(file.size / 1024) + ' KB. The limit is 512 KB.', true);
+      input.value = '';
+      return;
+    }
+
+    logoMsg('Uploading…', false);
+    try {
+      var form = new FormData();
+      form.append('logo', file);
+      var res = await fetch(apiUrl('client-profile/logo') + tenantQS(), {
+        method: 'POST', credentials: 'same-origin', body: form,
+      });
+      var j = await res.json().catch(function () { return {}; });
+      if (!res.ok) { logoMsg(j.error || ('Upload failed (HTTP ' + res.status + ').'), true); return; }
+      if (_data) _data.hasLogo = true;
+      render(_data);
+      logoMsg('Logo saved.', false);
+    } catch (err) {
+      logoMsg('Upload failed: ' + err.message, true);
+    }
+  }
+
+  async function handleLogoRemove() {
+    if (!confirm('Remove this client\'s logo?')) return;
+    try {
+      var res = await fetch(apiUrl('client-profile/logo') + tenantQS(), {
+        method: 'DELETE', credentials: 'same-origin',
+      });
+      if (!res.ok) {
+        var j = await res.json().catch(function () { return {}; });
+        logoMsg(j.error || 'Could not remove the logo.', true);
+        return;
+      }
+      if (_data) _data.hasLogo = false;
+      render(_data);
+      logoMsg('Logo removed.', false);
+    } catch (err) {
+      logoMsg('Could not remove the logo: ' + err.message, true);
+    }
   }
 
   function collect() {

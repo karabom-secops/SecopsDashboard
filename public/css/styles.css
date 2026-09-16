@@ -483,6 +483,19 @@ a { color: var(--blue); }
   gap: 0.45rem;
 }
 
+/* A client's own logo in the header — beside ours in the portal, beside the
+   organisation dropdown for staff. Height-constrained and object-fit:contain so
+   any aspect ratio a client sends us sits correctly rather than stretching. */
+.header-client-logo {
+  height: 28px;
+  max-width: 120px;
+  width: auto;
+  object-fit: contain;
+  flex-shrink: 0;
+  display: block;
+  border-radius: 3px;
+}
+
 .global-tenant-label {
   font-size: 0.78rem;
   color: var(--text-muted, #a0aec0);
