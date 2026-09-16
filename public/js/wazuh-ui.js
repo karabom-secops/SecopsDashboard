@@ -88,6 +88,9 @@ const WazuhUI = (() => {
     category_unknown:  'Not available — DNSFilter\'s Generative AI category has not been identified yet.',
     unrecognised_response: 'The log source answered in a form this dashboard does not recognise yet.',
     not_available:     'This report is not available from the log source.',
+    rate_limited:      'The log source was busy and refused this query — it will be collected again on the next run.',
+    source_error:      'The log source failed on this query — it will be collected again on the next run.',
+    unreachable:       'The log source could not be reached for this query.',
   };
 
   const REASON_HINT = {
@@ -99,6 +102,9 @@ const WazuhUI = (() => {
     beyond_retention: 'Office 365 audit content is kept for 7 days; shorter ranges will show it.',
     category_unknown: 'Run Test Connection on the DNSFilter (MSP) card, which looks the category up by name.',
     unrecognised_response: 'Re-test the integration: the Test result records the fields the source returned.',
+    rate_limited:     'Nothing to fix — press Sync Now, or wait for the hourly collection to pick the day up.',
+    source_error:     'Nothing to fix here yet — press Sync Now. If it keeps happening, the sync message names the error.',
+    unreachable:      'Check that this dashboard can reach the log source.',
   };
 
   function isReady(envelope) {

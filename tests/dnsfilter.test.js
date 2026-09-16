@@ -54,10 +54,11 @@ const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 const res = (attrs, id) => ({ id: String(id), type: 'x', attributes: attrs });
 
 function fakeDns(over) {
-  const o = Object.assign({ bearer: false, rateLimitOnce: false, fail: {}, override: {} }, over || {});
+  const o = Object.assign({ bearer: false, rateLimitOnce: false, rateLimitAlways: false,
+    fail: {}, failTimes: {}, override: {} }, over || {});
   const log = [];
   const sleeps = [];
-  let limited = o.rateLimitOnce ? 1 : 0;
+  let limited = o.rateLimitAlways ? Infinity : (o.rateLimitOnce ? 1 : 0);
 
   async function transport(cfg, url, headers) {
     const u = new URL(url);
@@ -69,6 +70,7 @@ function fakeDns(over) {
 
     if (o.bearer && !/^Bearer /.test(headers.Authorization)) return { status: 401, json: { error: 'unauthorised' }, headers: {} };
     if (limited > 0) { limited--; return { status: 429, json: null, headers: { 'retry-after': '3' } }; }
+    if (o.failTimes[p] > 0) { o.failTimes[p]--; return { status: 500, json: { error: 'transient' }, headers: {} }; }
     if (o.fail[p]) return { status: o.fail[p], json: { error: 'boom' }, headers: {} };
     if (o.override[p]) return ok(o.override[p](q));
 
@@ -218,6 +220,27 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   await DNS.listOrganisations({ api_key: 'k-msp', transport: fr.transport, sleep: fr.sleep });
   check('a 429 waits for Retry-After, then retries', fr.sleeps.length === 1 && fr.sleeps[0] === 3000, fr.sleeps.join(','));
 
+  /*
+   * THE FIRST PILOT RUN. One day's two heaviest reports came back as
+   * "query_error" and nothing said why. A transient failure now gets retried,
+   * and whatever it was is carried through to the operator.
+   */
+  DNS._clearCatalogueCache();
+  const f5 = fakeDns({ failTimes: { '/v1/traffic_reports/total_domains': 1 } });
+  const recovered = await DNS.fetchAiDay(cfgFor(f5), '2026-09-01', { now: NOW });
+  check('a 5xx on one report is retried, and the day is collected anyway',
+    recovered.apps.available && recovered.apps.data.rows.length === 3 && f5.sleeps.length === 1,
+    `slept ${f5.sleeps.join(',')}ms`);
+
+  DNS._clearCatalogueCache();
+  const fLimited = fakeDns({ rateLimitAlways: true });
+  const limitedDay = await DNS.fetchAiDay(cfgFor(fLimited), '2026-09-01', { now: NOW });
+  check('a rate limit that will not clear is reported as one, not as a query error',
+    !limitedDay.usage.available && limitedDay.usage.reason === 'rate_limited', limitedDay.usage.reason);
+  check('and it says which report and how often it was retried',
+    /total_categories/.test(limitedDay.usage.detail || '') && /retried 2 time/.test(limitedDay.usage.detail || ''),
+    limitedDay.usage.detail);
+
   const paged = fakeDns({ override: { '/v1/organizations/all': q => ({
     data: Array.from({ length: q['page[number]'] === '1' ? 100 : 5 }, (_, i) => res({ name: `Org ${q['page[number]']}-${i}` }, `${q['page[number]']}${i}`)),
     links: { next: q['page[number]'] === '1' ? '/next' : null },
@@ -286,13 +309,18 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
     empty.usage.available && empty.usage.data.allowed === 0 && empty.usage.data.blocked === 0);
 
   DNS._clearCatalogueCache();
-  const noTotal = await DNS.fetchAiDay(cfgFor(fakeDns({ fail: { '/v1/traffic_reports/total_requests': 500 } })), '2026-09-01', { now: NOW });
+  const fNoTotal = fakeDns({ fail: { '/v1/traffic_reports/total_requests': 500 } });
+  const noTotal = await DNS.fetchAiDay(cfgFor(fNoTotal), '2026-09-01', { now: NOW });
   check('a missing denominator leaves the counts but not the total',
-    noTotal.usage.available && noTotal.usage.data.total === null && noTotal.usage.data.totalReason === 'query_error');
+    noTotal.usage.available && noTotal.usage.data.total === null && noTotal.usage.data.totalReason === 'source_error',
+    noTotal.usage.data.totalReason);
+  check('and the failure it hit is kept, not flattened to "query error"',
+    /HTTP 500/.test(noTotal.usage.data.totalDetail || ''), noTotal.usage.data.totalDetail);
 
   DNS._clearCatalogueCache();
   const forbidden = await DNS.fetchAiDay(cfgFor(fakeDns({ fail: { '/v1/traffic_reports/total_domains_users': 403 } })), '2026-09-01', { now: NOW });
   check('a refused report says not permitted', !forbidden.users.available && forbidden.users.reason === 'not_permitted');
+  check('with the API\'s own words', /403/.test(forbidden.users.detail || ''), forbidden.users.detail);
 
   // ══ Rollups ═══════════════════════════════════════════════════════════════
 
@@ -338,13 +366,18 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('the re-collection store starts with one day of tools', seeded.apps.data.rows.length === 3);
 
   DNS._clearCatalogueCache();
-  await DM.snapshotDay(poolR, integ(), '2026-09-01', { now: NOW, cfg: { transport: fakeDns({
-    fail: { '/v1/traffic_reports/total_domains': 500 },
-  }).transport } });
+  const fKept = fakeDns({ fail: { '/v1/traffic_reports/total_domains': 500 } });
+  const failedRun = await DM.snapshotDay(poolR, integ(), '2026-09-01',
+    { now: NOW, cfg: { transport: fKept.transport, sleep: fKept.sleep } });
   const kept = await DM.aiFromRollups(poolR, 3, 30, 7);
   check('a panel that failed on re-collection keeps the figures an earlier run stored',
     kept.apps.available && kept.apps.data.rows.length === 3, kept.apps.data && kept.apps.data.rows.length);
-  check('and says a day could not be read', kept.apps.data.unavailableOnSomeDays === 'query_error');
+  check('and says a day could not be read', kept.apps.data.unavailableOnSomeDays === 'source_error',
+    kept.apps.data.unavailableOnSomeDays);
+  check('the reason reaches the screen with the failure behind it',
+    /HTTP 500/.test(kept.apps.data.unavailableDetail || ''), kept.apps.data.unavailableDetail);
+  check('and the sync message names it rather than saying "query_error"',
+    failedRun.problems.some(p => /^apps \(source_error: .*HTTP 500/.test(p)), failedRun.problems.join('; '));
 
   DNS._clearCatalogueCache();
   await DM.snapshotDay(poolR, integ(), '2026-09-01', { now: NOW, cfg: { transport: fakeDns({ override: {
@@ -360,7 +393,8 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   DNS._clearCatalogueCache();
   await DM.snapshotDay(pool2, integ(), '2026-09-01', { now: NOW, cfg: { transport: fakeDns().transport } });
   DNS._clearCatalogueCache();
-  await DM.snapshotDay(pool2, integ(), '2026-09-02', { now: NOW, cfg: { transport: fakeDns({ fail: { '/v1/traffic_reports/total_requests': 500 } }).transport } });
+  const fShare = fakeDns({ fail: { '/v1/traffic_reports/total_requests': 500 } });
+  await DM.snapshotDay(pool2, integ(), '2026-09-02', { now: NOW, cfg: { transport: fShare.transport, sleep: fShare.sleep } });
   const partialShare = await DM.aiFromRollups(pool2, 3, 30, 7);
   check('a share over only some of the days is not shown',
     partialShare.usage.data.sharePct === null && partialShare.usage.data.allowed === 240, JSON.stringify(partialShare.usage.data.totalReason));

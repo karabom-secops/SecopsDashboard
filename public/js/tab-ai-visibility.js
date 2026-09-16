@@ -127,7 +127,12 @@ const AiVisibilityTab = (() => {
     if (U.isReady(s.users) && s.users.data.sampled) extra.push('Users are limited to the 50 most active per day.');
     ['usage', 'apps', 'users', 'policy'].forEach((k) => {
       const d = U.isReady(s[k]) ? s[k].data : null;
-      if (d && d.unavailableOnSomeDays) extra.push(`Some days' ${k} could not be read (${U.reasonText(d.unavailableOnSomeDays)})`);
+      if (d && d.unavailableOnSomeDays) {
+        // The detail is the DNSFilter error itself. It is what turns "some days
+        // could not be read" into something an operator can act on.
+        extra.push(`Some days' ${k} could not be read (${U.reasonText(d.unavailableOnSomeDays)})` +
+          (d.unavailableDetail ? ` ${d.unavailableDetail}` : ''));
+      }
     });
     if (U.isReady(s.policy) && s.policy.data.asOf) extra.push(`Policy as read on ${s.policy.data.asOf}.`);
     if (!s.decisionsAvailable) extra.push('The sanctioned-app register is not set up yet (db/migrate-ai-visibility.sql).');
