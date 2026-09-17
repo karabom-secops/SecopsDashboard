@@ -1571,29 +1571,6 @@ app.get('/api/week/:weekKey', (req, res) => {
   }
 });
 
-app.patch('/api/week/:weekKey/priority/:index', (req, res) => {
-  try {
-    const { weekKey, index } = req.params;
-    const { status } = req.body;
-    if (!['open', 'wip', 'done'].includes(status)) {
-      return res.status(400).json({ error: 'status must be open, wip, or done.' });
-    }
-    const weeks = readData(WEEKS_FILE);
-    const week  = weeks[weekKey];
-    if (!week) return res.status(404).json({ error: 'Week not found.' });
-    const idx = parseInt(index, 10);
-    if (isNaN(idx) || idx < 0 || idx >= week.priorities.length) {
-      return res.status(400).json({ error: 'Invalid priority index.' });
-    }
-    week.priorities[idx].status = status;
-    writeData(WEEKS_FILE, weeks);
-    recomputeMetrics();
-    res.json(week);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ── Vuln helpers ──────────────────────────────────────────────────────────
 
 /**

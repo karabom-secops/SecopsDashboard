@@ -105,7 +105,6 @@
     }
     if (target === 'operations') {
       if (window._lastWeekData) {
-        renderPriorities(window._lastWeekData, 'operations');
         renderOrgs(window._lastWeekData, 'operations');
       }
       if (typeof window.renderIncidents === 'function') {
@@ -264,7 +263,6 @@
 
     const operationsPanel = tabPanels.operations;
     if (!operationsPanel.hidden) {
-      renderPriorities(weekData, 'operations');
       renderOrgs(weekData, 'operations');
       if (typeof window.renderIncidents === 'function') {
         window.renderIncidents('operations').catch(() => {});
@@ -294,7 +292,6 @@
                  window._operationsCarousel = window.initCarousel('#operations-carousel');
                }, 100);
              }
-        renderPriorities(weekData, 'operations');
         renderOrgs(weekData, 'operations');
         if (typeof window.renderIncidents === 'function') {
           window.renderIncidents('operations').catch(() => {});
