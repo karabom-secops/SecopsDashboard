@@ -65,6 +65,105 @@
   background: rgba(127, 127, 127, 0.14); border-radius: 3px;
 }
 
+/* ── Controls over the list ───────────────────────────────────────────────── */
+
+/* Screen-reader-only label: the search box is obvious by its placeholder to
+   someone who can see it, and unlabelled to someone who cannot. */
+.fw-sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+
+/* Status tabs. The count rides in the control, so an outcome's size is legible
+   without opening it. */
+.fw-seg {
+  display: flex; flex-wrap: wrap; gap: 0.3rem;
+  margin: 1.4rem 0 0.8rem;
+}
+
+.fw-st {
+  font: inherit; font-size: 0.84rem; cursor: pointer;
+  padding: 0.4rem 0.8rem; border-radius: 999px;
+  color: #8C8C8C; background: transparent;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+}
+.fw-st:hover { color: inherit; border-color: rgba(127, 127, 127, 0.45); }
+.fw-st.is-on {
+  color: inherit; font-weight: 600;
+  border-color: #2E7DD1; background: rgba(46, 125, 209, 0.10);
+}
+
+.fw-st-n {
+  font-variant-numeric: tabular-nums; font-weight: 700;
+  font-size: 0.78rem; opacity: 0.8; margin-left: 0.15rem;
+}
+
+.fw-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+
+.fw-q-wrap { flex: 1 1 18rem; min-width: 0; }
+.fw-q {
+  width: 100%; font: inherit; font-size: 0.86rem;
+  padding: 0.45rem 0.7rem; border-radius: 5px;
+  color: inherit; background: transparent;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+}
+.fw-q:focus { outline: 2px solid rgba(46, 125, 209, 0.45); outline-offset: 1px; }
+
+.fw-chips-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.fw-chips-l {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: #8C8C8C; margin-right: 0.15rem;
+}
+
+.fw-chip {
+  font: inherit; font-size: 0.74rem; text-transform: uppercase;
+  letter-spacing: 0.04em; cursor: pointer;
+  padding: 0.22rem 0.55rem; border-radius: 999px;
+  color: #8C8C8C; background: transparent;
+  border: 1px solid rgba(127, 127, 127, 0.28);
+}
+.fw-chip:hover { color: inherit; }
+.fw-chip-n { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+/* A pressed chip takes its own severity's colour, so the filter and the rows it
+   leaves behind read as the same thing. */
+.fw-chip.is-on { color: #fff; border-color: transparent; font-weight: 600; }
+.fw-chip.fw-sev-critical.is-on { background: #C0392B; }
+.fw-chip.fw-sev-high.is-on     { background: #E74C3C; }
+.fw-chip.fw-sev-medium.is-on   { background: #D98B0B; }
+.fw-chip.fw-sev-low.is-on      { background: #6E7B85; }
+
+.fw-tools { display: flex; gap: 0.3rem; margin-left: auto; }
+.fw-tool {
+  font: inherit; font-size: 0.78rem; cursor: pointer;
+  padding: 0.3rem 0.6rem; border-radius: 5px;
+  color: #8C8C8C; background: transparent;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+}
+.fw-tool:hover { color: inherit; border-color: rgba(127, 127, 127, 0.45); }
+
+/* What a filter is hiding, and the way out of it. Never quiet: a forgotten
+   filter is how a firewall reads as clean when only one slice of it was on
+   screen. */
+.fw-filter-note {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+  font-size: 0.8rem; color: #8C8C8C;
+  padding: 0.45rem 0.7rem; margin-bottom: 0.8rem;
+  border-radius: 5px; background: rgba(46, 125, 209, 0.08);
+  border: 1px solid rgba(46, 125, 209, 0.25);
+}
+
+.fw-clear {
+  font: inherit; font-size: 0.78rem; cursor: pointer;
+  padding: 0.15rem 0.5rem; border-radius: 4px;
+  color: #2E7DD1; background: transparent;
+  border: 1px solid rgba(46, 125, 209, 0.4);
+}
+.fw-clear:hover { color: #fff; background: #2E7DD1; }
+
 /* ── Findings ─────────────────────────────────────────────────────────────── */
 
 .fw-h {
@@ -77,6 +176,19 @@
   border: 1px solid rgba(127, 127, 127, 0.2);
   border-left-width: 3px; border-radius: 5px;
 }
+
+/* The rationale and the fix sit behind a disclosure. The summary carries
+   everything needed to decide whether to open it: outcome, severity, title and
+   which benchmark asked for it. */
+.fw-f > summary { cursor: pointer; list-style: none; }
+.fw-f > summary::-webkit-details-marker { display: none; }
+.fw-f > summary::after {
+  content: '\203A'; margin-left: auto; padding-left: 0.5rem;
+  color: #8C8C8C; transform: rotate(90deg); transition: transform 0.15s ease;
+}
+.fw-f[open] > summary::after { transform: rotate(-90deg); }
+.fw-f > summary:focus-visible { outline: 2px solid rgba(46, 125, 209, 0.5); outline-offset: 2px; }
+.fw-f-body { margin-top: 0.15rem; }
 
 .fw-f.fw-sev-critical { border-left-color: #c0392b; }
 .fw-f.fw-sev-high     { border-left-color: #e74c3c; }
@@ -112,10 +224,21 @@
 /* Policy ids, interface names, tunnel names. Never a secret value, and never
    shown to a client — see publicFinding() in lib/fortigate-score.js. */
 .fw-ev {
-  font-size: 0.78rem; margin-top: 0.35rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  display: flex; flex-wrap: wrap; gap: 0.3rem;
+  font-size: 0.78rem; margin-top: 0.45rem;
   color: #8C8C8C; word-break: break-word;
 }
+
+/* One pill per evidence key, so `policies: 4` and `interfaces: port1, port2`
+   stop running together into one line of punctuation. */
+.fw-ev-i {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 0.12rem 0.4rem; border-radius: 4px;
+  background: rgba(127, 127, 127, 0.10);
+  border: 1px solid rgba(127, 127, 127, 0.16);
+}
+.fw-ev-k { font-weight: 700; opacity: 0.85; }
+.fw-ev-k::after { content: ':'; }
 
 /* ── Category scorecards ──────────────────────────────────────────────────── */
 
@@ -124,16 +247,28 @@
   grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
 }
 
+/* Each card is a button: the question a scorecard provokes is "which ones", and
+   the card is where that click naturally lands. */
 .fw-cat {
+  display: block; width: 100%; text-align: left; font: inherit; cursor: pointer;
+  color: inherit; background: transparent;
   padding: 0.7rem 0.85rem; border-radius: 6px;
   border: 1px solid rgba(127, 127, 127, 0.2);
   border-left-width: 3px;
 }
+.fw-cat:hover { border-color: rgba(127, 127, 127, 0.45); }
+.fw-cat.is-on {
+  background: rgba(46, 125, 209, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(46, 125, 209, 0.45);
+}
 .fw-cat-top { display: flex; align-items: baseline; gap: 0.6rem; }
 .fw-cat-l { flex: 1 1 auto; font-weight: 600; font-size: 0.85rem; }
 .fw-cat-v { flex: 0 0 auto; font-weight: 700; font-variant-numeric: tabular-nums; }
-.fw-cat-sub { font-size: 0.76rem; color: #8C8C8C; margin-top: 0.2rem; }
-.fw-cat-b { font-size: 0.74rem; color: #8C8C8C; margin-top: 0.4rem; line-height: 1.45; }
+.fw-cat-sub { display: block; font-size: 0.76rem; color: #8C8C8C; margin-top: 0.2rem; }
+.fw-cat-b {
+  display: block; font-size: 0.74rem; color: #8C8C8C;
+  margin-top: 0.4rem; line-height: 1.45;
+}
 
 /* Band colours reuse the score block's, so a category reads the same way the
    headline score does. */
@@ -165,6 +300,24 @@
   border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 5px;
 }
 .fw-h-row:hover { border-color: #2E7DD1; }
+/* The audit currently on the Latest tab, marked in the list it was chosen
+   from — otherwise clicking a row gives no sign which one you are reading. */
+.fw-h-row.is-on { border-color: #2E7DD1; background: rgba(46, 125, 209, 0.07); }
+
+.fw-h-tag {
+  font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; margin-left: 0.45rem;
+  padding: 0.05rem 0.35rem; border-radius: 3px;
+  color: #8C8C8C; background: rgba(127, 127, 127, 0.14);
+}
+.fw-h-tag-on { color: #2E7DD1; background: rgba(46, 125, 209, 0.14); }
+
+/* Movement against the previous audit. Absent, not zero, when either score is
+   null — there is no "no change" between two things that were never measured. */
+.fw-h-d { font-size: 0.75rem; font-weight: 700; margin-left: 0.3rem; }
+.fw-h-d.fw-up   { color: #2E9E5B; }
+.fw-h-d.fw-down { color: #e74c3c; }
+.fw-h-d.fw-flat { color: #8C8C8C; }
 
 /* Row + its delete button as siblings, so neither is nested inside the other. */
 .fw-h-item { display: flex; align-items: stretch; gap: 0.4rem; }
@@ -195,8 +348,25 @@
 
 .fw-upload { margin-bottom: 1.2rem; }
 
+/* Shut once there is an audit to read, so the findings are the top of the page.
+   The promise that the file is not stored stays on the summary, where it is
+   answerable without opening the card. */
+.fw-up-sum {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem;
+  cursor: pointer; list-style: none;
+}
+.fw-up-sum::-webkit-details-marker { display: none; }
+.fw-up-sum::after {
+  content: '\203A'; margin-left: auto;
+  color: #8C8C8C; transform: rotate(90deg); transition: transform 0.15s ease;
+}
+.fw-upload[open] .fw-up-sum::after { transform: rotate(-90deg); }
+.fw-up-sum:focus-visible { outline: 2px solid rgba(46, 125, 209, 0.5); outline-offset: 2px; }
+.fw-up-hint { font-size: 0.78rem; color: #2E9E5B; }
+
 @media (max-width: 700px) {
   .fw-head { flex-wrap: wrap; }
   .fw-h-row { flex-wrap: wrap; gap: 0.25rem 0.7rem; }
   .fw-h-when { flex-basis: 100%; }
+  .fw-tools { margin-left: 0; }
 }
