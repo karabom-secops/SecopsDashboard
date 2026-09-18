@@ -263,8 +263,73 @@ window.FirewallTab = (function () {
   function startsOpen(f) {
     if (_expand === 'all') return true;
     if (_expand === 'none') return false;
-    // Auto: the ones somebody has to act on today.
+    /*
+     * Auto. Two kinds of row arrive open:
+     *
+     *   - a critical or high finding, because it is what the analyst came for;
+     *   - ANY not-assessable row, because there the title is the least
+     *     informative part of it. "Telnet administration is disabled — Not
+     *     assessable" tells a reader nothing; "admin-telnet is not present in
+     *     this config" is the whole answer, and it was behind a disclosure
+     *     nobody had a reason to open.
+     */
+    if (f.status === 'not-assessable') return true;
     return f.status === 'fail' && (f.severity === 'critical' || f.severity === 'high');
+  }
+
+  /**
+   * Why a set of checks could not be assessed, rolled up.
+   *
+   * Thirteen rows each saying "not assessable" is a list. The same thirteen
+   * grouped as "the system.admin section was not in the uploaded file (2)" and
+   * "the specific setting was absent (8)" is a diagnosis, and it is the
+   * difference between an analyst re-reading titles and an analyst going back
+   * to the client for a different export.
+   *
+   * Every one of these describes THE FILE, never the device. A check that could
+   * not be evaluated is not a finding, and this block says so in as many words.
+   */
+  var SECTION_STATE_TEXT = {
+    absent:        'was not in the uploaded file',
+    present_empty: 'was in the file but carried no entries',
+    parse_error:   'could not be read',
+  };
+
+  function naReasons(list) {
+    var sections = [];
+    var settings = 0;
+
+    (list || []).forEach(function (f) {
+      var ev = (f && f.evidence) || {};
+      if (!ev.section) { settings++; return; }
+      var hit = sections.filter(function (s) { return s.name === ev.section; })[0];
+      if (!hit) {
+        hit = { name: ev.section, state: ev.section_state || 'absent', n: 0 };
+        sections.push(hit);
+      }
+      hit.n++;
+    });
+
+    if (!sections.length && !settings) return '';
+
+    var rows = sections.sort(function (a, b) { return b.n - a.n; }).map(function (s) {
+      return '<li><code>' + esc(s.name) + '</code> ' +
+        esc(SECTION_STATE_TEXT[s.state] || ('state: ' + s.state)) +
+        ' <span class="fw-why-n">' + plural(s.n, 'check') + '</span></li>';
+    });
+
+    if (settings) {
+      rows.push('<li>The specific setting was not present in the configuration ' +
+        '<span class="fw-why-n">' + plural(settings, 'check') + '</span></li>');
+    }
+
+    return '<div class="fw-why"><strong>Why these could not be assessed</strong>' +
+      '<ul>' + rows.join('') + '</ul>' +
+      '<p>Each of these describes the uploaded file, not the device. A section ' +
+      'missing here usually means the export did not carry it — a backup taken ' +
+      'from a single VDOM, a policy-only export, or a layout this audit does not ' +
+      'yet recognise. The section names above are what to check against the ' +
+      'file you sent.</p></div>';
   }
 
   function findingRow(f, open) {
@@ -464,7 +529,11 @@ window.FirewallTab = (function () {
     var caveat = _status === 'not-assessable'
       ? '<p class="fw-note">Excluded from the score rather than counted against ' +
         'it — not passed, and not evidence that the firewall is configured ' +
-        'correctly. Confirm these on the device.</p>'
+        'correctly. Confirm these on the device.</p>' +
+        // The rollup describes everything in this outcome, not just the rows a
+        // filter left on screen: "what did this file fail to answer" is a
+        // question about the audit, and a filtered answer to it would mislead.
+        naReasons(all.filter(function (f) { return f.status === 'not-assessable'; }))
       : '';
 
     return caveat + filterNote(shown.length, totalInTab) + body;

@@ -75,7 +75,9 @@ const FINDINGS = [
   finding({ checkId: 'c3', severity: 'low', status: 'fail',
             title: 'Policies unnamed', category: 'policy-attribute' }),
   finding({ checkId: 'c4', severity: 'high', status: 'not-assessable',
-            title: 'SSL-VPN cipher suite', category: 'remote-access' }),
+            title: 'SSL-VPN cipher suite', category: 'remote-access',
+            detail: 'The SSL-VPN settings section is not present in this export.',
+            evidence: { section: 'vpn.ssl.settings', section_state: 'absent' } }),
   finding({ checkId: 'c5', severity: 'medium', status: 'pass',
             title: 'Logging to disk enabled', category: 'logging-and-platform' }),
   finding({ checkId: 'c6', severity: 'critical', status: 'pass',
@@ -192,6 +194,61 @@ check('it lists the not-assessable finding',
   naList.indexOf('SSL-VPN cipher suite') >= 0);
 check('and no finding of another status leaks into it',
   naList.indexOf('Admin over HTTP') < 0 && naList.indexOf('Logging to disk') < 0);
+
+section('a blocked check explains itself without being opened');
+
+// The symptom this fixes: a screen of "Not assessable / Telnet administration
+// is disabled / CIS 1.2" rows, where the title is the least informative part
+// and the reason was behind a disclosure nobody had a reason to open.
+const naRow = T._findingRow(FINDINGS[3]);
+check('a not-assessable row arrives open',
+  / open/.test(naRow.split('>')[0]), 'the reason is the content here');
+check('and the reason is in it',
+  naRow.indexOf('not present in this export') >= 0);
+
+const naFull = withFilters({ status: 'not-assessable' });
+check('the tab rolls the reasons up by section',
+  /<code>vpn\.ssl\.settings<\/code> was not in the uploaded file/.test(naFull),
+  'named section, plain-English state');
+check('the rollup counts the checks each reason blocked',
+  /1 check</.test(naFull));
+check('it says plainly that this describes the file, not the device',
+  /describes the uploaded file, not the device/.test(naFull));
+check('and it points at the likely causes',
+  /single VDOM/.test(naFull) && /policy-only export/.test(naFull));
+
+// A check blocked because one setting was absent is a different diagnosis from
+// a whole section missing, and collapsing the two would send someone hunting
+// for an export problem that is not there.
+const naMixed = (function () {
+  const mixed = Object.assign({}, AUDIT, {
+    findings: [
+      FINDINGS[3],
+      finding({ checkId: 'x1', status: 'not-assessable', severity: 'high',
+                title: 'Telnet administration is disabled',
+                detail: 'admin-telnet is not present in this config.', evidence: null }),
+      finding({ checkId: 'x2', status: 'not-assessable', severity: 'medium',
+                title: 'Idle timeout', detail: 'admintimeout is not present.', evidence: null }),
+    ],
+  });
+  T._setAudit(mixed);
+  T._setFilters({ status: 'not-assessable' });
+  return T._listBlock(mixed);
+})();
+check('a missing setting is reported separately from a missing section',
+  /The specific setting was not present in the configuration <span class="fw-why-n">2 checks/.test(naMixed),
+  'two settings, one section');
+T._setAudit(AUDIT);
+T._setFilters(null);
+
+// The rollup answers "what did this file fail to answer", which is a question
+// about the audit — a filtered answer to it would understate the gap.
+const naNarrowed = withFilters({ status: 'not-assessable', q: 'zzz-no-match' });
+check('the rollup survives a filter that empties the list',
+  /<code>vpn\.ssl\.settings<\/code>/.test(naNarrowed) &&
+  /Nothing here matches these filters/.test(naNarrowed));
+
+section('tab counts');
 
 // Counts on the tabs answer to the other filters, so a tab never promises rows
 // that the active search would remove once you got there.
