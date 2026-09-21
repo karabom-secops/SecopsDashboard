@@ -485,6 +485,13 @@ const PanelUI = (() => {
         if (meta) meta.innerHTML = `<span class="edr-tone-red">✗</span> ${esc(r.error || data.error || data.message || 'Sync failed.')}`;
         return;
       }
+      // A 202: the collection outlived the request and carries on server-side.
+      // Reloading now would redraw the old sync line over this message and read
+      // as "nothing happened", so the message stands until the user refreshes.
+      if (data.pending) {
+        if (meta) meta.textContent = '⏳ ' + (data.message || 'Still collecting in the background.');
+        return;
+      }
       await reload();
     } catch (err) {
       if (meta) meta.innerHTML = `<span class="edr-tone-red">✗</span> ${esc(err.message)}`;

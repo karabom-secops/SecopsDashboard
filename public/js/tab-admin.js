@@ -1308,10 +1308,24 @@
     const changed = c.adom && c.verified_adom && c.adom !== c.verified_adom;
     const marks = obj => Object.keys(obj || {}).map(k => `${k} ${obj[k] && obj[k].ok ? '✓' : '✗'}`).join(' · ');
     const d = c.detected || {};
+    /*
+     * The probe runs after Test has answered, so for a few minutes the card has
+     * a verification and no log-type results. Said in words: a blank where the
+     * ✓/✗ marks go reads as "nothing answered".
+     */
+    const probeLine = c.probe_started_at && !c.detected
+      ? note('Checking which log types and FortiView views answer — started ' +
+          escHtmlInt(new Date(c.probe_started_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })) +
+          '. Refresh in a few minutes.')
+      : d.error
+        ? note('The log-type check did not finish: ' + escHtmlInt(d.error) +
+            '. Collection does not depend on it — Test Connection again to retry.')
+        : '';
     return (changed ? note('<strong>⚠ The ADOM has changed since it was verified.</strong> ' +
         'Test Connection again — sync is refused until then.') : '') +
       note(`Verified ${escHtmlInt(when)} against ADOM <code>${escHtmlInt(c.verified_adom)}</code>` +
         `${c.faz_version ? ` (FortiAnalyzer ${escHtmlInt(c.faz_version)})` : ''}: ${escHtmlInt(devices)}.`) +
+      probeLine +
       (d.logtypes ? `<div class="integration-sync-meta"><span class="int-sync-status">Logs: ${escHtmlInt(marks(d.logtypes))}</span></div>` : '') +
       (d.views ? `<div class="integration-sync-meta"><span class="int-sync-status">FortiView: ${escHtmlInt(marks(d.views))}</span></div>` : '');
   }
@@ -1805,8 +1819,13 @@
         // its screens, so it gets a warning mark rather than a clean tick.
         const disabled = data.isEnabled === false;
         setIntFeedback(providerId, (disabled ? '⚠ ' : '✓ ') + data.message, disabled);
-        // The card shows what was verified; redraw it so the operator sees the organisation name.
-        if (providerId === 'dnsfilter') setTimeout(() => renderIntegrations(), 1500);
+        // The card shows what was verified; redraw it so the operator sees it.
+        // FortiAnalyzer was missing here, so a successful Test left "Not
+        // verified yet" on the card until the page was reloaded — the card
+        // contradicting the ✓ line directly beneath it.
+        if (providerId === 'dnsfilter' || providerId === 'fortianalyzer') {
+          setTimeout(() => renderIntegrations(), 1500);
+        }
       } else {
         setIntFeedback(providerId, '✗ ' + (data.error || 'Connection failed.'), true);
       }
@@ -1837,6 +1856,10 @@
           window.renderAwareness().catch(() => {});
         }
         setTimeout(() => renderIntegrations(), 1500);
+      } else if (data.ok && data.pending) {
+        // Still collecting behind a 202 — not a success yet, and not a failure.
+        // The card's last-sync line is where the outcome lands.
+        setIntFeedback(providerId, `⏳ ${data.message}`, false);
       } else if (data.ok && (providerId === 'fortianalyzer' || providerId === 'dnsfilter')) {
         setIntFeedback(providerId, `✓ ${data.message}`, false);
         setTimeout(() => renderIntegrations(), 1500);

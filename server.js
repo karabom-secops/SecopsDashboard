@@ -60,6 +60,7 @@ const msGraphAdapter = require('./lib/integrations/ms-graph');
 const { computeEdrSummary } = require('./lib/edr-metrics');
 const { computeEmailSummary } = require('./lib/email-metrics');
 const dailyMetrics = require('./lib/daily-metrics');
+const { settleWithin } = require('./lib/settle-within');
 const { buildPentestReport, imageDimensions, DEFAULT_OWASP } = require('./lib/report-docx');
 const pptxRoute = require('./lib/report-pptx-route');
 const estateLib = require('./lib/estate');
@@ -3454,31 +3455,47 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
       const cfg  = { ...fazAdapter.sanitiseStoredConfig(config_json || {}), base_url, api_key };
       const info = await fazAdapter.testConnection(cfg);
 
-      let detected = null;
-      try {
-        detected = await fazAdapter.probe({ ...cfg, tlsFingerprint: info.tlsFingerprint || cfg.tlsFingerprint });
-      } catch (probeErr) {
-        console.warn('[fortianalyzer] probe failed after a successful connection —', probeErr.message);
-      }
-
+      /*
+       * ══ THE PROBE RUNS AFTER THE RESPONSE, NOT BEFORE IT ══
+       *
+       * Verification is three quick RPCs: status, ADOM, device list. The probe
+       * is six log searches and every FortiView view, each an asynchronous task
+       * on the appliance allowed two minutes, two at a time. Awaiting it here
+       * held the request open for minutes, and the reverse proxy in front of
+       * this server gave up at sixty seconds — the operator saw
+       * "HTTP 504 — the server, or a proxy in front of it, returned an error
+       * page" for a connection that had in fact WORKED.
+       *
+       * Nothing depends on the probe to collect: `detected` is shown on the
+       * admin card and read nowhere else. So verification is stored and
+       * answered now, and the probe fills in behind it.
+       */
       const merged = Object.assign({}, config_json || {}, {
         verified_adom:    info.adom,
         verified_devices: info.devices.map(d => ({ name: d.name, sn: d.sn })),
         verified_at:      new Date().toISOString(),
         faz_version:      info.version,
+        probe_started_at: new Date().toISOString(),
       },
-      info.tlsFingerprint ? { tlsFingerprint: info.tlsFingerprint } : {},
-      detected ? { detected } : {});
+      info.tlsFingerprint ? { tlsFingerprint: info.tlsFingerprint } : {});
+      // A previous probe's findings describe the previous verification.
+      delete merged.detected;
       await pool.query(
         'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
         [JSON.stringify(merged), tenantId, provider]
       );
+
+      probeFortiAnalyzerInBackground(tenantId, info.adom,
+        { ...cfg, tlsFingerprint: info.tlsFingerprint || cfg.tlsFingerprint });
+
       return res.json({
         ok: true,
-        message: info.message + disabledNote,
+        message: info.message + ' Checking which log types and FortiView views answer — ' +
+          'this runs in the background and appears on this card in a few minutes.' + disabledNote,
         version: info.version,
         devices: info.devices,
-        detected,
+        detected: null,
+        probing: true,
         isEnabled: is_enabled,
       });
     } else {
@@ -4154,6 +4171,45 @@ async function runMsGraphSync(tenantId) {
   }
 }
 
+/**
+ * Run the FortiAnalyzer probe after Test has answered, and store what it found.
+ *
+ * Two things can change while it runs, and neither may be overwritten by a
+ * stale result:
+ *
+ *   - the operator saves a different ADOM. The probe's findings describe the
+ *     ADOM it was run against, so they are written only if that is still the
+ *     verified one — the WHERE clause, not a read-then-write, so a save landing
+ *     between the two cannot slip through.
+ *   - the operator saves anything else. The update merges `detected` into the
+ *     stored config with jsonb `||` rather than writing back a copy read before
+ *     the probe started, which would silently revert that save.
+ *
+ * Never throws: it runs with nobody waiting on it, so a failure is logged and
+ * recorded on the card instead.
+ */
+function probeFortiAnalyzerInBackground(tenantId, adom, cfg) {
+  const started = Date.now();
+  const store = async (patch) => {
+    await pool.query(
+      `UPDATE integrations
+          SET config_json = (COALESCE(config_json, '{}'::jsonb) - 'probe_started_at') || $1::jsonb
+        WHERE tenant_id = $2 AND provider = $3
+          AND config_json->>'verified_adom' = $4`,
+      [JSON.stringify(patch), tenantId, FAZ_PROVIDER, adom]
+    );
+  };
+
+  fazAdapter.probe(cfg)
+    .then(detected => store({ detected }))
+    .then(() => console.log(`[fortianalyzer] probe finished for tenant ${tenantId} in ${Math.round((Date.now() - started) / 1000)}s`))
+    .catch((err) => {
+      console.warn(`[fortianalyzer] probe failed for tenant ${tenantId} —`, err.message);
+      return store({ detected: { probedAt: new Date().toISOString(), error: err.message } })
+        .catch(e => console.error('[fortianalyzer] could not record the probe failure —', e.message));
+    });
+}
+
 /** Load an enabled FortiAnalyzer integration, or throw with `.reason`.
  *
  *  The thrown error carries `.reason` so callers can tell a missing integration
@@ -4525,6 +4581,24 @@ async function runDnsFilterSync(tenantId) {
   }
 }
 
+/*
+ * How long Sync Now holds the request before answering "still running".
+ *
+ * The rollup collectors — FortiAnalyzer, Managed Identity, DNSFilter — can take
+ * minutes: up to four days per run, each a set of searches against the source.
+ * The reverse proxy in front of this server closes a request after sixty
+ * seconds by default, and the operator then sees a 504 for a collection that is
+ * still running perfectly well behind it.
+ *
+ * So the request waits this long and no longer. A collection that finishes
+ * inside it — and every fast failure, like an unverified ADOM — answers exactly
+ * as before. One that does not answers 202 and carries on; its outcome lands
+ * in the integration's last-sync status, which is where the hourly job reports
+ * too. Twenty seconds sits well under the common 30 and 60 second proxy limits.
+ */
+const SYNC_RESPOND_WITHIN_MS = 20 * 1000;
+const BACKGROUND_SYNC_PROVIDERS = new Set([FAZ_PROVIDER, DNSFILTER_PROVIDER, IDENTITY_SYNC_PROVIDER]);
+
 /** POST /api/integrations/:provider/sync — fetch fresh data from the provider and store it */
 app.post('/api/integrations/:provider/sync', async (req, res) => {
   const provider = req.params.provider;
@@ -4532,12 +4606,26 @@ app.post('/api/integrations/:provider/sync', async (req, res) => {
   if (error) return res.status(error.status).json({ error: error.message });
 
   try {
+    if (BACKGROUND_SYNC_PROVIDERS.has(provider)) {
+      const work = provider === FAZ_PROVIDER ? runFortiAnalyzerSync(tenantId)
+                 : provider === DNSFILTER_PROVIDER ? runDnsFilterSync(tenantId)
+                 : runIdentitySync(tenantId);
+      const outcome = await settleWithin(work, SYNC_RESPOND_WITHIN_MS, err =>
+        console.error(`[integrations] ${provider} sync for tenant ${tenantId} failed after Sync Now had answered —`, err.message));
+      if (outcome.pending) {
+        return res.status(202).json({
+          ok: true,
+          pending: true,
+          message: 'Collection started and still running — it continues in the background. ' +
+            'The result appears as the last sync status here when it finishes, usually within a few minutes.',
+        });
+      }
+      return res.json(outcome.result);
+    }
+
     let result;
     if (provider === REPORTS_PROVIDER)     result = await runArcticWolfReportsSync(tenantId, req.session.userId);
     else if (provider === EDR_PROVIDER)    result = await runSentinelOneSync(tenantId);
-    else if (provider === FAZ_PROVIDER)    result = await runFortiAnalyzerSync(tenantId);
-    else if (provider === DNSFILTER_PROVIDER) result = await runDnsFilterSync(tenantId);
-    else if (provider === IDENTITY_SYNC_PROVIDER) result = await runIdentitySync(tenantId);
     else if (provider === EMAIL_PROVIDER)  result = await runAcronisSync(tenantId);
     else if (provider === MSGRAPH_PROVIDER) result = await runMsGraphSync(tenantId);
     else                                   result = await runTicketIntegrationSync(provider, tenantId, req.session.userId);

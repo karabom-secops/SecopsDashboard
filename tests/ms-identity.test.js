@@ -413,7 +413,11 @@ function fakeMicrosoft(over) {
   check('two syncs for one client cannot overlap', /identitySyncInProgress\.has\(tenantId\)/.test(sync));
   check('the hourly job only takes clients with Identity switched on',
     /\(config_json->>'identity_enabled'\) = 'true'/.test(srv) && /runIdentitySyncs\(\)/.test(srv));
-  check('Sync Now on the Identity tab reaches the identity sync', /provider === IDENTITY_SYNC_PROVIDER\) result = await runIdentitySync/.test(srv));
+  // Reframed with the move to settleWithin: the identity target must still be
+  // routed to runIdentitySync, now as the background-capable branch.
+  check('Sync Now on the Identity tab reaches the identity sync',
+    /: runIdentitySync\(tenantId\)/.test(srv) &&
+    /BACKGROUND_SYNC_PROVIDERS = new Set\(\[[^\]]*IDENTITY_SYNC_PROVIDER/.test(srv));
   /*
    * This asserted that the Identity screen PREFERRED the direct Microsoft APIs
    * over the Wazuh Indexer behind them. The indexer is gone, so the assertion

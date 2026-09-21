@@ -642,7 +642,12 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('sync refuses an organisation Test has not verified',
     /!conf\.verified_org_id \|\| String\(conf\.verified_org_id\) !== String\(conf\.organization_id\)/.test(syncFn) &&
     syncFn.indexOf('verified_org_id') < syncFn.indexOf('daysNeedingSnapshot'));
-  check('Sync Now reaches it', /provider === DNSFILTER_PROVIDER\) result = await runDnsFilterSync/.test(srv));
+  // Sync Now dispatches the rollup collectors through settleWithin now, so a
+  // long collection answers 202 instead of a proxy 504. Asserted on the new
+  // dispatch rather than dropped: the route must still reach this collector.
+  check('Sync Now reaches it',
+    /provider === DNSFILTER_PROVIDER \? runDnsFilterSync\(tenantId\)/.test(srv) &&
+    /BACKGROUND_SYNC_PROVIDERS = new Set\(\[[^\]]*DNSFILTER_PROVIDER/.test(srv));
   check('the hourly collection does not run under test',
     /NODE_ENV !== 'test'\) \{\s*setTimeout\(\(\) => \{ runDnsFilterSyncs/.test(srv));
 
