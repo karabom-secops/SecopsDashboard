@@ -1162,8 +1162,8 @@
           ${renderDnsFilterVerified(c)}
           ${lastSync ? `
           <div class="integration-sync-meta">
-            <span class="int-sync-status int-sync-${cfg.last_sync_status || 'ok'}">
-              ${cfg.last_sync_status === 'ok' ? '✓' : '✗'} ${escHtmlInt(cfg.last_sync_message || '')}
+            <span class="int-sync-status int-sync-${escHtmlInt(cfg.last_sync_status || 'ok')}">
+              ${syncMark(cfg.last_sync_status)} ${escHtmlInt(cfg.last_sync_message || '')}
             </span>
             <span class="int-sync-date">Last synced: ${lastSync}</span>
           </div>` : ''}
@@ -1361,6 +1361,17 @@
       `<div class="integration-sync-meta"><span class="int-sync-status">${escHtmlInt(audit)}</span></div>`;
   }
 
+  /*
+   * The mark beside a last-sync message. 'pending' is its own state — a
+   * verified ADOM awaiting its first collection, or a collection still running —
+   * and drawing it as ✗ reads as a failure that has not happened.
+   */
+  function syncMark(status) {
+    if (status === 'ok') return '✓';
+    if (status === 'pending') return '⏳';
+    return '✗';
+  }
+
   async function renderIntegrations() {
     const container = document.getElementById('integrations-list');
     if (!container) return;
@@ -1542,8 +1553,8 @@
             </div>
             ${lastSync ? `
             <div class="integration-sync-meta">
-              <span class="int-sync-status int-sync-${syncStatus || 'ok'}">
-                ${syncStatus === 'ok' ? '✓' : '✗'} ${syncMsg}
+              <span class="int-sync-status int-sync-${escHtmlInt(syncStatus || 'ok')}">
+                ${syncMark(syncStatus)} ${escHtmlInt(syncMsg)}
               </span>
               <span class="int-sync-date">Last synced: ${lastSync}</span>
             </div>` : ''}
@@ -1874,7 +1885,12 @@
         }
         setTimeout(() => renderIntegrations(), 1500);
       } else {
-        setIntFeedback(providerId, '✗ Sync failed: ' + (data.error || 'Unknown error'), true);
+        // A collection that ran but hit problems answers `ok: false` with its
+        // `message` — "Collected 4 days with problems — 2026-09-20: panels
+        // unavailable (threats)". Reading only `error` threw that away and
+        // printed "Unknown error".
+        setIntFeedback(providerId, '✗ Sync failed: ' + (data.error || data.message || 'Unknown error'), true);
+        setTimeout(() => renderIntegrations(), 1500);
       }
     } catch (err) {
       setIntFeedback(providerId, 'Network error: ' + err.message, true);

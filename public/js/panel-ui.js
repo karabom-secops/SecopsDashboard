@@ -86,6 +86,9 @@ const PanelUI = (() => {
     query_error:       'The log source could not answer this query.',
     not_permitted:     'This query was refused — check the integration\'s permissions.',
     not_synced:        'Nothing has been collected yet.',
+    // The other panels were collected; this one never answered on any day in
+    // range. Worded so it cannot be read as "none happened".
+    not_collected:     'Not collected for this period — the source did not answer this part, so there is no figure (this is not zero).',
     not_licensed:      'Not available — this needs a Microsoft Entra ID P1 or P2 licence on the client\'s tenant.',
     beyond_retention:  'Not available for this period — Microsoft keeps this data for a limited time only.',
     category_unknown:  'Not available — DNSFilter\'s Generative AI category has not been identified yet.',
@@ -102,6 +105,7 @@ const PanelUI = (() => {
     query_error:      'Re-test the integration under Admin → Integrations; the last sync message says what failed.',
     not_permitted:    'The API user may lack read access to these logs.',
     not_synced:       'Press Sync Now, or wait for the hourly collection.',
+    not_collected:    'The last sync message names the parts that failed, and Test Connection lists which log types answer. For FortiAnalyzer, check the API admin can read that log type and the FortiGate forwards it.',
     not_licensed:     'Sign-ins need Entra ID P1; risky users and risk detections need P2.',
     beyond_retention: 'Office 365 audit content is kept for 7 days; shorter ranges will show it.',
     category_unknown: 'Run Test Connection on the DNSFilter (MSP) card, which looks the category up by name.',
@@ -273,9 +277,24 @@ const PanelUI = (() => {
     const el = document.getElementById(elId);
     if (!el) return;
     if (!sync || !sync.last_synced_at) { el.textContent = ''; return; }
-    const ok = sync.last_sync_status === 'ok';
-    el.innerHTML = `<span class="${ok ? 'edr-tone-green' : 'edr-tone-red'}">${ok ? '✓' : '✗'}</span> Rollups updated ${esc(fmtDate(sync.last_synced_at))}`;
-    el.title = sync.last_sync_message || '';
+    const status = sync.last_sync_status;
+    const msg = String(sync.last_sync_message || '');
+    const short = msg.length > 140 ? msg.slice(0, 137) + '…' : msg;
+    el.title = msg;
+    /*
+     * "Rollups updated" only when rollups WERE updated. A refused or failed
+     * sync used to render as "✗ Rollups updated 21 Sept, 15:26" — a claim that
+     * something was stored, next to a cross, with the actual reason hidden in a
+     * hover tooltip. The reason is the useful part, so it is on the line.
+     */
+    if (status === 'ok') {
+      el.innerHTML = `<span class="edr-tone-green">✓</span> Rollups updated ${esc(fmtDate(sync.last_synced_at))}`;
+    } else if (status === 'pending') {
+      el.innerHTML = `⏳ ${esc(short || 'Waiting for the first collection.')}`;
+    } else {
+      el.innerHTML = `<span class="edr-tone-red">✗</span> Last sync ${esc(fmtDate(sync.last_synced_at))}` +
+        (short ? ` — ${esc(short)}` : '');
+    }
   }
 
   function hoursSince(iso) {

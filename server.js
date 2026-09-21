@@ -3485,6 +3485,25 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
         [JSON.stringify(merged), tenantId, provider]
       );
 
+      /*
+       * Retire the refusal this Test has just resolved — and ONLY that one.
+       *
+       * A sync refused for want of verification leaves "✗ This ADOM has not
+       * been verified" as the last sync status, and it stayed on the card
+       * directly under "Verified 21 Sept, 15:47" until the next collection
+       * happened to overwrite it. Any other last-sync message is a real
+       * collection result and is left exactly as it is.
+       */
+      await pool.query(
+        `UPDATE integrations
+            SET last_sync_status = 'pending',
+                last_sync_message = 'ADOM verified — waiting for the first collection. Press Sync Now, or it runs within the hour.'
+          WHERE tenant_id = $1 AND provider = $2
+            AND last_sync_status = 'error'
+            AND last_sync_message LIKE 'This ADOM has not been verified%'`,
+        [tenantId, provider]
+      );
+
       probeFortiAnalyzerInBackground(tenantId, info.adom,
         { ...cfg, tlsFingerprint: info.tlsFingerprint || cfg.tlsFingerprint });
 
@@ -4324,7 +4343,9 @@ const identitySyncInProgress = new Set();
  */
 async function runIdentitySync(tenantId) {
   if (identitySyncInProgress.has(tenantId)) {
-    return { ok: false, message: 'A Managed Identity sync for this client is already running.' };
+    // In progress, not failed — see runFortiAnalyzerSync.
+    return { ok: true, pending: true,
+      message: 'A Managed Identity collection for this client is already running — its result will appear as the last sync status when it finishes.' };
   }
   identitySyncInProgress.add(tenantId);
   try {
@@ -4384,7 +4405,14 @@ const fazSyncInProgress = new Set();
  */
 async function runFortiAnalyzerSync(tenantId) {
   if (fazSyncInProgress.has(tenantId)) {
-    return { ok: false, message: 'A FortiAnalyzer sync for this client is already running.' };
+    /*
+     * Not a failure. It was reported as `ok: false` with a `message` and no
+     * `error`, which the admin card printed as "✗ Sync failed: Unknown error" —
+     * the hourly job had started a collection moments after a deploy, and the
+     * operator's click found it running. Said as what it is: work in progress.
+     */
+    return { ok: true, pending: true,
+      message: 'A FortiAnalyzer collection for this client is already running — its result will appear as the last sync status when it finishes.' };
   }
   fazSyncInProgress.add(tenantId);
   try {
@@ -4514,7 +4542,9 @@ const dnsSyncInProgress = new Set();
  */
 async function runDnsFilterSync(tenantId) {
   if (dnsSyncInProgress.has(tenantId)) {
-    return { ok: false, message: 'A DNSFilter sync for this client is already running.' };
+    // In progress, not failed — see runFortiAnalyzerSync.
+    return { ok: true, pending: true,
+      message: 'A DNSFilter collection for this client is already running — its result will appear as the last sync status when it finishes.' };
   }
   dnsSyncInProgress.add(tenantId);
   try {
@@ -5109,10 +5139,35 @@ async function panelScreen(tenantId, screen, days) {
  * run, empty panels say "not collected yet" rather than "no events", which
  * would read as a quiet network.
  */
+/**
+ * Whether this integration has EVER stored a day — from the collection record,
+ * not from last_synced_at.
+ *
+ * last_synced_at is stamped on every attempt, including one refused before it
+ * touched the source ("This ADOM has not been verified"). Reading it as "has
+ * collected" meant a single refusal was enough to stop the screen ever saying
+ * "nothing has been collected yet", on a client that had collected nothing.
+ */
+async function hasCollected(integrationId, sources) {
+  try {
+    const r = await pool.query(
+      `SELECT 1 FROM rollup_run
+        WHERE integration_id = $1 AND source = ANY($2::text[]) AND status <> 'error'
+        LIMIT 1`,
+      [integrationId, sources]);
+    return r.rows.length > 0;
+  } catch (err) {
+    if (err.code === '42P01') return false;
+    throw err;
+  }
+}
+
 async function fortiAnalyzerNdrScreen(tenantId, integration, days) {
   return panelCached(`faz:${integration.id}:${days}`, async () => {
-    const panels = await dailyMetrics.ndrFromRollups(pool, tenantId, days, integration.id);
-    const collected = !!integration.sync.last_synced_at;
+    const [panels, collected] = await Promise.all([
+      dailyMetrics.ndrFromRollups(pool, tenantId, days, integration.id),
+      hasCollected(integration.id, [fazMetrics.SOURCE]),
+    ]);
     const out = {
       windowDays: days,
       source: 'rollup',
@@ -5124,9 +5179,13 @@ async function fortiAnalyzerNdrScreen(tenantId, integration, days) {
       sync: integration.sync,
       partial: [],
     };
+    // Before anything has been stored, every panel is "nothing collected yet".
+    // After that, a panel still without data is one FortiAnalyzer did not
+    // answer — the rebuild's own `not_collected`, kept distinct because it
+    // means the other panels are working and this one is not.
     ['traffic', 'threats', 'geo', 'vpnAdmin'].forEach((k) => {
       const p = panels[k];
-      out[k] = !collected && p && p.reason === 'no_data_in_range'
+      out[k] = !collected && p && p.reason === 'not_collected'
         ? { available: false, data: null, reason: 'not_synced', lastEventAt: null }
         : p;
     });
@@ -5157,7 +5216,7 @@ async function identityScreen(tenantId, integration, days) {
     };
     ['o365', 'graph'].forEach((k) => {
       const p = panels[k];
-      out[k] = !sync && p && p.reason === 'no_data_in_range'
+      out[k] = !sync && p && p.reason === 'not_collected'
         ? { available: false, data: null, reason: 'not_synced', lastEventAt: null }
         : p;
     });
