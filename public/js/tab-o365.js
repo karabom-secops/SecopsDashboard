@@ -1,20 +1,19 @@
 /* tab-o365.js — Managed Identity: sign-ins, admin changes, alerts, identity
    risk, mailbox rules, sharing and DLP.
 
-   Read directly from Microsoft Graph and the Office 365 Management Activity API
-   (or from Wazuh, for clients not yet migrated). Both return the same shape.
+   Read directly from Microsoft Graph and the Office 365 Management Activity API.
 
-   The direct APIs report per part what they could not read — a tenant without
+   They report per part what they could not read — a tenant without
    Entra ID P2 has no risky-user feed, one without the DLP permission no DLP —
    and each panel says so rather than showing zero. */
 const O365Tab = (() => {
   'use strict';
 
-  const U = window.WazuhUI;
+  const U = window.PanelUI;
   const charts = {};
   let bound   = false;
   let summary = null;
-  let lastProvider = 'wazuh';
+  let lastProvider = 'ms_graph';
 
   const RISK_BADGE = { high: 'badge-red', medium: 'badge-amber', low: 'badge-muted', hidden: 'badge-muted' };
 
@@ -25,8 +24,8 @@ const O365Tab = (() => {
 
   /**
    * One part of a half as its own envelope: unavailable, with the reason, when
-   * the source could not read it. Wazuh responses carry no `unavailable`, so
-   * they pass through unchanged.
+   * the source could not read it. An envelope carrying no `unavailable` list
+   * passes through unchanged.
    */
   function part(envelope, key) {
     if (!U.isReady(envelope)) return envelope;
@@ -228,10 +227,11 @@ const O365Tab = (() => {
     const refresh = document.getElementById('o365-refresh-btn');
     if (refresh) refresh.addEventListener('click', () => loadAndRender());
 
-    // The Graph integration's own sync is Secure Score; Identity has its own target.
+    // The Graph integration's own sync is Secure Score; Identity has its own
+    // target, so Sync Now here collects identity rather than re-reading posture.
     const sync = document.getElementById('o365-sync-btn');
     if (sync) sync.addEventListener('click', () => U.syncNow('o365-sync-btn', 'o365-sync-meta', loadAndRender,
-      lastProvider === 'ms_graph' ? 'ms_identity' : 'wazuh'));
+      'ms_identity'));
   }
 
   return {

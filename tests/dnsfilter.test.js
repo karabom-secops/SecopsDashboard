@@ -179,12 +179,12 @@ function fakePool() {
     const s = sql.replace(/\s+/g, ' ').trim();
     if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(s)) return { rows: [] };
 
-    if (s.startsWith('DELETE FROM wazuh_daily_metric')) {
+    if (s.startsWith('DELETE FROM daily_metric')) {
       const [iid, day, source, ms] = params;
       metrics = metrics.filter(r => !(r.integration_id === iid && r.day === day && r.source === source && ms.indexOf(r.metric) >= 0));
       return { rows: [] };
     }
-    if (s.startsWith('INSERT INTO wazuh_daily_metric')) {
+    if (s.startsWith('INSERT INTO daily_metric')) {
       const [tids, iids, days, sources, ms, d1, d2, d3, v, v2, meta] = params;
       const seen = new Set();
       ms.forEach((metric, i) => {
@@ -200,16 +200,16 @@ function fakePool() {
       });
       return { rows: [] };
     }
-    if (s.startsWith('INSERT INTO wazuh_rollup_run')) {
+    if (s.startsWith('INSERT INTO rollup_run')) {
       const [iid, day, source, status, message] = params;
       runs.set(`${iid}|${day}|${source}`, { day, source, status, message });
       return { rows: [] };
     }
-    if (s.includes('FROM wazuh_rollup_run')) {
+    if (s.includes('FROM rollup_run')) {
       const [iid, source] = params;
       return { rows: [...runs.entries()].filter(([k]) => k.startsWith(`${iid}|`) && k.endsWith(`|${source}`)).map(([, r]) => r) };
     }
-    if (s.includes('FROM wazuh_daily_metric')) {
+    if (s.includes('FROM daily_metric')) {
       const [tid, source, , iid] = params;
       return { rows: metrics.filter(r => r.tenant_id === tid && r.source === source && (iid == null || r.integration_id === iid)) };
     }
@@ -654,8 +654,13 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
    */
   const sweep = (srv.match(/provider <> ALL\(\$1::text\[\]\)',\s*\[\[([^\]]*)\]\]/) || [])[1] || '';
   check('the ticket sweep skips every provider that is not ticket-shaped',
-    ['EDR_PROVIDER', 'WAZUH_PROVIDER', 'EMAIL_PROVIDER', 'MSGRAPH_PROVIDER', 'FAZ_PROVIDER', 'DNSFILTER_PROVIDER']
+    ['EDR_PROVIDER', 'EMAIL_PROVIDER', 'MSGRAPH_PROVIDER', 'FAZ_PROVIDER', 'DNSFILTER_PROVIDER']
       .every(p => sweep.indexOf(p) >= 0), sweep.replace(/\s+/g, ' '));
+  // WAZUH_PROVIDER was on this list until the integration was removed. A
+  // provider constant that no longer exists must not linger in the exclusion
+  // list: it would read as protection for something nothing can produce.
+  check('and no longer excludes a provider that does not exist',
+    sweep.indexOf('WAZUH') < 0 && !/WAZUH_PROVIDER/.test(srv), sweep.replace(/\s+/g, ' '));
 
   /*
    * Rollups from before "accepted" was checked against "applied" may count
@@ -664,8 +669,8 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   check('rollups older than the current version are dropped and re-collected once',
     /DNS_ROLLUP_VERSION = 2/.test(srv) &&
     /rollup_version\) \|\| 1\) < DNS_ROLLUP_VERSION/.test(syncFn) &&
-    /DELETE FROM wazuh_daily_metric WHERE integration_id = \$1 AND source = \$2/.test(syncFn) &&
-    /DELETE FROM wazuh_rollup_run WHERE integration_id = \$1 AND source = \$2/.test(syncFn) &&
+    /DELETE FROM daily_metric WHERE integration_id = \$1 AND source = \$2/.test(syncFn) &&
+    /DELETE FROM rollup_run WHERE integration_id = \$1 AND source = \$2/.test(syncFn) &&
     syncFn.indexOf('DNS_ROLLUP_VERSION') < syncFn.indexOf('daysNeedingSnapshot'));
   check('and the version is recorded, so it happens once rather than every hour',
     /rollup_version: DNS_ROLLUP_VERSION/.test(syncFn));
@@ -712,11 +717,11 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
 
   const html = read('public', 'index.html');
   const appJs = read('public', 'js', 'app.js');
-  const ui = read('public', 'js', 'wazuh-ui.js');
+  const ui = read('public', 'js', 'panel-ui.js');
   const tab = codeOnly(read('public', 'js', 'tab-ai-visibility.js'));
   check('nav item, panel and script are in the page',
     /data-tab="ai-visibility"/.test(html) && /id="tab-ai-visibility"/.test(html) &&
-    html.indexOf('<script src="js/wazuh-ui.js">') < html.indexOf('<script src="js/tab-ai-visibility.js">'));
+    html.indexOf('<script src="js/panel-ui.js">') < html.indexOf('<script src="js/tab-ai-visibility.js">'));
   check('the router renders it', /target === 'ai-visibility'[\s\S]{0,120}AiVisibilityTab\.loadAndRender\(\)/.test(appJs));
   check('Sync Now is a known target', /dnsfilter:\s*'Collecting from DNSFilter/.test(ui));
   check('the decision editor appears only for writers', /canWrite\('ai-visibility'\)/.test(tab));
@@ -738,8 +743,8 @@ const NOW = Date.parse('2026-09-15T12:00:00Z');
   const uiBox = { console };
   uiBox.window = uiBox;
   vm.createContext(uiBox);
-  vm.runInContext(read('public', 'js', 'wazuh-ui.js'), uiBox);
-  const U = uiBox.window.WazuhUI;
+  vm.runInContext(read('public', 'js', 'panel-ui.js'), uiBox);
+  const U = uiBox.window.PanelUI;
 
   const fakeRes = (status, type, body) => ({
     ok: status >= 200 && status < 300, status,

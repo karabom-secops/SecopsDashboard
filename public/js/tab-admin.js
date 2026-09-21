@@ -1002,15 +1002,6 @@
       awRegions: true, // renders region dropdown + org UUID instead of a free URL field
     },
     {
-      id:       'wazuh',
-      name:     'Wazuh Indexer',
-      icon:     '🛰️',
-      desc:     'SIEM log source — FortiGate firewall, Office 365 and Microsoft Graph events feeding Managed NDR and Managed Identity.',
-      urlLabel: 'Indexer URL',
-      urlHint:  'e.g. https://wazuh.yourdomain.com:9200',
-      wazuhFields: true, // basic-auth username, timezone and per-source scoping
-    },
-    {
       id:       'fortianalyzer',
       name:     'FortiAnalyzer',
       icon:     '🧱',
@@ -1298,38 +1289,6 @@
     return (cfg && cfg.config_json && cfg.config_json[key]) || '';
   }
 
-  /** A config_json.scope array rendered back as the comma-separated input value. */
-  function scopeVal(cfg, key) {
-    const scope = cfg && cfg.config_json && cfg.config_json.scope;
-    const list  = scope && scope[key];
-    return Array.isArray(list) ? list.join(', ') : '';
-  }
-
-  /**
-   * Which log sources the last connection test found arriving. Shown on the card
-   * so the operator sees immediately what will and won't populate the Managed
-   * NDR / Managed Identity screens, rather than discovering it as an empty chart.
-   */
-  function renderDetected(cfg) {
-    const d = cfg && cfg.config_json && cfg.config_json.detected;
-    if (!d) return '';
-    const mark = ok => (ok ? '✓' : '✗');
-    const g = d['ms-graph'] || {};
-    const parts = [
-      `FortiGate ${mark(d.fortigate && d.fortigate.ingesting)}`,
-      `Office 365 ${mark(d.office365 && d.office365.ingesting)}`,
-      `MS Graph ${mark(g.ingesting)}`,
-    ];
-    const probed = d.probedAt
-      ? new Date(d.probedAt).toLocaleString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-      : '';
-    return `
-      <div class="integration-sync-meta">
-        <span class="int-sync-status">${escHtmlInt(parts.join(' · '))}</span>
-        ${probed ? `<span class="int-sync-date">Probed: ${escHtmlInt(probed)}</span>` : ''}
-      </div>`;
-  }
-
   /**
    * What the last FortiAnalyzer Test verified: the ADOM, its FortiGates, and
    * which log types and FortiView views answered. The device names are the
@@ -1386,11 +1345,6 @@
         'changed since Managed Identity was verified.</strong> Test Connection again — sync is refused until then.</p>' : '') +
       `<div class="integration-sync-meta"><span class="int-sync-status">${escHtmlInt(graph)}</span></div>` +
       `<div class="integration-sync-meta"><span class="int-sync-status">${escHtmlInt(audit)}</span></div>`;
-  }
-
-  /** "a, b , c" → ['a','b','c'], empty entries dropped. */
-  function csvList(value) {
-    return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
   }
 
   async function renderIntegrations() {
@@ -1467,32 +1421,6 @@
               <input type="url" class="int-url-input form-input" data-provider="${p.id}"
                      placeholder="${escHtmlInt(p.urlHint || '')}" value="${cfg ? escHtmlInt(cfg.base_url) : escHtmlInt(p.urlDefault || '')}">
             </div>
-            ${p.wazuhFields ? `
-            <div class="form-group">
-              <label class="modal-label">Username</label>
-              <input type="text" class="int-username form-input" data-provider="${p.id}"
-                     placeholder="Indexer read-only user, e.g. secops-ro"
-                     value="${escHtmlInt(cfgVal(cfg, 'username'))}">
-            </div>
-            <div class="form-group">
-              <label class="modal-label">Time Zone</label>
-              <input type="text" class="int-timezone form-input" data-provider="${p.id}"
-                     placeholder="Africa/Johannesburg"
-                     value="${escHtmlInt(cfgVal(cfg, 'timeZone') || 'Africa/Johannesburg')}">
-            </div>
-            <div class="form-group">
-              <label class="modal-label">FortiGate Device Names <span class="int-optional">(optional)</span></label>
-              <input type="text" class="int-fg-devnames form-input" data-provider="${p.id}"
-                     placeholder="Comma-separated — leave blank for all firewalls"
-                     value="${escHtmlInt(scopeVal(cfg, 'fortigateDevnames'))}">
-            </div>
-            <div class="form-group">
-              <label class="modal-label">Office 365 Organization ID <span class="int-optional">(optional)</span></label>
-              <input type="text" class="int-o365-org form-input" data-provider="${p.id}"
-                     placeholder="Tenant GUID — leave blank for all"
-                     value="${escHtmlInt(scopeVal(cfg, 'o365OrganizationIds'))}">
-            </div>
-            ${renderDetected(cfg)}` : ''}
             ${p.fazFields ? `
             <div class="form-group">
               <label class="modal-label">ADOM</label>
@@ -1567,7 +1495,7 @@
                        ${cfg && cfg.config_json && cfg.config_json.identity_enabled ? 'checked' : ''}>
                 <span><strong>Collect Managed Identity telemetry</strong> — sign-ins, admin changes,
                 alerts, risky users, mailbox rules, external sharing and DLP, read directly from
-                Microsoft (no Wazuh).</span>
+                Microsoft.</span>
               </label>
             </div>
             <div class="form-group">
@@ -1647,13 +1575,13 @@
   }
 
   /*
-   * Integration calls go through WazuhUI.readJson: a 502 from a proxy, a
+   * Integration calls go through PanelUI.readJson: a 502 from a proxy, a
    * restarting server or an expired session answers with HTML, and reporting
    * that as "Unexpected token '<'" sends the operator hunting for the wrong
-   * thing. The fallback keeps this working if wazuh-ui.js ever isn't loaded.
+   * thing. The fallback keeps this working if panel-ui.js ever isn't loaded.
    */
   async function readIntJson(res) {
-    if (window.WazuhUI && window.WazuhUI.readJson) return window.WazuhUI.readJson(res);
+    if (window.PanelUI && window.PanelUI.readJson) return window.PanelUI.readJson(res);
     try { return { ok: res.ok, data: await res.json(), error: null }; }
     catch (_) { return { ok: false, data: null, error: `HTTP ${res.status} — the server did not return JSON.` }; }
   }
@@ -1824,30 +1752,6 @@
       }
     }
 
-    if (providerId === 'wazuh') {
-      const get = sel => {
-        const el = container.querySelector(`${sel}[data-provider="${providerId}"]`);
-        return el ? el.value.trim() : '';
-      };
-      const username = get('.int-username');
-      if (!username) { setIntFeedback(providerId, 'Username is required for the Wazuh Indexer.', true); return; }
-
-      // Preserve anything the server wrote back (tsField, tlsFingerprint,
-      // detected) — those are probe results, not form fields.
-      const existing = (configMapCache[providerId] && configMapCache[providerId].config_json) || {};
-      const devnames = csvList(get('.int-fg-devnames'));
-      const orgIds   = csvList(get('.int-o365-org'));
-
-      body.configJson = Object.assign({}, existing, {
-        username,
-        timeZone: get('.int-timezone') || 'Africa/Johannesburg',
-        scope: Object.assign({}, existing.scope || {}, {
-          fortigateDevnames:  devnames,
-          o365OrganizationIds: orgIds,
-        }),
-      });
-    }
-
     if (providerId === 'fortianalyzer') {
       const get = sel => {
         const el = container.querySelector(`${sel}[data-provider="${providerId}"]`);
@@ -1933,7 +1837,7 @@
           window.renderAwareness().catch(() => {});
         }
         setTimeout(() => renderIntegrations(), 1500);
-      } else if (data.ok && (providerId === 'wazuh' || providerId === 'fortianalyzer' || providerId === 'dnsfilter')) {
+      } else if (data.ok && (providerId === 'fortianalyzer' || providerId === 'dnsfilter')) {
         setIntFeedback(providerId, `✓ ${data.message}`, false);
         setTimeout(() => renderIntegrations(), 1500);
       } else if (data.ok && providerId === 'sentinelone') {

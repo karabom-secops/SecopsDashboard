@@ -4170,7 +4170,7 @@ body.login-page {
 
 .int-optional { font-weight: 400; color: var(--muted); text-transform: none; }
 
-/* ── Wazuh-backed tabs (Managed NDR, Managed Office 365) ────────────────────
+/* ── Rollup-backed tabs (Managed NDR, Managed Identity, AI Visibility) ──────
    These screens reuse the .edr-* toolbar, grid, chart and table classes. What
    is new here is the vocabulary for partial data: a panel whose log source is
    not ingesting renders a reasoned placeholder in place of its chart or table,

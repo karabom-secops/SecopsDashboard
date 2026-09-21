@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * FortiAnalyzer for Managed NDR — the replacement for the Wazuh route.
+ * FortiAnalyzer for Managed NDR — the only source of firewall telemetry.
  *
  * Driven against a simulated FortiAnalyzer JSON-RPC endpoint that reads each
  * request the way the appliance would: tasks are created, polled to completion,
@@ -20,10 +20,10 @@
  *   not recorded is not none     a panel that cannot be answered is unavailable
  *                                with a reason; a table the source cannot
  *                                produce says so; sampled counts are flagged
- *   the tab needs no rewrite     FortiAnalyzer output survives the same
- *                                flatten → store → rebuild path as Wazuh's
- *   no double counting           rollups are read per integration, so Wazuh and
- *                                FortiAnalyzer running side by side do not sum
+ *   the tab needs no rewrite     FortiAnalyzer output survives the shared
+ *                                flatten → store → rebuild path intact
+ *   no double counting           rollups are read per integration, so two
+ *                                appliances for one tenant do not sum
  *
  *   node tests/fortianalyzer.test.js <repoRoot>
  */
@@ -36,7 +36,7 @@ const { createChecker } = require('./helpers/check');
 const { check, section, done } = createChecker('fortianalyzer');
 
 const FAZ = require(path.join(ROOT, 'lib', 'integrations', 'fortianalyzer.js'));
-const WM  = require(path.join(ROOT, 'lib', 'wazuh-metrics.js'));
+const WM  = require(path.join(ROOT, 'lib', 'daily-metrics.js'));
 const FM  = require(path.join(ROOT, 'lib', 'fortianalyzer-metrics.js'));
 
 function codeOnly(src) {
@@ -388,7 +388,7 @@ function dayAnswer(over) {
 
   // ── Rollups ──────────────────────────────────────────────────────────────
 
-  section('FortiAnalyzer data survives the same rollup path as Wazuh');
+  section('FortiAnalyzer data survives the shared rollup path');
   {
     const est = await FAZ.fetchNdrDay(cfgFor(fakeFaz({
       answer: dayAnswer({ attack: { rows: ATTACKS, total: 30 } }),
@@ -447,11 +447,11 @@ function dayAnswer(over) {
 
     check('it commits', statements[0].sql === 'BEGIN' && statements[statements.length - 1].sql === 'COMMIT');
     check('rows are written for this integration and tenant',
-      statements.some(s => /INSERT INTO wazuh_daily_metric/.test(s.sql) && s.params[0][0] === 7 && s.params[1][0] === 77));
+      statements.some(s => /INSERT INTO daily_metric/.test(s.sql) && s.params[0][0] === 7 && s.params[1][0] === 77));
     check('today is stored as partial, so it is collected again', r.status === 'partial_day' &&
-      statements.some(s => /INSERT INTO wazuh_rollup_run/.test(s.sql) && s.params[3] === 'partial_day'));
+      statements.some(s => /INSERT INTO rollup_run/.test(s.sql) && s.params[3] === 'partial_day'));
     check('the replace is scoped to this integration and day',
-      statements.some(s => /DELETE FROM wazuh_daily_metric/.test(s.sql) && s.params[0] === 77 && s.params[1] === '2026-09-14'));
+      statements.some(s => /DELETE FROM daily_metric/.test(s.sql) && s.params[0] === 77 && s.params[1] === '2026-09-14'));
 
     const failed = [];
     const failClient = { async query(sql, params) { failed.push(String(sql).replace(/\s+/g, ' ').trim()); return { rows: [] }; }, release() {} };
@@ -459,7 +459,7 @@ function dayAnswer(over) {
       id: 77, tenant_id: 7, base_url: 'https://faz.example.test', api_key: 'tok-123', config: { adom: '../bad' },
     }, '2026-09-13', {});
     check('a day that cannot be collected is recorded as an error', r2.status === 'error' && !!r2.error, r2.error);
-    check('and deletes nothing that was stored before', !failed.some(s => /DELETE FROM wazuh_daily_metric/.test(s)));
+    check('and deletes nothing that was stored before', !failed.some(s => /DELETE FROM daily_metric/.test(s)));
   }
 
   // ── Wiring ───────────────────────────────────────────────────────────────
@@ -479,22 +479,41 @@ function dayAnswer(over) {
   check('two syncs for one client cannot overlap', /fazSyncInProgress\.has\(tenantId\)/.test(sync));
   check('the hourly collection is scheduled', /setInterval\(\(\) => \{ runFortiAnalyzerSyncs\(\)/.test(srv));
 
-  const screen = (srv.match(/async function wazuhScreen\([\s\S]*?\n\}/) || [''])[0];
-  check('the NDR screen prefers FortiAnalyzer',
-    screen.indexOf('loadFortiAnalyzerIntegration(tenantId)') > 0 &&
-    screen.indexOf('loadFortiAnalyzerIntegration(tenantId)') < screen.indexOf('loadWazuhIntegration(tenantId)'));
-  check('Wazuh rollups are scoped to the Wazuh integration',
-    /ndrFromRollups\(pool, tenantId, days, integration\.id\)/.test(screen));
+  /*
+   * This used to assert that the NDR screen PREFERRED FortiAnalyzer — that it
+   * tried it first and fell back to the Wazuh Indexer. The Wazuh route is gone,
+   * so the assertion is reframed rather than dropped: what mattered then was
+   * that FortiAnalyzer wins, and what matters now is that it is the only thing
+   * there. A fallback quietly reappearing would put two sources behind one
+   * screen again, which is what the scoping assertions below exist to prevent.
+   */
+  const screen = (srv.match(/async function panelScreen\([\s\S]*?\n\}/) || [''])[0];
+  check('the NDR screen loads FortiAnalyzer', screen.indexOf('loadFortiAnalyzerIntegration(tenantId)') > 0);
+  check('and has no second source behind it',
+    !/loadWazuhIntegration/.test(srv) && !/wazuhAdapter/.test(srv),
+    'no fallback loader anywhere in the server');
+  check('a missing or disabled integration is reported with its own reason',
+    /panelUnavailable\(days, keys, err\.reason, provider\)/.test(screen));
   const fazScreen = (srv.match(/async function fortiAnalyzerNdrScreen\([\s\S]*?\n\}/) || [''])[0];
   check('FortiAnalyzer rollups are scoped to the FortiAnalyzer integration',
     /ndrFromRollups\(pool, tenantId, days, integration\.id\)/.test(fazScreen));
   check('before the first collection, panels say not collected rather than quiet', /reason: 'not_synced'/.test(fazScreen));
 
   section('the pages');
-  const ui = read('public', 'js', 'wazuh-ui.js');
-  check('Sync Now reaches the provider that served the screen, and only a known one',
-    /const p\s*= Object\.prototype\.hasOwnProperty\.call\(SYNC_LABEL, provider\) \? provider : 'wazuh'/.test(ui) &&
+  const ui = read('public', 'js', 'panel-ui.js');
+  /*
+   * Reframed with the fallback's removal. The old assertion pinned the
+   * unknown-provider default to 'wazuh'; there is no safe default now, and
+   * defaulting to any real provider would POST one screen's sync to another
+   * product's collector. An unknown provider must be refused outright.
+   */
+  check('Sync Now reaches only a known provider',
+    /hasOwnProperty\.call\(SYNC_LABEL, provider\)/.test(ui) &&
     /fortianalyzer:\s*'Collecting from FortiAnalyzer/.test(ui) && /api\/integrations\/\$\{p\}\/sync/.test(ui));
+  check('and an unknown one is refused rather than defaulted',
+    /if \(!Object\.prototype\.hasOwnProperty\.call\(SYNC_LABEL, provider\)\)/.test(ui) &&
+    !/:\s*'wazuh'/.test(ui),
+    'no silent fallback target');
   check('"not collected yet" is worded', /not_synced:\s*'Nothing has been collected yet\.'/.test(ui));
   check('an unavailable table is escaped and says so', /esc\(emptyText \|\| 'No data for this period\.'\)/.test(ui));
   const ndr = read('public', 'js', 'tab-ndr.js');

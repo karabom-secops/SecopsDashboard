@@ -2,7 +2,7 @@
 
 /**
  * Managed Identity from Microsoft Graph and the Office 365 Management Activity
- * API — the replacement for the Wazuh route.
+ * API — the only source for the Managed Identity screen.
  *
  * THE PROPERTIES PROTECTED HERE
  *
@@ -20,8 +20,8 @@
  *                                included; audit events are kept by their own
  *                                time, from blobs created that day and the next;
  *                                older than 7 days is beyond retention
- *   the screen needs no rewrite  output survives flatten → store → rebuild, per
- *                                integration, beside any Wazuh rows
+ *   the screen needs no rewrite  output survives flatten → store → rebuild,
+ *                                scoped to its own integration
  *   Test is the only write       audit subscriptions are started on Test, never
  *                                by the hourly sync
  *
@@ -37,7 +37,7 @@ const { check, section, done } = createChecker('ms-identity');
 
 const IDN = require(path.join(ROOT, 'lib', 'integrations', 'ms-identity.js'));
 const IM  = require(path.join(ROOT, 'lib', 'identity-metrics.js'));
-const WM  = require(path.join(ROOT, 'lib', 'wazuh-metrics.js'));
+const WM  = require(path.join(ROOT, 'lib', 'daily-metrics.js'));
 
 function codeOnly(src) {
   return String(src)
@@ -383,8 +383,8 @@ function fakeMicrosoft(over) {
       DAY, { timeZone: TZ, now: NOW, http: fakeMicrosoft().http });
     check('it commits', statements[0].sql === 'BEGIN' && statements[statements.length - 1].sql === 'COMMIT');
     check('both sources are written for this integration and tenant',
-      statements.filter(s => /INSERT INTO wazuh_daily_metric/.test(s.sql)).every(s => s.params[1][0] === 55 && s.params[0][0] === 7) &&
-      ['office365', 'ms-graph'].every(src => statements.some(s => /INSERT INTO wazuh_rollup_run/.test(s.sql) && s.params[2] === src)));
+      statements.filter(s => /INSERT INTO daily_metric/.test(s.sql)).every(s => s.params[1][0] === 55 && s.params[0][0] === 7) &&
+      ['office365', 'ms-graph'].every(src => statements.some(s => /INSERT INTO rollup_run/.test(s.sql) && s.params[2] === src)));
     check('yesterday is stored as still filling in', r.statuses.every(s => s === 'partial_day'), r.statuses.join(','));
     check('what could not be read is reported', r.problems.some(p => /riskyUsers \(not_licensed\)/.test(p)), r.problems.join('; '));
 
@@ -414,14 +414,23 @@ function fakeMicrosoft(over) {
   check('the hourly job only takes clients with Identity switched on',
     /\(config_json->>'identity_enabled'\) = 'true'/.test(srv) && /runIdentitySyncs\(\)/.test(srv));
   check('Sync Now on the Identity tab reaches the identity sync', /provider === IDENTITY_SYNC_PROVIDER\) result = await runIdentitySync/.test(srv));
-  const screen = (srv.match(/async function wazuhScreen\([\s\S]*?\n\}/) || [''])[0];
-  check('the Identity screen prefers the direct APIs',
-    screen.indexOf('loadIdentityIntegration(tenantId)') > 0 &&
-    screen.indexOf('loadIdentityIntegration(tenantId)') < screen.indexOf('loadWazuhIntegration(tenantId)'));
-  check('Wazuh identity rollups are scoped to the Wazuh integration',
-    /o365FromRollups\(pool, tenantId, days, integration\.id\)/.test(screen));
+  /*
+   * This asserted that the Identity screen PREFERRED the direct Microsoft APIs
+   * over the Wazuh Indexer behind them. The indexer is gone, so the assertion
+   * is reframed, not dropped: the direct APIs were meant to win, and now they
+   * are the only source. The scoping check below stays exactly as it was — it
+   * is what stops two integrations' rows being summed into one screen.
+   */
+  const screen = (srv.match(/async function panelScreen\([\s\S]*?\n\}/) || [''])[0];
+  check('the Identity screen loads the direct-API integration',
+    screen.indexOf('loadIdentityIntegration(tenantId)') > 0);
+  check('and has no second source behind it', !/loadWazuhIntegration/.test(srv),
+    'no fallback loader anywhere in the server');
+  const idScreen = (srv.match(/async function identityScreen\([\s\S]*?\n\}/) || [''])[0];
+  check('identity rollups are scoped to the Graph integration',
+    /o365FromRollups\(pool, tenantId, days, integration\.id\)/.test(idScreen));
   const meta = (srv.match(/async function identitySyncMeta\([\s\S]*?\n\}/) || [''])[0];
-  check('Identity sync status is kept apart from Secure Score\'s', /FROM wazuh_rollup_run/.test(meta) && !/last_synced_at FROM integrations/.test(meta));
+  check('Identity sync status is kept apart from Secure Score\'s', /FROM rollup_run/.test(meta) && !/last_synced_at FROM integrations/.test(meta));
   check('before the first collection, panels say not collected', /reason: 'not_synced'/.test((srv.match(/async function identityScreen\([\s\S]*?\n\}/) || [''])[0]));
 
   section('the Graph connector serves both');
@@ -433,8 +442,12 @@ function fakeMicrosoft(over) {
   const tab = read('public', 'js', 'tab-o365.js');
   check('each panel reads its own part, so one missing feed does not blank the rest',
     /part\(s\.graph, 'riskyUsers'\)/.test(tab) && /part\(s\.o365, 'dlp'\)/.test(tab));
-  check('Sync Now on a direct-API screen targets the identity sync', /lastProvider === 'ms_graph' \? 'ms_identity' : 'wazuh'/.test(tab));
-  const ui = read('public', 'js', 'wazuh-ui.js');
+  // Was a ternary choosing between the identity sync and Wazuh's. With one
+  // source left there is nothing to choose: Identity's Sync Now must never
+  // reach the Graph provider's own sync, which collects Secure Score instead.
+  check('Sync Now on the Identity screen targets the identity sync',
+    /loadAndRender,\s*\n?\s*'ms_identity'\)/.test(tab) && !/'ms_graph'\)\)/.test(tab));
+  const ui = read('public', 'js', 'panel-ui.js');
   check('the identity sync is a known target', /ms_identity:\s*'Collecting from Microsoft Graph/.test(ui));
   check('not licensed and beyond retention are explained', /not_licensed:\s*'Not available/.test(ui) && /beyond_retention:\s*'Not available/.test(ui));
   const rep = read('public', 'js', 'report-sections.js');

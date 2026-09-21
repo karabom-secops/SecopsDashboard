@@ -55,12 +55,11 @@ const aiVisibility = require('./lib/ai-visibility');
 const arcticWolfReportsAdapter = require('./lib/integrations/arctic-wolf-reports');
 const arcticWolfMetricsAdapter = require('./lib/integrations/arctic-wolf-metrics');
 const sentinelOneAdapter = require('./lib/integrations/sentinelone');
-const wazuhAdapter = require('./lib/integrations/wazuh-indexer');
 const acronisAdapter = require('./lib/integrations/acronis');
 const msGraphAdapter = require('./lib/integrations/ms-graph');
 const { computeEdrSummary } = require('./lib/edr-metrics');
 const { computeEmailSummary } = require('./lib/email-metrics');
-const wazuhMetrics = require('./lib/wazuh-metrics');
+const dailyMetrics = require('./lib/daily-metrics');
 const { buildPentestReport, imageDimensions, DEFAULT_OWASP } = require('./lib/report-docx');
 const pptxRoute = require('./lib/report-pptx-route');
 const estateLib = require('./lib/estate');
@@ -2889,11 +2888,6 @@ const REPORTS_PROVIDER = 'arctic_wolf_reports';
 // agent fleet into their own tables for the Managed EDR tab.
 const EDR_PROVIDER = 'sentinelone';
 
-// Wazuh is a log SOURCE rather than a ticket feed: the Managed NDR and Managed
-// Office 365 tabs live-query its indexer for short ranges, and its "sync" writes
-// daily rollups for the long ones. Not in INTEGRATION_ADAPTERS for that reason.
-const WAZUH_PROVIDER = 'wazuh';
-
 /*
  * Acronis backs Managed Email Security. Not ticket-shaped either: it syncs
  * email-security alerts into their own table.
@@ -2907,13 +2901,10 @@ const WAZUH_PROVIDER = 'wazuh';
 const EMAIL_PROVIDER = 'acronis';
 
 /*
- * Microsoft Graph backs Microsoft Secure Score.
- *
- * Distinct from WAZUH_PROVIDER even though both surface Microsoft data. Wazuh
- * forwards Graph EVENTS (alerts, risky users, sign-ins) into its index; Secure
- * Score is a daily posture snapshot that the Wazuh ms-graph wodle does not
- * carry and cannot, so it is pulled from Graph directly. A tenant will commonly
- * have both configured, and they are not redundant.
+ * Microsoft Graph backs Microsoft Secure Score, and — through
+ * config_json.identity_enabled — the Managed Identity screen as well. One app
+ * registration, two collectors: Secure Score is a daily posture snapshot,
+ * Identity is an event stream, and they run on separate schedules.
  *
  * Like Acronis, it authenticates with OAuth client credentials rather than an
  * API key: config_json holds the application (client) ID and the Azure
@@ -2923,11 +2914,10 @@ const EMAIL_PROVIDER = 'acronis';
 const MSGRAPH_PROVIDER = 'ms_graph';
 
 /*
- * FortiAnalyzer backs Managed NDR, replacing the Wazuh route for firewall
- * telemetry. The REST API token goes in the encrypted api_key column; the ADOM
- * and time zone in config_json, alongside the device list verified at Test.
- * While a client is being migrated both may be configured — the NDR screen
- * prefers FortiAnalyzer when it is enabled. See lib/integrations/fortianalyzer.js.
+ * FortiAnalyzer backs Managed NDR — the only source for firewall telemetry.
+ * The REST API token goes in the encrypted api_key column; the ADOM and time
+ * zone in config_json, alongside the device list verified at Test.
+ * See lib/integrations/fortianalyzer.js.
  */
 const FAZ_PROVIDER = 'fortianalyzer';
 
@@ -2951,7 +2941,7 @@ const DNSFILTER_PROVIDER = 'dnsfilter';
 // see runDnsFilterSync for why version 1 cannot be trusted.
 const DNS_ROLLUP_VERSION = 2;
 
-const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER, FAZ_PROVIDER, DNSFILTER_PROVIDER]);
+const KNOWN_PROVIDERS  = new Set([...Object.keys(INTEGRATION_ADAPTERS), REPORTS_PROVIDER, EDR_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER, FAZ_PROVIDER, DNSFILTER_PROVIDER]);
 
 /*
  * Degrade-open probe for the email-security tables, matching hasFirewallTables.
@@ -3491,31 +3481,6 @@ app.post('/api/integrations/:provider/test', async (req, res) => {
         detected,
         isEnabled: is_enabled,
       });
-    } else if (provider === WAZUH_PROVIDER) {
-      const cfg  = { base_url, api_key, ...(config_json || {}) };
-      const info = await wazuhAdapter.testConnection(cfg);
-
-      // A successful test is the natural moment to work out which modules are
-      // actually ingesting. The screens read this to decide whether a panel
-      // draws a chart or explains why it can't — see detectModules().
-      let detected = null;
-      try {
-        detected = await wazuhAdapter.detectModules({ ...cfg, tsField: info.tsField });
-      } catch (probeErr) {
-        console.warn('[wazuh] module probe failed after a successful connection —', probeErr.message);
-      }
-
-      const merged = {
-        ...(config_json || {}),
-        tsField: info.tsField,
-        ...(info.tlsFingerprint ? { tlsFingerprint: info.tlsFingerprint } : {}),
-        ...(detected ? { detected } : {}),
-      };
-      await pool.query(
-        'UPDATE integrations SET config_json = $1 WHERE tenant_id = $2 AND provider = $3',
-        [JSON.stringify(merged), tenantId, provider]
-      );
-      return res.json({ ok: true, message: info.message + disabledNote, detected, isEnabled: is_enabled });
     } else {
       await adapter.fetchTickets({ base_url, api_key, ...(config_json || {}) }, true);
     }
@@ -4189,87 +4154,16 @@ async function runMsGraphSync(tenantId) {
   }
 }
 
-/** Load an enabled Wazuh integration row with its key decrypted, or throw.
+/** Load an enabled FortiAnalyzer integration, or throw with `.reason`.
+ *
  *  The thrown error carries `.reason` so callers can tell a missing integration
  *  apart from one that exists but is switched off — those need completely
  *  different things from the operator, and collapsing them into "no data yet"
- *  sends people hunting for a connection problem they do not have. */
-async function loadWazuhIntegration(tenantId) {
-  const row = await pool.query(
-    `SELECT id, tenant_id, base_url, api_key_enc, api_key_iv, config_json, is_enabled
-       FROM integrations WHERE tenant_id = $1 AND provider = $2`,
-    [tenantId, WAZUH_PROVIDER]
-  );
-  if (!row.rows.length) {
-    const err = new Error('Wazuh integration not configured.');
-    err.httpStatus = 404;
-    err.reason = 'not_configured';
-    throw err;
-  }
-  if (!row.rows[0].is_enabled) {
-    const err = new Error('Wazuh integration is disabled.');
-    err.httpStatus = 409;
-    err.reason = 'disabled';
-    throw err;
-  }
-  const r = row.rows[0];
-  return {
-    id:        r.id,
-    tenant_id: r.tenant_id,
-    base_url:  r.base_url,
-    api_key:   decryptKey(r.api_key_enc, r.api_key_iv),
-    config:    r.config_json || {},
-  };
-}
-
-/** Config object the adapter expects, assembled from the integration row. */
-function wazuhConfig(integration) {
-  return Object.assign({}, integration.config, {
-    base_url: integration.base_url,
-    api_key:  integration.api_key,
-    // Stable shard routing per tenant, so cardinality/terms approximations do
-    // not jitter between refreshes. Users notice numbers moving on a reload.
-    preference: `secops-${integration.tenant_id}`,
-  });
-}
-
-/** Core sync for Wazuh: snapshot yesterday plus any day the backfill window
- *  says is missing, errored or partial. Idempotent by construction — see
- *  lib/wazuh-metrics.js writeBag(). */
-async function runWazuhRollupSync(tenantId) {
-  const integration = await loadWazuhIntegration(tenantId);
-  const tz   = integration.config.timeZone || 'UTC';
-  const days = await wazuhMetrics.daysNeedingSnapshot(pool, integration.id, tz);
-
-  let rows = 0;
-  const failures = [];
-  for (const day of days) {
-    try {
-      const r = await wazuhMetrics.snapshotDay(pool, integration, day);
-      rows += r.rows;
-    } catch (err) {
-      failures.push(`${day}: ${err.message}`);
-    }
-  }
-
-  const ok = failures.length === 0;
-  const message = ok
-    ? `Snapshotted ${days.length} day${days.length !== 1 ? 's' : ''} (${rows} metric rows)`
-    : `Snapshotted ${days.length - failures.length}/${days.length} days — ${failures[0]}`;
-
-  await pool.query(
-    `UPDATE integrations SET last_synced_at = NOW(), last_sync_status = $1, last_sync_message = $2
-      WHERE tenant_id = $3 AND provider = $4`,
-    [ok ? 'ok' : 'error', message, tenantId, WAZUH_PROVIDER]
-  );
-
-  console.log(`[integrations] wazuh rollup: ${message} for tenant ${tenantId}`);
-  return { ok, synced: rows, days: days.length, message };
-}
-
-/** Load an enabled FortiAnalyzer integration, or throw with `.reason` — the
- *  same contract as loadWazuhIntegration(). Stored config is sanitised so
- *  nothing in the database can install an adapter test seam. */
+ *  sends people hunting for a connection problem they do not have. Every
+ *  integration loader below follows this contract.
+ *
+ *  Stored config is sanitised so nothing in the database can install an adapter
+ *  test seam. */
 async function loadFortiAnalyzerIntegration(tenantId) {
   const row = await pool.query(
     `SELECT id, tenant_id, base_url, api_key_enc, api_key_iv, config_json, is_enabled,
@@ -4316,8 +4210,10 @@ async function loadIdentityIntegration(tenantId) {
     [tenantId, MSGRAPH_PROVIDER]
   );
   const r = row.rows[0];
-  // Graph configured for Secure Score only is "not configured" for Identity,
-  // so the screen falls back to Wazuh rather than claiming to be switched off.
+  // Graph configured for Secure Score ONLY is "not configured" for Identity,
+  // not "disabled": the integration is on and working, it simply was never
+  // switched on for this screen, and those need different things from the
+  // operator.
   if (!r || !(r.config_json && r.config_json.identity_enabled)) {
     throw Object.assign(new Error('Managed Identity collection is not switched on.'),
       { httpStatus: 404, reason: 'not_configured' });
@@ -4343,7 +4239,7 @@ async function loadIdentityIntegration(tenantId) {
 async function identitySyncMeta(integrationId) {
   try {
     const r = await pool.query(
-      `SELECT ran_at, status, message FROM wazuh_rollup_run
+      `SELECT ran_at, status, message FROM rollup_run
         WHERE integration_id = $1 AND source = ANY($2::text[])
         ORDER BY ran_at DESC LIMIT 1`,
       [integrationId, identityMetrics.SOURCES]
@@ -4406,8 +4302,8 @@ async function runIdentitySync(tenantId) {
       }
     }
 
-    for (const key of [...wazuhCache.keys()]) {
-      if (key.indexOf(`idn:${integration.id}:`) === 0) wazuhCache.delete(key);
+    for (const key of [...panelCache.keys()]) {
+      if (key.indexOf(`idn:${integration.id}:`) === 0) panelCache.delete(key);
     }
 
     const ok = problems.length === 0;
@@ -4456,7 +4352,7 @@ async function runFortiAnalyzerSync(tenantId) {
     }
 
     const tz    = conf.timeZone || 'UTC';
-    const today = wazuhMetrics.localDay(new Date(), tz);
+    const today = dailyMetrics.localDay(new Date(), tz);
     const days  = await fazMetrics.daysNeedingSnapshot(pool, integration.id, tz);
 
     let rows = 0;
@@ -4481,8 +4377,8 @@ async function runFortiAnalyzerSync(tenantId) {
     await recordFortiAnalyzerSync(tenantId, ok ? 'ok' : 'error', message);
 
     // The screen caches for 45 seconds; a fresh collection should show at once.
-    for (const key of [...wazuhCache.keys()]) {
-      if (key.indexOf(`faz:${integration.id}:`) === 0) wazuhCache.delete(key);
+    for (const key of [...panelCache.keys()]) {
+      if (key.indexOf(`faz:${integration.id}:`) === 0) panelCache.delete(key);
     }
 
     console.log(`[integrations] fortianalyzer: ${message} for tenant ${tenantId}`);
@@ -4546,8 +4442,8 @@ async function recordDnsFilterSync(tenantId, status, message) {
 
 /** Drop this client's cached AI Visibility screens (after a sync or a decision). */
 function clearAiCache(tenantId) {
-  for (const key of [...wazuhCache.keys()]) {
-    if (key.indexOf(`ai:${tenantId}:`) === 0) wazuhCache.delete(key);
+  for (const key of [...panelCache.keys()]) {
+    if (key.indexOf(`ai:${tenantId}:`) === 0) panelCache.delete(key);
   }
 }
 
@@ -4583,9 +4479,9 @@ async function runDnsFilterSync(tenantId) {
      * day is collected again, MAX_DAYS_PER_RUN at a time.
      */
     if ((Number(integration.rawConfig.rollup_version) || 1) < DNS_ROLLUP_VERSION) {
-      await pool.query('DELETE FROM wazuh_daily_metric WHERE integration_id = $1 AND source = $2',
+      await pool.query('DELETE FROM daily_metric WHERE integration_id = $1 AND source = $2',
         [integration.id, dnsMetrics.SOURCE]);
-      await pool.query('DELETE FROM wazuh_rollup_run WHERE integration_id = $1 AND source = $2',
+      await pool.query('DELETE FROM rollup_run WHERE integration_id = $1 AND source = $2',
         [integration.id, dnsMetrics.SOURCE]);
       await pool.query('UPDATE integrations SET config_json = $1 WHERE id = $2', [
         JSON.stringify(Object.assign({}, integration.rawConfig, { rollup_version: DNS_ROLLUP_VERSION })),
@@ -4639,7 +4535,6 @@ app.post('/api/integrations/:provider/sync', async (req, res) => {
     let result;
     if (provider === REPORTS_PROVIDER)     result = await runArcticWolfReportsSync(tenantId, req.session.userId);
     else if (provider === EDR_PROVIDER)    result = await runSentinelOneSync(tenantId);
-    else if (provider === WAZUH_PROVIDER)  result = await runWazuhRollupSync(tenantId);
     else if (provider === FAZ_PROVIDER)    result = await runFortiAnalyzerSync(tenantId);
     else if (provider === DNSFILTER_PROVIDER) result = await runDnsFilterSync(tenantId);
     else if (provider === IDENTITY_SYNC_PROVIDER) result = await runIdentitySync(tenantId);
@@ -4676,7 +4571,7 @@ async function runScheduledSyncs() {
      */
     rows = (await pool.query(
       'SELECT tenant_id, provider FROM integrations WHERE is_enabled = TRUE AND provider <> ALL($1::text[])',
-      [[EDR_PROVIDER, WAZUH_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER, FAZ_PROVIDER, DNSFILTER_PROVIDER]]
+      [[EDR_PROVIDER, EMAIL_PROVIDER, MSGRAPH_PROVIDER, FAZ_PROVIDER, DNSFILTER_PROVIDER]]
     )).rows;
   } catch (err) {
     console.error('[integrations] scheduled sync: failed to load integrations —', err.message);
@@ -4890,50 +4785,15 @@ async function runMsGraphSyncs() {
 setTimeout(() => { runMsGraphSyncs().catch(err => console.error('[integrations] ms_graph sync crashed —', err.message)); }, 105 * 1000);
 setInterval(() => { runMsGraphSyncs().catch(err => console.error('[integrations] ms_graph sync crashed —', err.message)); }, MSGRAPH_SYNC_INTERVAL_MS);
 
-// ── Wazuh daily rollups (hourly tick, snapshots complete days) ──────────────
-// The Managed NDR and Managed Identity tabs read the indexer live for short ranges,
-// so this job exists only to keep long-range trends alive past the indexer's
-// retention. It ticks hourly rather than daily because daysNeedingSnapshot()
-// always re-runs yesterday: the Office 365 Management Activity API delivers
-// events up to 24h late, so a day that looked complete last night usually is
-// not. Re-snapshotting is safe — writeBag() is idempotent.
-
-const WAZUH_ROLLUP_INTERVAL_MS = 60 * 60 * 1000;
-let wazuhRollupRunning = false;
-
-async function runWazuhRollups() {
-  if (wazuhRollupRunning) {
-    console.log('[integrations] wazuh rollup still running — skipping this tick');
-    return;
-  }
-  wazuhRollupRunning = true;
-
-  try {
-    let rows;
-    try {
-      rows = (await pool.query(
-        'SELECT tenant_id FROM integrations WHERE is_enabled = TRUE AND provider = $1',
-        [WAZUH_PROVIDER]
-      )).rows;
-    } catch (err) {
-      console.error('[integrations] wazuh rollup: failed to load integrations —', err.message);
-      return;
-    }
-
-    for (const row of rows) {
-      try {
-        await runWazuhRollupSync(row.tenant_id);
-      } catch (err) {
-        console.error(`[integrations] wazuh rollup failed: tenant ${row.tenant_id} — ${err.message}`);
-      }
-    }
-  } finally {
-    wazuhRollupRunning = false;
-  }
-}
-
-setTimeout(() => { runWazuhRollups().catch(err => console.error('[integrations] wazuh rollup crashed —', err.message)); }, 90 * 1000);
-setInterval(() => { runWazuhRollups().catch(err => console.error('[integrations] wazuh rollup crashed —', err.message)); }, WAZUH_ROLLUP_INTERVAL_MS);
+/*
+ * There is no separate rollup job here any more.
+ *
+ * It belonged to the Wazuh Indexer, which fed both the NDR and the Identity
+ * screen from one adapter and therefore needed one job that snapshotted both.
+ * Each direct integration now runs its own hourly collection — FortiAnalyzer
+ * below, Managed Identity above, DNSFilter after that — on its own offset, so
+ * one slow appliance cannot delay another product's figures.
+ */
 
 // ── FortiAnalyzer collection (hourly) ────────────────────────────────────────
 // Tenants run one after another; the adapter additionally caps concurrent
@@ -5057,9 +4917,9 @@ if (process.env.NODE_ENV !== 'test') {
   setInterval(() => { runDnsFilterSyncs().catch(err => console.error('[integrations] dnsfilter crashed —', err.message)); }, DNS_SYNC_INTERVAL_MS);
 }
 
-// ── Managed NDR & Managed Identity (Wazuh) data routes ───────────────────
+// ── Managed NDR & Managed Identity data routes ─────────────────────────────
 
-function resolveWazuhTenant(req) {
+function resolvePanelTenant(req) {
   if (req.session.role === 'superadmin') {
     const tid = parseInt(req.query.tenantId, 10);
     if (isNaN(tid) || tid < 1) return { tenantId: null };
@@ -5069,40 +4929,41 @@ function resolveWazuhTenant(req) {
 }
 
 /**
- * Short-lived response cache. Dashboards get tab-switched and refreshed
- * constantly, and Wazuh Indexer nodes are usually undersized — without this one
- * impatient user can fan a single screen out into dozens of searches.
+ * Short-lived response cache, shared by every rollup-backed screen (NDR,
+ * Identity, AI Visibility). Dashboards get tab-switched and refreshed
+ * constantly — without this, one impatient user fans a single screen out into
+ * dozens of repeat queries for numbers that change hourly at most.
  */
-const WAZUH_CACHE_TTL_MS = 45 * 1000;
-const wazuhCache   = new Map();  // key → { at, value }
-const wazuhInFlight = new Map(); // key → Promise (collapses concurrent misses)
+const PANEL_CACHE_TTL_MS = 45 * 1000;
+const panelCache   = new Map();  // key → { at, value }
+const panelInFlight = new Map(); // key → Promise (collapses concurrent misses)
 
-async function wazuhCached(key, produce) {
-  const hit = wazuhCache.get(key);
-  if (hit && Date.now() - hit.at < WAZUH_CACHE_TTL_MS) return hit.value;
+async function panelCached(key, produce) {
+  const hit = panelCache.get(key);
+  if (hit && Date.now() - hit.at < PANEL_CACHE_TTL_MS) return hit.value;
 
-  const pending = wazuhInFlight.get(key);
+  const pending = panelInFlight.get(key);
   if (pending) return pending;
 
   const p = (async () => {
     try {
       const value = await produce();
-      wazuhCache.set(key, { at: Date.now(), value });
+      panelCache.set(key, { at: Date.now(), value });
       return value;
     } finally {
-      wazuhInFlight.delete(key);
+      panelInFlight.delete(key);
     }
   })();
 
-  wazuhInFlight.set(key, p);
+  panelInFlight.set(key, p);
   return p;
 }
 
-/** Envelope returned when the Wazuh integration is missing or switched off.
+/** Envelope returned when a screen's integration is missing or switched off.
  *  `reason` is 'not_configured' | 'disabled' — the screens word their empty
  *  state from it, because "you have not set this up" and "you set this up and
  *  then disabled it" call for completely different next steps. */
-function wazuhUnavailable(days, keys, reason, provider) {
+function panelUnavailable(days, keys, reason, provider) {
   const out = {
     windowDays: days,
     source: null,
@@ -5125,87 +4986,33 @@ function wazuhUnavailable(days, keys, reason, provider) {
  * still exists. The two are never blended inside one chart — the response says
  * which was used so the UI can label it.
  */
-async function wazuhScreen(tenantId, screen, days) {
+async function panelScreen(tenantId, screen, days) {
   const keys = screen === 'ndr' ? ['traffic', 'threats', 'geo', 'vpnAdmin'] : ['o365', 'graph'];
+  const provider = screen === 'ndr' ? FAZ_PROVIDER : MSGRAPH_PROVIDER;
 
   /*
-   * NDR prefers FortiAnalyzer when it is configured and enabled; Wazuh remains
-   * the fallback while clients are migrated. A disabled FortiAnalyzer with no
-   * Wazuh behind it reports 'disabled', so the screen says "switched off"
-   * rather than "never set up".
+   * One source per screen: FortiAnalyzer for NDR, the direct Microsoft APIs for
+   * Identity. There used to be a Wazuh fallback behind each of these, from when
+   * both screens were served by the indexer; it is gone, along with the
+   * live-query path — every panel on both screens is now rebuilt from the daily
+   * rollups the collectors write.
+   *
+   * `reason` is carried through verbatim, so 'disabled' still reads as
+   * "switched off" rather than "never set up".
    */
-  let fazReason = null;
-  const directProvider = screen === 'ndr' ? FAZ_PROVIDER : MSGRAPH_PROVIDER;
-  if (screen === 'ndr') {
-    try {
-      const faz = await loadFortiAnalyzerIntegration(tenantId);
-      return fortiAnalyzerNdrScreen(tenantId, faz, days);
-    } catch (err) {
-      if (!err.reason) throw err;
-      fazReason = err.reason;
-    }
-  }
-  // Managed Identity likewise prefers the direct Microsoft APIs.
-  if (screen === 'o365') {
-    try {
-      const idn = await loadIdentityIntegration(tenantId);
-      return identityScreen(tenantId, idn, days);
-    } catch (err) {
-      if (!err.reason) throw err;
-      fazReason = err.reason;
-    }
-  }
-
   let integration;
   try {
-    integration = await loadWazuhIntegration(tenantId);
+    integration = screen === 'ndr'
+      ? await loadFortiAnalyzerIntegration(tenantId)
+      : await loadIdentityIntegration(tenantId);
   } catch (err) {
-    if (fazReason === 'disabled' && err.reason === 'not_configured') {
-      return wazuhUnavailable(days, keys, 'disabled', directProvider);
-    }
-    return wazuhUnavailable(days, keys, err.reason, WAZUH_PROVIDER);
+    if (!err.reason) throw err;
+    return panelUnavailable(days, keys, err.reason, provider);
   }
 
-  const tz  = integration.config.timeZone || 'UTC';
-  const key = `${integration.id}:${screen}:${days}:${tz}`;
-
-  return wazuhCached(key, async () => {
-    const live = days <= wazuhMetrics.LIVE_MAX_DAYS;
-    let panels;
-
-    if (live) {
-      const cfg   = wazuhConfig(integration);
-      const range = { from: `now-${days}d/d`, to: 'now', tz };
-      panels = screen === 'ndr'
-        ? await wazuhAdapter.fetchNdr(cfg, range)
-        : await wazuhAdapter.fetchO365(cfg, range);
-    } else {
-      // Scoped to THIS integration: a FortiAnalyzer running alongside writes
-      // the same 'fortigate' rows, and must not be summed in.
-      panels = screen === 'ndr'
-        ? await wazuhMetrics.ndrFromRollups(pool, tenantId, days, integration.id)
-        : await wazuhMetrics.o365FromRollups(pool, tenantId, days, integration.id);
-    }
-
-    const meta = await pool.query(
-      `SELECT last_synced_at, last_sync_status, last_sync_message
-         FROM integrations WHERE tenant_id = $1 AND provider = $2`,
-      [tenantId, WAZUH_PROVIDER]
-    );
-
-    const out = {
-      windowDays: days,
-      source: live ? 'live' : 'rollup',
-      provider: WAZUH_PROVIDER,
-      configured: true,
-      timeZone: tz,
-      detected: integration.config.detected || null,
-      sync: meta.rows[0] || null,
-      partial: panels._partial || [],
-    };
-    keys.forEach(k => { out[k] = panels[k]; });
-    return out;
-  });
+  return screen === 'ndr'
+    ? fortiAnalyzerNdrScreen(tenantId, integration, days)
+    : identityScreen(tenantId, integration, days);
 }
 
 /**
@@ -5215,8 +5022,8 @@ async function wazuhScreen(tenantId, screen, days) {
  * would read as a quiet network.
  */
 async function fortiAnalyzerNdrScreen(tenantId, integration, days) {
-  return wazuhCached(`faz:${integration.id}:${days}`, async () => {
-    const panels = await wazuhMetrics.ndrFromRollups(pool, tenantId, days, integration.id);
+  return panelCached(`faz:${integration.id}:${days}`, async () => {
+    const panels = await dailyMetrics.ndrFromRollups(pool, tenantId, days, integration.id);
     const collected = !!integration.sync.last_synced_at;
     const out = {
       windowDays: days,
@@ -5245,9 +5052,9 @@ async function fortiAnalyzerNdrScreen(tenantId, integration, days) {
  * "not collected yet" rather than "no sign-ins".
  */
 async function identityScreen(tenantId, integration, days) {
-  return wazuhCached(`idn:${integration.id}:${days}`, async () => {
+  return panelCached(`idn:${integration.id}:${days}`, async () => {
     const [panels, sync] = await Promise.all([
-      wazuhMetrics.o365FromRollups(pool, tenantId, days, integration.id),
+      dailyMetrics.o365FromRollups(pool, tenantId, days, integration.id),
       identitySyncMeta(integration.id),
     ]);
     const out = {
@@ -5270,13 +5077,13 @@ async function identityScreen(tenantId, integration, days) {
   });
 }
 
-function wazuhDays(req) {
+function panelDays(req) {
   return Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
 }
 
 /* Keys the two screens expect back, so an unavailable response is still shaped
    the way the client renders. */
-const WAZUH_SCREEN_KEYS = {
+const PANEL_SCREEN_KEYS = {
   ndr:  ['traffic', 'threats', 'geo', 'vpnAdmin'],
   o365: ['o365', 'graph'],
 };
@@ -5285,26 +5092,26 @@ const WAZUH_SCREEN_KEYS = {
  *  A bare null forced the client to guess why it got nothing, and it guessed
  *  wrong — an admin whose account has no active organisation was told to pick
  *  one from a dropdown only superadmins can see. */
-function wazuhScreenFor(req, screen) {
-  const days = wazuhDays(req);
-  const { tenantId } = resolveWazuhTenant(req);
+function panelScreenFor(req, screen) {
+  const days = panelDays(req);
+  const { tenantId } = resolvePanelTenant(req);
   if (tenantId === null || tenantId === undefined) {
-    return wazuhUnavailable(days, WAZUH_SCREEN_KEYS[screen], 'no_tenant');
+    return panelUnavailable(days, PANEL_SCREEN_KEYS[screen], 'no_tenant');
   }
-  return wazuhScreen(tenantId, screen, days);
+  return panelScreen(tenantId, screen, days);
 }
 
 /** GET /api/ndr/summary?days=30 — Managed NDR panels (firewall) */
 app.get('/api/ndr/summary', requireAuth, async (req, res) => {
   try {
-    res.json(await wazuhScreenFor(req, 'ndr'));
+    res.json(await panelScreenFor(req, 'ndr'));
   } catch (err) { return serverError(res, err); }
 });
 
 /** GET /api/o365/summary?days=30 — Managed Identity panels */
 app.get('/api/o365/summary', requireAuth, async (req, res) => {
   try {
-    res.json(await wazuhScreenFor(req, 'o365'));
+    res.json(await panelScreenFor(req, 'o365'));
   } catch (err) { return serverError(res, err); }
 });
 
@@ -5337,10 +5144,10 @@ async function aiVisibilityScreen(tenantId, days) {
     integration = await loadDnsFilterIntegration(tenantId);
   } catch (err) {
     if (!err.reason) throw err;
-    return wazuhUnavailable(days, AI_SCREEN_KEYS, err.reason, DNSFILTER_PROVIDER);
+    return panelUnavailable(days, AI_SCREEN_KEYS, err.reason, DNSFILTER_PROVIDER);
   }
 
-  return wazuhCached(`ai:${tenantId}:${integration.id}:${days}`, async () => {
+  return panelCached(`ai:${tenantId}:${integration.id}:${days}`, async () => {
     const [panels, decisions] = await Promise.all([
       dnsMetrics.aiFromRollups(pool, tenantId, days, integration.id),
       loadAiDecisions(tenantId),
@@ -5377,10 +5184,10 @@ async function aiVisibilityScreen(tenantId, days) {
 /** GET /api/ai-visibility/summary?days=30 — AI Visibility panels (staff only) */
 app.get('/api/ai-visibility/summary', requireAuth, async (req, res) => {
   try {
-    const days = wazuhDays(req);
-    const { tenantId } = resolveWazuhTenant(req);
+    const days = panelDays(req);
+    const { tenantId } = resolvePanelTenant(req);
     if (tenantId === null || tenantId === undefined) {
-      return res.json(wazuhUnavailable(days, AI_SCREEN_KEYS, 'no_tenant'));
+      return res.json(panelUnavailable(days, AI_SCREEN_KEYS, 'no_tenant'));
     }
     res.json(await aiVisibilityScreen(tenantId, days));
   } catch (err) { return serverError(res, err); }

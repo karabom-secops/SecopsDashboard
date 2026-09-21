@@ -11,7 +11,7 @@
 const AiVisibilityTab = (() => {
   'use strict';
 
-  const U = window.WazuhUI;
+  const U = window.PanelUI;
   const charts = {};
   let bound   = false;
   let summary = null;

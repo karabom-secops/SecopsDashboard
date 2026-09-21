@@ -1,15 +1,18 @@
-/* wazuh-ui.js — shared rendering helpers for the Wazuh-backed tabs
-   (Managed NDR and Managed Identity).
+/* panel-ui.js — shared rendering helpers for the rollup-backed tabs
+   (Managed NDR, Managed Identity and AI Visibility).
 
-   The two screens draw different panels but share the same contract with the
+   These screens draw different panels but share the same contract with the
    API: every panel arrives as an envelope { available, data, reason,
    lastEventAt } rather than a bare array, and a panel that isn't available must
    explain itself rather than render an empty chart. That distinction is the
-   whole point — "the office365 module isn't configured on the Wazuh manager"
-   and "no failed logins in the last 24 hours" are completely different
+   whole point — "the client has no Entra ID P2, so there is no risky-user feed"
+   and "no risky users in the last 24 hours" are completely different
    conversations with a customer, and a chart showing 0 conflates them into a
-   dangerous lie. */
-const WazuhUI = (() => {
+   dangerous lie.
+
+   Named wazuh-ui.js until the Wazuh Indexer was removed; nothing in here was
+   ever specific to it. */
+const PanelUI = (() => {
   'use strict';
 
   const COLORS = {
@@ -75,8 +78,8 @@ const WazuhUI = (() => {
 
   // ── Panel availability ───────────────────────────────────────────────────
 
-  // Worded for any log source: Managed NDR reads FortiAnalyzer and Managed
-  // Identity reads Microsoft directly, with Wazuh kept for clients not yet moved.
+  // Worded for any log source: Managed NDR reads FortiAnalyzer, Managed
+  // Identity reads Microsoft, AI Visibility reads DNSFilter.
   const REASON_TEXT = {
     not_ingesting:     'This log source is not reaching the dashboard yet.',
     no_data_in_range:  'No matching events in this period.',
@@ -334,9 +337,8 @@ const WazuhUI = (() => {
         `Today and yesterday are still filling in: Office 365 audit events can arrive hours late.`;
       return;
     }
-    el.textContent = summary.source === 'live'
-      ? `Queried live from the Wazuh Indexer over the last ${summary.windowDays} days (${summary.timeZone || 'UTC'}).`
-      : `Built from stored daily rollups over the last ${summary.windowDays} days — ranges beyond 30 days exceed the indexer's retention.`;
+    el.textContent = `Built from stored daily rollups over the last ` +
+      `${summary.windowDays} days (${summary.timeZone || 'UTC'}).`;
   }
 
   /**
@@ -350,7 +352,7 @@ const WazuhUI = (() => {
    * @param {string} elId      the screen's empty-state container
    * @param {object} summary   the /api/{ndr,o365}/summary response (may be null)
    * @param {string} sourceHint what ingestion this screen needs, e.g.
-   *                            "your FortiGate is forwarding syslog to Wazuh"
+   *                            "your FortiGates are logging to the FortiAnalyzer"
    */
   function renderEmptyState(elId, summary, sourceHint) {
     const el = document.getElementById(elId);
@@ -385,7 +387,7 @@ const WazuhUI = (() => {
         <p>This client's organisation is configured, but the shared DNSFilter key is not. A superadmin
         sets it once under ${link} → DNSFilter (MSP).</p>`;
     } else if (reason === 'disabled') {
-      const name = { fortianalyzer: 'FortiAnalyzer', ms_graph: 'Microsoft Graph', dnsfilter: 'DNSFilter' }[summary.provider] || 'Wazuh';
+      const name = { fortianalyzer: 'FortiAnalyzer', ms_graph: 'Microsoft Graph', dnsfilter: 'DNSFilter' }[summary.provider] || 'source';
       body = `<p><strong>The ${name} integration is switched off.</strong></p>
         <p>Its connection may be working fine — but while it is disabled nothing syncs and
         this screen stays empty. Enable it under ${link}, then press Save.</p>`;
@@ -442,7 +444,7 @@ const WazuhUI = (() => {
 
   /**
    * Shared "Sync Now" handler. `provider` is whichever integration served the
-   * screen — FortiAnalyzer for NDR once configured, Wazuh otherwise.
+   * screen, as the summary reported it.
    */
   async function syncNow(btnId, metaId, reload, provider) {
     const btn  = document.getElementById(btnId);
@@ -452,9 +454,21 @@ const WazuhUI = (() => {
       fortianalyzer: 'Collecting from FortiAnalyzer — this can take a minute…',
       ms_identity:   'Collecting from Microsoft Graph and Office 365 — this can take a minute…',
       dnsfilter:     'Collecting from DNSFilter — this can take a minute…',
-      wazuh:         'Snapshotting daily rollups from Wazuh…',
     };
-    const p    = Object.prototype.hasOwnProperty.call(SYNC_LABEL, provider) ? provider : 'wazuh';
+    /*
+     * An unknown provider is REFUSED, not defaulted. This used to fall back to
+     * 'wazuh', which was harmless only while a wazuh sync route existed to
+     * absorb it; with that route gone the same fallback would POST to a
+     * provider the server does not know and report the 400 as a sync failure,
+     * which reads as "the integration is broken" on a screen whose real problem
+     * is that no integration is configured at all.
+     */
+    if (!Object.prototype.hasOwnProperty.call(SYNC_LABEL, provider)) {
+      if (meta) meta.innerHTML = '<span class="edr-tone-red">✗</span> ' +
+        'Nothing to sync — no integration is configured for this screen yet.';
+      return;
+    }
+    const p = provider;
     if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
     if (meta) meta.textContent = SYNC_LABEL[p];
 
@@ -490,4 +504,4 @@ const WazuhUI = (() => {
   };
 })();
 
-window.WazuhUI = WazuhUI;
+window.PanelUI = PanelUI;

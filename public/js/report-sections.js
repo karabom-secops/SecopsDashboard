@@ -1194,7 +1194,7 @@ window.ReportSections = (function () {
 
   // ── Cyber Defence Coverage ────────────────────────────────────────────────
 
-  /** Unwrap the { available, data } envelope the Wazuh-backed screens return. */
+  /** Unwrap the { available, data } envelope the rollup-backed screens return. */
   function envData(node) {
     return node && node.available && node.data ? node.data : null;
   }

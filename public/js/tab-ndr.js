@@ -1,5 +1,4 @@
-/* tab-ndr.js — Managed NDR: FortiGate firewall monitoring, from FortiAnalyzer
-   (or Wazuh, for clients not yet migrated). Both sources return the same shape.
+/* tab-ndr.js — Managed NDR: FortiGate firewall monitoring, from FortiAnalyzer.
 
    Four independent panel groups (traffic, IPS threats, geo, VPN/admin). Each
    renders or explains itself on its own, so the screen is fully useful when
@@ -8,13 +7,13 @@
 const NdrTab = (() => {
   'use strict';
 
-  const U = window.WazuhUI;
+  const U = window.PanelUI;
   const charts = {};
   let bound   = false;
   let summary = null;
   // Which integration answered last, so Sync Now reaches the right one even
   // when the screen is showing its empty state.
-  let lastProvider = 'wazuh';
+  let lastProvider = 'fortianalyzer';
 
   /** "Not available" text for a table the source cannot produce, else undefined. */
   function notAvailable(d, key) {
@@ -167,8 +166,8 @@ const NdrTab = (() => {
     const content = document.getElementById('ndr-content');
 
     // Only a missing or disabled integration counts as "empty", and
-    // renderEmptyState words itself from which. Once Wazuh is connected the
-    // screen always renders and individual panels explain their own gaps —
+    // renderEmptyState words itself from which. Once FortiAnalyzer is connected
+    // the screen always renders and individual panels explain their own gaps —
     // showing the onboarding card because one source is quiet would hide the
     // sources that are working.
     if (!s || !s.configured) {

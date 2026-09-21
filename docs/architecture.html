@@ -435,7 +435,7 @@
 
     <figure>
       <svg viewBox="0 0 1060 620" role="img"
-           aria-label="Browsers reach nginx over HTTPS at secops.reflex.co.za; nginx terminates TLS, strips the /secops prefix and proxies to a single Node process on localhost port 3000. That process talks to PostgreSQL and a local data directory on the same host, and makes outbound calls to Arctic Wolf, SentinelOne, Wazuh and an optional SAML identity provider.">
+           aria-label="Browsers reach nginx over HTTPS at secops.reflex.co.za; nginx terminates TLS, strips the /secops prefix and proxies to a single Node process on localhost port 3000. That process talks to PostgreSQL and a local data directory on the same host, and makes outbound calls to Arctic Wolf, SentinelOne, FortiAnalyzer, Microsoft, DNSFilter and an optional SAML identity provider.">
         <defs>
           <marker id="f6ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <polygon class="ah" points="0,0 10,5 0,10" />
@@ -474,7 +474,7 @@
 
         <rect class="d-band" x="90" y="366" width="520" height="70" rx="4" />
         <text class="d-t" x="106" y="392">In-process timers</text>
-        <text class="d-s" x="106" y="412">integration sync &middot; EDR sync &middot; Wazuh rollups &middot; report-archive prune</text>
+        <text class="d-s" x="106" y="412">integration sync &middot; EDR sync &middot; daily rollups &middot; report-archive prune</text>
         <text class="d-m" x="106" y="429">they run because the process is up &mdash; there is no scheduler outside it</text>
 
         <!-- stores -->
@@ -494,7 +494,7 @@
         <!-- external -->
         <rect class="d-box" x="700" y="300" width="330" height="100" rx="4" />
         <text class="d-t" x="718" y="328">Managed-service APIs</text>
-        <text class="d-s" x="718" y="350">Arctic Wolf &middot; SentinelOne &middot; Wazuh</text>
+        <text class="d-s" x="718" y="350">Arctic Wolf &middot; SentinelOne &middot; FortiAnalyzer</text>
         <text class="d-m" x="718" y="370">API keys encrypted at rest in the</text>
         <text class="d-m" x="718" y="387">integrations table, never in .env</text>
 
@@ -575,7 +575,7 @@
       <strong>This shape is deliberately single-instance.</strong>
       Sessions live in Postgres and would survive a second process, but nothing
       else would: each instance runs its own timers — double-syncing every
-      integration and duplicating Wazuh rollups — and each holds part of the
+      integration and duplicating the daily rollups — and each holds part of the
       report archive and its own copy of <code>data/weeks.json</code> on local
       disk. Scaling out means moving those two things first, not adding a load
       balancer.
@@ -790,7 +790,7 @@
 
     <figure>
       <svg viewBox="0 0 1060 480" role="img"
-           aria-label="Three inbound paths reach PostgreSQL: analyst file uploads parsed in memory, scheduled pulls from Arctic Wolf, SentinelOne and Wazuh, and manual entry. Reads out of the database are recomputed at request time into the Secure Score, the report deck and the portal projections.">
+           aria-label="Three inbound paths reach PostgreSQL: analyst file uploads parsed in memory, scheduled pulls from Arctic Wolf, SentinelOne, FortiAnalyzer, Microsoft and DNSFilter, and manual entry. Reads out of the database are recomputed at request time into the Secure Score, the report deck and the portal projections.">
         <defs>
           <marker id="f4ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <polygon class="ah" points="0,0 10,5 0,10" />
@@ -812,7 +812,7 @@
 
         <rect class="d-box" x="20" y="166" width="290" height="94" rx="4" />
         <text class="d-t" x="38" y="194">Scheduled pulls</text>
-        <text class="d-m" x="38" y="214">Arctic Wolf &middot; SentinelOne &middot; Wazuh</text>
+        <text class="d-m" x="38" y="214">Arctic Wolf &middot; SentinelOne &middot; FortiAnalyzer</text>
         <text class="d-s" x="38" y="236">timers in-process, keys encrypted</text>
         <text class="d-s" x="38" y="252">at rest in the integrations table</text>
 
@@ -1019,7 +1019,7 @@
           </tr>
           <tr>
             <td><code>lib/integrations/</code></td>
-            <td>Arctic Wolf, SentinelOne, Wazuh adapters</td>
+            <td>Arctic Wolf, SentinelOne, FortiAnalyzer, Microsoft, Acronis, DNSFilter adapters</td>
             <td>Pure fetch-and-shape; no writes</td>
           </tr>
         </tbody>
