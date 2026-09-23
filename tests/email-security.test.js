@@ -555,20 +555,31 @@ const noData = {
   containment: { contained: 0, delivered: 0, remediated: 0, knownDisposition: 0,
                  unknownDisposition: 4, rate: null, coverage: null },
 };
-const cards = ET._statCards(noData);
+/*
+ * These read the HERO BAND rather than the stat cards the page used to draw.
+ * The cards went when the page was rebuilt to the shape of the Acronis console,
+ * and the containment figure moved into the header badge — so the guarantee is
+ * reframed onto what is actually rendered now. An assertion left pointing at an
+ * unrendered function would still have passed, and proved nothing.
+ */
+const cards = ET._heroBand(noData);
 check('a null containment rate is a dash, not 0%',
   /em-nd/.test(cards) && !/>0%</.test(cards), cards.slice(0, 200));
 
 const zeroRate = JSON.parse(JSON.stringify(noData));
 zeroRate.containment = { contained: 0, delivered: 4, remediated: 0,
   knownDisposition: 4, unknownDisposition: 0, rate: 0, coverage: 100 };
-check('but a real 0% renders as 0%', /0%/.test(ET._statCards(zeroRate)));
+check('but a real 0% renders as 0%', /0%/.test(ET._heroBand(zeroRate)));
 /*
  * The two states above are the whole point: "nothing was stopped" and "nobody
  * recorded an outcome" must not look the same to a reader.
  */
 check('so the two are distinguishable',
-  ET._statCards(noData) !== ET._statCards(zeroRate));
+  ET._heroBand(noData) !== ET._heroBand(zeroRate));
+// A rate of 0% is a red badge; no rate at all must not borrow a colour that
+// reads as a pass at a glance.
+check('and no rate at all is not dressed as a result',
+  /em-badge-nd/.test(ET._heroBand(noData)) && !/em-badge-good/.test(ET._heroBand(noData)));
 
 section('the denominator travels with the rate');
 

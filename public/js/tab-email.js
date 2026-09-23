@@ -76,6 +76,37 @@ window.EmailTab = (function () {
   };
   var CLASS_ORDER = ['bec', 'phishing', 'malware', 'url', 'attachment', 'spam', 'dlp', 'unclassified'];
 
+  /* One colour per kind, used by the stack, the dots and the highlight grid, so
+     a kind is the same colour everywhere on the page. */
+  var CLASS_COLORS = {
+    bec:          '#7C3AED',
+    phishing:     '#E8394A',
+    malware:      '#0066CC',
+    url:          '#00BADF',
+    attachment:   '#F59E0B',
+    spam:         '#8C8C8C',
+    dlp:          '#22C55E',
+    unclassified: '#B4B4B4',
+    other:        '#C9CDD2',
+  };
+
+  /* What each kind means, in the reader's terms rather than the vendor's. */
+  var CLASS_DESC = {
+    bec:          'Impersonation of a colleague or supplier, usually to redirect a payment',
+    phishing:     'Credential theft — fake sign-in pages and lures',
+    malware:      'Malicious files or payloads carried by the message',
+    url:          'Links to malicious or compromised destinations',
+    attachment:   'Attachments carrying executable or scripted content',
+    spam:         'Bulk or unsolicited mail rather than a targeted attack',
+    dlp:          'Sensitive data leaving the organisation by mail',
+    unclassified: 'Acronis raised an alert this dashboard has no threat kind for',
+    other:        'The remaining kinds, summed — each is counted in full under By threat type',
+  };
+
+  /* The kinds that are attacks on this organisation, as opposed to bulk mail or
+     a classifier gap. Used only for the malicious/spam split. */
+  function isMalicious(key) { return key !== 'spam' && key !== 'unclassified'; }
+
   var DISPOSITION_LABELS = {
     blocked:     'Blocked',
     quarantined: 'Quarantined',
@@ -166,55 +197,6 @@ window.EmailTab = (function () {
   function num(v, suffix) {
     if (v === null || v === undefined) return '<span class="em-nd">—</span>';
     return esc(v) + (suffix || '');
-  }
-
-  function statCard(card) {
-    var body =
-      '<div class="stat-label">' + esc(card.label) + '</div>' +
-      '<div class="stat-value">' + card.value + '</div>' +
-      (card.sub ? '<div class="em-stat-sub">' + card.sub + '</div>' : '');
-    /*
-     * A count you can act on is a control. "Reached a mailbox: 3" was a dead
-     * number — the next question is always "which three?", and answering it
-     * meant reading two hundred rows by eye.
-     */
-    if (card.filter) {
-      return '<button type="button" class="stat-card accent-' + card.accent +
-        ' em-stat-btn" data-disposition="' + esc(card.filter) +
-        '" title="Show these alerts">' + body +
-        '<span class="em-stat-go">Show these ›</span></button>';
-    }
-    return '<div class="stat-card accent-' + card.accent + '">' + body + '</div>';
-  }
-
-  function statCards(s) {
-    var t = s.threats;
-    var c = s.containment;
-
-    // Two tiers. The first four answer "how did we do"; the rest are context.
-    var lead = [
-      { label: 'Email threats detected (' + s.windowDays + 'd)', value: num(t.total), accent: 'blue' },
-      { label: 'Stopped', value: num(c.contained), accent: 'green' },
-      { label: 'Reached a mailbox', value: num(c.delivered),
-        accent: c.delivered > 0 ? 'red' : 'green',
-        filter: c.delivered > 0 ? 'delivered' : null },
-      { label: 'Containment rate', value: num(c.rate, '%'), accent: 'green',
-        sub: c.knownDisposition
-          ? 'of ' + esc(c.knownDisposition) + ' alert(s) that stated an outcome'
-          : '<span class="em-nd">no outcome was stated</span>' },
-    ];
-
-    var secondary = [
-      { label: 'Pulled back after delivery', value: num(c.remediated), accent: 'amber',
-        filter: c.remediated > 0 ? 'remediated' : null },
-      { label: 'People targeted', value: num(t.targetedUsers), accent: 'amber' },
-      { label: 'Sending domains', value: num(t.senderDomains), accent: 'blue' },
-      { label: 'Unclassified threats', value: num(t.unclassified),
-        accent: t.unclassified > 0 ? 'amber' : 'green' },
-    ];
-
-    return '<div class="stats-grid em-stats-lead">' + lead.map(statCard).join('') + '</div>' +
-      '<div class="stats-grid em-stats-more">' + secondary.map(statCard).join('') + '</div>';
   }
 
   /**
@@ -584,15 +566,276 @@ window.EmailTab = (function () {
       '</div>';
   }
 
-  function rangePicker() {
-    var opts = [7, 30, 90, 180, 365];
-    return '<label class="em-range">Window ' +
-      '<select id="em-range" class="form-input">' +
-        opts.map(function (d) {
-          return '<option value="' + d + '"' + (d === _days ? ' selected' : '') + '>' +
-            d + ' days</option>';
-        }).join('') +
-      '</select></label>';
+  var RANGES = [
+    { days: 1,   label: 'Last day' },
+    { days: 7,   label: 'Last week' },
+    { days: 30,  label: 'Last month' },
+    { days: 90,  label: 'Last quarter' },
+    { days: 365, label: 'Last year' },
+  ];
+
+  /** The window as actual dates, so "last quarter" is never ambiguous. */
+  function rangeDates() {
+    var to = new Date();
+    var from = new Date(to.getTime() - (_days - 1) * 86400000);
+    var f = function (d) {
+      return d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+    };
+    return f(from) + ' – ' + f(to);
+  }
+
+  function rangeTabs() {
+    return '<div class="em-ranges" role="tablist">' +
+      RANGES.map(function (r) {
+        var on = r.days === _days;
+        return '<button type="button" class="em-range-tab' + (on ? ' is-on' : '') +
+          '" data-days="' + r.days + '" role="tab" aria-selected="' + (on ? 'true' : 'false') +
+          '">' + esc(r.label) + '</button>';
+      }).join('') +
+      '<span class="em-range-dates">' + esc(rangeDates()) + '</span>' +
+      '</div>';
+  }
+
+  // ── The Acronis-shaped panels ─────────────────────────────────────────────
+
+  /**
+   * The headline band: containment, the incident count, and the counters.
+   *
+   * Modelled on the Acronis console's own header so the two can be read side by
+   * side — with one deliberate substitution. Acronis leads with "99.95%
+   * Protection" over "2,407,983 Items Scanned"; both come from its scanning
+   * pipeline, and the Alert Manager API this integration reads reports neither.
+   * The badge therefore shows CONTAINMENT, which we can compute and whose
+   * denominator is printed under it. See unavailableTiles() for the rest.
+   */
+  function heroBand(s) {
+    var c = s.containment;
+    var t = s.threats;
+
+    var band = c.rate === null ? 'nd' : c.rate >= 99 ? 'good' : c.rate >= 95 ? 'fair' : 'poor';
+    var badge = '<div class="em-badge em-badge-' + band + '">' +
+      '<div class="em-badge-v">' + num(c.rate, '%') + '</div>' +
+      '<div class="em-badge-l">Contained</div></div>';
+
+    /*
+     * A count you can act on is a control. "Reached a mailbox: 3" was a dead
+     * number — the next question is always "which three?", and answering it
+     * meant reading the whole alert list by eye. Only rendered as a button when
+     * there is something behind it.
+     */
+    var counters = [
+      { n: t.targetedUsers, l: 'People targeted' },
+      { n: t.senderDomains, l: 'Sending domains' },
+      { n: c.remediated,    l: 'Pulled back', filter: c.remediated > 0 ? 'remediated' : null },
+      { n: t.unclassified,  l: 'Unclassified' },
+    ].map(function (x) {
+      var inner = '<div class="em-counter-n">' + num(x.n) + '</div>' +
+        '<div class="em-counter-l">' + esc(x.l) + '</div>';
+      return x.filter
+        ? '<button type="button" class="em-counter em-stat-btn" data-disposition="' +
+          esc(x.filter) + '" title="Show these alerts">' + inner + '</button>'
+        : '<div class="em-counter">' + inner + '</div>';
+    }).join('');
+
+    var delivered = c.delivered > 0
+      ? '<button type="button" class="em-inline-btn em-stat-btn" data-disposition="delivered" ' +
+        'title="Show these alerts">' + esc(c.delivered) + ' reached a mailbox ›</button>'
+      : esc(c.delivered) + ' reached a mailbox';
+
+    return '<div class="em-hero">' +
+      badge +
+      '<div class="em-hero-main">' +
+        '<div class="em-hero-n">' + num(t.total) + ' <span>incidents</span></div>' +
+        '<div class="em-hero-sub">' +
+          (c.knownDisposition
+            ? esc(c.contained) + ' stopped · ' + delivered + ' · ' +
+              esc(c.unknownDisposition) + ' with no outcome stated'
+            : 'No alert in this window stated what happened to the message') +
+        '</div>' +
+        '<div class="em-hero-den">' +
+          (c.knownDisposition
+            ? 'Containment measured over the ' + esc(c.knownDisposition) + ' of ' +
+              esc(t.total) + ' alert(s) that stated an outcome'
+            : '<span class="em-nd">no outcome was stated, so no containment rate is shown</span>') +
+        '</div>' +
+      '</div>' +
+      '<div class="em-counters">' + counters + '</div>' +
+    '</div>';
+  }
+
+  /**
+   * The outcome donut and the malicious/spam split.
+   *
+   * Acronis puts an "Attack Level 4/5" gauge here, computed from the share of
+   * scanned mail that was malicious. Without a scanned count there is no such
+   * ratio to compute, so the same space answers a question this data CAN
+   * answer: of the threats raised, what happened to them.
+   */
+  function attackLevelBlock(s) {
+    var c = s.containment;
+    var t = s.threats;
+
+    var slices = [
+      { n: c.contained - c.remediated, cls: 'em-sl-stopped', label: 'Stopped' },
+      { n: c.remediated,               cls: 'em-sl-pulled',  label: 'Pulled back after delivery' },
+      { n: c.delivered,                cls: 'em-sl-through', label: 'Reached a mailbox' },
+      { n: c.unknownDisposition,       cls: 'em-sl-unknown', label: 'No outcome stated' },
+    ].filter(function (x) { return x.n > 0; });
+
+    var sum = slices.reduce(function (m, x) { return m + x.n; }, 0);
+    var ring;
+    if (!sum) {
+      ring = '<div class="em-donut-empty"><span class="em-nd">No alerts</span></div>';
+    } else {
+      // A stroke-dasharray ring: one arc per slice, drawn end to end.
+      var R = 15.9155, CIRC = 100, at = 25;   // 25 puts the start at 12 o'clock
+      var arcs = slices.map(function (x) {
+        var len = (x.n / sum) * CIRC;
+        var seg = '<circle class="em-arc ' + x.cls + '" r="' + R + '" cx="21" cy="21" ' +
+          'fill="none" stroke-width="5" stroke-dasharray="' + len.toFixed(2) + ' ' +
+          (CIRC - len).toFixed(2) + '" stroke-dashoffset="' + at.toFixed(2) + '">' +
+          '<title>' + esc(x.label) + ': ' + esc(x.n) + '</title></circle>';
+        at -= len;
+        return seg;
+      }).join('');
+      ring = '<svg viewBox="0 0 42 42" class="em-donut" role="img" ' +
+        'aria-label="What happened to the threats in this window">' +
+        '<circle r="' + R + '" cx="21" cy="21" fill="none" stroke-width="5" class="em-arc-bg"></circle>' +
+        arcs +
+        '<text x="21" y="20.5" class="em-donut-v">' + esc(t.total) + '</text>' +
+        '<text x="21" y="25" class="em-donut-l">incidents</text>' +
+      '</svg>';
+    }
+
+    var legend = slices.map(function (x) {
+      return '<div class="em-sl-row"><span class="em-key ' + x.cls + '"></span>' +
+        esc(x.label) + '<span class="em-sl-n">' + esc(x.n) + '</span></div>';
+    }).join('');
+
+    var malicious = (s.byClass || []).reduce(function (m, r) {
+      return m + (isMalicious(r.label) ? r.count : 0);
+    }, 0);
+    var spam = (s.byClass || []).reduce(function (m, r) {
+      return m + (r.label === 'spam' ? r.count : 0);
+    }, 0);
+
+    return '<section class="em-card em-level">' +
+      '<h3 class="em-h">What happened to them</h3>' +
+      '<div class="em-level-body">' +
+        '<div class="em-donut-wrap">' + ring + '</div>' +
+        '<div class="em-level-side">' +
+          '<div class="em-mini em-mini-bad"><div class="em-mini-n">' + esc(malicious) +
+            '</div><div class="em-mini-l">Malicious</div></div>' +
+          '<div class="em-mini em-mini-warn"><div class="em-mini-n">' + esc(spam) +
+            '</div><div class="em-mini-l">Spam / bulk</div></div>' +
+          (t.unclassified > 0
+            ? '<div class="em-mini"><div class="em-mini-n">' + esc(t.unclassified) +
+              '</div><div class="em-mini-l">Unclassified</div></div>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="em-slices">' + legend + '</div>' +
+    '</section>';
+  }
+
+  /**
+   * Top attack types over time, stacked per day.
+   *
+   * The bands are the largest kinds across the whole window rather than per day,
+   * so a colour means the same thing from one column to the next.
+   */
+  function stackedChart(s) {
+    var d = s.dailyByClass;
+    if (!d || !d.days || !d.days.length || !d.classes.length) return '';
+
+    var max = d.days.reduce(function (m, x) { return Math.max(m, x.total); }, 0);
+    if (max === 0) {
+      return '<section class="em-card"><h3 class="em-h">Top attack types over time</h3>' +
+        '<div class="em-note">No email threats were detected in this window.</div></section>';
+    }
+
+    var W = 100, H = 30, n = d.days.length, bw = W / n;
+
+    var cols = d.days.map(function (day, i) {
+      var x = i * bw + bw * 0.12;
+      var w = bw * 0.76;
+      var y = H;
+      var parts = d.classes.map(function (k) {
+        var v = day.counts[k] || 0;
+        if (!v) return '';
+        var h = (v / max) * H;
+        y -= h;
+        return '<rect x="' + x.toFixed(2) + '" y="' + y.toFixed(2) + '" width="' + w.toFixed(2) +
+          '" height="' + h.toFixed(2) + '" fill="' + (CLASS_COLORS[k] || CLASS_COLORS.other) + '">' +
+          '<title>' + esc(day.date) + ' · ' + esc(classLabel(k)) + ': ' + esc(v) + '</title></rect>';
+      }).join('');
+      return parts;
+    }).join('');
+
+    var legend = d.classes.map(function (k) {
+      return '<span class="em-lg"><span class="em-key" style="background:' +
+        (CLASS_COLORS[k] || CLASS_COLORS.other) + '"></span>' + esc(classLabel(k)) + '</span>';
+    }).join('');
+
+    return '<section class="em-card"><h3 class="em-h">Top attack types over time</h3>' +
+      '<div class="em-chart">' +
+        '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" ' +
+          'aria-label="Threats per day, stacked by threat kind">' + cols + '</svg>' +
+        '<div class="em-dates"><span>' + esc(fmtDay(d.days[0].date)) + '</span>' +
+          '<span>' + esc(fmtDay(d.days[d.days.length - 1].date)) + '</span></div>' +
+        '<div class="em-legend em-legend-wrap">' + legend +
+          '<span class="em-axis">Peak ' + esc(max) + '/day</span></div>' +
+      '</div></section>';
+  }
+
+  /** The biggest kinds, as headline figures. */
+  function highlightedTypes(s) {
+    var rows = (s.byClass || []).slice()
+      .sort(function (a, b) { return b.count - a.count; }).slice(0, 5);
+    if (!rows.length) return '';
+    return '<section class="em-card"><h3 class="em-h">Highlighted attack types</h3>' +
+      '<div class="em-hl">' + rows.map(function (r) {
+        return '<div class="em-hl-i">' +
+          '<div class="em-hl-l">' + esc(classLabel(r.label)) + '</div>' +
+          '<div class="em-hl-n" style="color:' + (CLASS_COLORS[r.label] || CLASS_COLORS.other) + '">' +
+            esc(r.count) + '</div></div>';
+      }).join('') + '</div></section>';
+  }
+
+  /** Every kind, with what it means and how many. */
+  function typeAmounts(s) {
+    var rows = (s.byClass || []).slice().sort(function (a, b) { return b.count - a.count; });
+    if (!rows.length) return '';
+    return '<section class="em-card"><h3 class="em-h">Attack types amount</h3>' +
+      '<div class="em-amounts">' + rows.map(function (r) {
+        return '<div class="em-am">' +
+          '<span class="em-dot" style="background:' + (CLASS_COLORS[r.label] || CLASS_COLORS.other) + '"></span>' +
+          '<div class="em-am-t"><div class="em-am-l">' + esc(classLabel(r.label)) + '</div>' +
+            '<div class="em-am-d">' + esc(CLASS_DESC[r.label] || '') + '</div></div>' +
+          '<div class="em-am-n">' + esc(r.count) + '</div>' +
+        '</div>';
+      }).join('') + '</div></section>';
+  }
+
+  /**
+   * What the Acronis console shows here and this page cannot.
+   *
+   * Stated rather than quietly omitted: anyone comparing the two screens will
+   * notice the missing tiles within seconds, and "we chose not to guess" is a
+   * far better answer than leaving them to wonder whether it is broken.
+   */
+  function unavailableTiles() {
+    return '<details class="em-unrec"><summary class="em-h em-sum">' +
+      'Four tiles from the Acronis console are not on this page</summary>' +
+      '<p class="em-note"><strong>Protection %</strong> and <strong>Items scanned</strong> ' +
+      'come from Acronis\'s scanning pipeline. This integration reads the Alert Manager ' +
+      'API, which reports only what went wrong, so there is no scanned total here to ' +
+      'divide by. The badge above shows containment instead, over a denominator it prints.</p>' +
+      '<p class="em-note"><strong>Attack level</strong> (the 4/5 gauge) is derived from the ' +
+      'share of scanned mail that was malicious — the same missing denominator.</p>' +
+      '<p class="em-note"><strong>Top impersonated brands</strong> is not carried on the ' +
+      'alerts we store; the sender domains below are the closest real equivalent. ' +
+      'If these matter, they need a different Acronis API than the one this integration ' +
+      'uses today.</p></details>';
   }
 
   function render() {
@@ -625,22 +868,32 @@ window.EmailTab = (function () {
         'once a sync has run, a quiet month will show zeros here.</div>';
     } else {
       body = syncStrip(_summary) +
-        statCards(_summary) +
+        heroBand(_summary) +
         denominatorNote(_summary) +
+        '<div class="em-grid em-grid-2">' +
+          attackLevelBlock(_summary) +
+          stackedChart(_summary) +
+        '</div>' +
+        '<div class="em-grid em-grid-2">' +
+          highlightedTypes(_summary) +
+          typeAmounts(_summary) +
+        '</div>' +
         trendChart(_summary.daily) +
+        '<div class="em-grid em-grid-2">' +
+          card(targetedBlock(_summary)) +
+          card(breakdown('Top attacking domains / senders', _summary.topSenderDomains)) +
+        '</div>' +
         '<div class="em-grid">' +
-          card(byClassBlock(_summary)) +
           card(breakdown('By outcome', _summary.byDisposition, dispositionLabel)) +
           card(breakdown('By severity', _summary.bySeverity, humanise)) +
-          card(breakdown('Top sending domains', _summary.topSenderDomains)) +
         '</div>' +
-        card(targetedBlock(_summary)) +
         alertsBlock(_summary) +
-        unrecognisedBlock(_summary);
+        unrecognisedBlock(_summary) +
+        unavailableTiles();
     }
 
     host.innerHTML = head +
-      '<div class="em-toolbar">' + rangePicker() +
+      '<div class="em-toolbar">' + rangeTabs() +
         '<button type="button" class="btn btn-sm" id="em-refresh">Refresh</button>' +
       '</div>' +
       '<div class="em-body">' + body + '</div>';
@@ -695,14 +948,13 @@ window.EmailTab = (function () {
   }
 
   function wire() {
-    var sel = document.getElementById('em-range');
-    if (sel) {
-      sel.onchange = function () {
-        _days = parseInt(sel.value, 10) || 30;
+    document.querySelectorAll('#tab-email .em-range-tab').forEach(function (b) {
+      b.onclick = function () {
+        _days = parseInt(b.dataset.days, 10) || 30;
         _expanded = {};
         loadAndRender();
       };
-    }
+    });
 
     var refresh = document.getElementById('em-refresh');
     if (refresh) refresh.onclick = function () { loadAndRender(); };
@@ -768,7 +1020,13 @@ window.EmailTab = (function () {
     // Seams for the test harness.
     _render: render,
     _apiUrl: apiUrl,
-    _statCards: statCards,
+    _heroBand: heroBand,
+    _attackLevelBlock: attackLevelBlock,
+    _stackedChart: stackedChart,
+    _typeAmounts: typeAmounts,
+    _highlightedTypes: highlightedTypes,
+    _unavailableTiles: unavailableTiles,
+    _rangeTabs: rangeTabs,
     _denominatorNote: denominatorNote,
     _alertsTable: alertsTable,
     _targetedBlock: targetedBlock,

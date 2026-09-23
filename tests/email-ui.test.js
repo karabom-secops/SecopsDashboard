@@ -182,23 +182,25 @@ check('and the NULL branches add no parameter of their own',
 
 section('a count you can act on is a control');
 
+// Reframed onto the hero band: the stat cards it replaced are gone, and the
+// same counts now live in the header the Acronis console puts them in.
 fresh(SUMMARY, []);
-const cards = ET._statCards(SUMMARY);
-check('"Reached a mailbox" is a button when it is not zero',
-  /data-disposition="delivered"/.test(cards));
-check('"Pulled back after delivery" too', /data-disposition="remediated"/.test(cards));
+const hero = ET._heroBand(SUMMARY);
+check('"reached a mailbox" is a button when it is not zero',
+  /data-disposition="delivered"/.test(hero));
+check('"pulled back" too', /data-disposition="remediated"/.test(hero));
 const zeroDelivered = JSON.parse(JSON.stringify(SUMMARY));
 zeroDelivered.containment.delivered = 0;
 zeroDelivered.containment.remediated = 0;
 check('but neither is a button at zero — there is nothing to show',
-  !/data-disposition/.test(ET._statCards(zeroDelivered)));
-check('the containment rate carries its denominator on the card itself',
-  /of 388 alert\(s\) that stated an outcome/.test(cards));
+  !/data-disposition/.test(ET._heroBand(zeroDelivered)));
+check('the containment rate carries its denominator in the band itself',
+  /over the 388 of 431 alert\(s\) that stated an outcome/.test(hero), 'denominator printed');
 const noOutcome = JSON.parse(JSON.stringify(SUMMARY));
 noOutcome.containment = { contained: 0, delivered: 0, remediated: 0, knownDisposition: 0,
                           unknownDisposition: 431, rate: null, coverage: null };
 check('and says so when there is no denominator',
-  /no outcome was stated/.test(ET._statCards(noOutcome)));
+  /no outcome was stated/.test(ET._heroBand(noOutcome)));
 
 // ── 4. Escaping, in the places the redesign added ──────────────────────────
 
@@ -229,5 +231,149 @@ check('the uncontained remainder is drawn in the alarming colour',
   /\.em-bar-total\s*\{ fill: rgba\(232, 57, 74/.test(css));
 check('and the stopped part in the reassuring one',
   /\.em-bar-contained \{ fill: #22C55E; \}/.test(css));
+
+/* ══ The Acronis-shaped layout ═════════════════════════════════════════════ */
+
+section('what the Acronis console shows and this data cannot');
+
+/*
+ * The console leads with "99.95% Protection" over "2,407,983 Items Scanned",
+ * and an "Attack Level 4/5" gauge derived from the share of SCANNED mail that
+ * was malicious. lib/integrations/acronis.js calls one endpoint — the Alert
+ * Manager — which reports what went wrong and never how much was scanned. Any
+ * one of those three figures on this page would be invented.
+ */
+const acr = read('lib', 'integrations', 'acronis.js');
+check('the adapter still reads only the alert endpoint',
+  /alert_manager\/v1\/alerts/.test(acr) && !/items_scanned|scanned_count|\/statistics/.test(acr));
+
+const tiles = ET._unavailableTiles();
+check('the page says the protection rate is not available, and why',
+  /Protection %/.test(tiles) && /no scanned total here to/.test(tiles));
+check('and that the attack-level gauge needs the same missing denominator',
+  /Attack level/.test(tiles) && /same missing denominator/.test(tiles));
+check('and that impersonated brands are not on the alerts we store',
+  /Top impersonated brands/.test(tiles));
+// Asserted on the page, not only on the function: an explanation that is
+// rendered nowhere explains nothing.
+check('and the explanation is actually on the page',
+  /unavailableTiles\(\);/.test(tabJs) &&
+  tabJs.indexOf('unavailableTiles();') > tabJs.indexOf('alertsBlock(_summary)'));
+check('no invented protection or scanned figure appears anywhere on the tab',
+  !/Items Scanned|items scanned|Protection<|99\.9/.test(
+    tabJs.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
+  'nothing outside the comments that explain the omission');
+
+section('the hero band reads like the console header');
+
+check('the badge is labelled Contained, not Protection',
+  /em-badge-l">Contained</.test(hero) && !/>Protection</.test(hero));
+check('the incident count leads', /em-hero-n">431 <span>incidents/.test(hero));
+check('with the outcome split under it',
+  /380 stopped/.test(hero) && /reached a mailbox/.test(hero) &&
+  /43 with no outcome stated/.test(hero));
+
+section('the range tabs name a real date range');
+
+ET._setFilters({});
+const tabs = ET._rangeTabs();
+check('the console\'s own ranges are offered',
+  /data-days="1"/.test(tabs) && /data-days="7"/.test(tabs) &&
+  /data-days="30"/.test(tabs) && /data-days="90"/.test(tabs));
+check('one is marked current', (tabs.match(/is-on/g) || []).length === 1);
+check('and the window is spelled out as dates, not just "last quarter"',
+  /em-range-dates">[^<]*\d{4}[^<]*–[^<]*\d{4}/.test(tabs),
+  (tabs.match(/em-range-dates">([^<]*)/) || [])[1]);
+
+section('the stacked chart keeps a kind the same colour throughout');
+
+const stack = ET._stackedChart(Object.assign({}, SUMMARY, {
+  dailyByClass: {
+    classes: ['phishing', 'unclassified'],
+    days: [
+      { date: '2026-09-01', total: 10, counts: { phishing: 7, unclassified: 3 } },
+      { date: '2026-09-02', total: 4,  counts: { phishing: 4 } },
+    ],
+  },
+}));
+check('each kind is drawn in its own colour', /fill="#E8394A"/.test(stack));
+check('and the legend uses the same one', /background:#E8394A/.test(stack.replace(/\s/g, '')));
+check('a segment names its day, kind and count', /2026-09-01 · Phishing: 7/.test(stack));
+check('an all-zero window says so rather than drawing an empty frame',
+  /No email threats were detected/.test(ET._stackedChart(Object.assign({}, SUMMARY, {
+    dailyByClass: { classes: ['phishing'], days: [{ date: '2026-09-01', total: 0, counts: {} }] },
+  }))));
+check('and a summary with no stack at all renders nothing',
+  ET._stackedChart(Object.assign({}, SUMMARY, { dailyByClass: null })) === '');
+
+section('the outcome donut adds up to the alerts it describes');
+
+const donut = ET._attackLevelBlock(SUMMARY);
+check('every outcome is a labelled slice',
+  /Stopped<\/i|Stopped<span|Stopped/.test(donut) && /Reached a mailbox/.test(donut) &&
+  /No outcome stated/.test(donut));
+check('"pulled back" is not double-counted inside "stopped"',
+  /em-sl-stopped[\s\S]*?375/.test(donut), 'contained 380 less remediated 5');
+check('the malicious/spam split excludes the classifier gap',
+  /em-mini-n">300</.test(donut), 'phishing only; unclassified is its own tile');
+check('a window with no alerts draws no ring at all',
+  /em-donut-empty/.test(ET._attackLevelBlock(Object.assign({}, SUMMARY, {
+    threats: { total: 0, classified: 0, unclassified: 0, targetedUsers: 0, senderDomains: 0 },
+    containment: { contained: 0, delivered: 0, remediated: 0, knownDisposition: 0,
+                   unknownDisposition: 0, rate: null, coverage: null },
+    byClass: [],
+  }))));
+
+section('every kind is described, not just counted');
+
+const amounts = ET._typeAmounts(SUMMARY);
+check('a kind carries a plain-English description',
+  /Credential theft/.test(amounts));
+check('and the classifier gap is described as a gap, not a threat kind',
+  /no threat kind for/.test(amounts));
+
+/* ══ The server-side stack ═════════════════════════════════════════════════ */
+
+section('the daily stack is a remainder, never a reclassification');
+
+const EM = require(path.join(ROOT, 'lib', 'email-metrics.js'));
+const metricsSrc = read('lib', 'email-metrics.js');
+
+// Seven kinds over two days: five earn a band, two are summed into 'other'.
+const dayRows = [
+  { label: '2026-09-01', count: 28, contained: 20 },
+  { label: '2026-09-02', count: 0,  contained: 0 },
+];
+const classRows = [
+  { day: '2026-09-01', label: 'phishing',   count: 10 },
+  { day: '2026-09-01', label: 'malware',    count: 6 },
+  { day: '2026-09-01', label: 'spam',       count: 5 },
+  { day: '2026-09-01', label: 'url',        count: 3 },
+  { day: '2026-09-01', label: 'bec',        count: 2 },
+  { day: '2026-09-01', label: 'dlp',        count: 1 },
+  { day: '2026-09-01', label: 'attachment', count: 1 },
+];
+const stacked = EM.stackByClass(dayRows, classRows);
+
+check('only the largest kinds get a band', stacked.classes.length === 6,
+  stacked.classes.join(', '));
+check('the five largest, in size order',
+  stacked.classes.slice(0, 5).join(',') === 'phishing,malware,spam,url,bec');
+check('and the rest are summed into a remainder called "other"',
+  stacked.classes[5] === 'other' && stacked.days[0].counts.other === 2,
+  'dlp 1 + attachment 1');
+check('a day\'s bands add up to that day\'s total — nothing is dropped',
+  Object.keys(stacked.days[0].counts).reduce(function (m, k) {
+    return m + stacked.days[0].counts[k];
+  }, 0) === stacked.days[0].total, String(stacked.days[0].total));
+check('a quiet day is kept as a zero column, not a gap in the series',
+  stacked.days.length === 2 && stacked.days[1].total === 0 &&
+  Object.keys(stacked.days[1].counts).length === 0);
+check('with five kinds or fewer there is no "other" band at all',
+  EM.stackByClass(dayRows, classRows.slice(0, 4)).classes.indexOf('other') < 0);
+
+check('byClass still reports every kind at full count',
+  /byClass:\s*tallies\(byClass\.rows\)/.test(metricsSrc),
+  'the per-kind record is untouched by the stack');
 
 done();

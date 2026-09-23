@@ -5,12 +5,79 @@
  * theme variable exists.
  */
 
+/* ── Range tabs ────────────────────────────────────────────────────────────── */
+
+/* Laid out like the Acronis console's own header so the two screens can be read
+   side by side, with the resolved dates spelled out — "last quarter" on its own
+   is not a date range anyone can check a figure against. */
 .em-toolbar {
-  display: flex; justify-content: flex-end; align-items: center;
-  gap: 0.6rem; margin-bottom: 1rem;
+  display: flex; align-items: center; gap: 0.6rem;
+  margin-bottom: 1rem; border-bottom: 1px solid rgba(127, 127, 127, 0.2);
 }
-.em-range { font-size: 0.85rem; color: #8C8C8C; display: flex; align-items: center; gap: 0.5rem; }
-.em-range select { width: auto; }
+.em-ranges { display: flex; align-items: center; gap: 0.2rem; flex: 1 1 auto; flex-wrap: wrap; }
+
+.em-range-tab {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  padding: 0.55rem 0.8rem; font: inherit; font-size: 0.78rem;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: #8C8C8C; cursor: pointer;
+}
+.em-range-tab:hover { color: inherit; }
+.em-range-tab.is-on { color: inherit; border-bottom-color: #0066CC; font-weight: 600; }
+
+.em-range-dates {
+  margin-left: auto; font-size: 0.78rem; color: #8C8C8C;
+  font-variant-numeric: tabular-nums; padding-right: 0.3rem;
+}
+
+/* ── Hero band ─────────────────────────────────────────────────────────────── */
+
+.em-hero {
+  display: flex; align-items: stretch; gap: 1.2rem; flex-wrap: wrap;
+  padding: 0 0 1rem; margin-bottom: 0.6rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.18);
+}
+
+.em-badge {
+  flex: 0 0 auto; min-width: 7.5rem; border-radius: 6px;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  padding: 0.7rem 1rem; color: #fff;
+}
+.em-badge-v { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+.em-badge-l { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.92; }
+.em-badge-good { background: #22C55E; }
+.em-badge-fair { background: #F59E0B; }
+.em-badge-poor { background: #E8394A; }
+/* No rate at all is grey and dashed — never a green badge with an em dash in it,
+   which reads at a glance as a pass. */
+.em-badge-nd   { background: rgba(127, 127, 127, 0.25); color: #6A6A6A; }
+.em-badge-nd .em-nd { color: inherit; }
+
+.em-hero-main { flex: 1 1 16rem; min-width: 0; align-self: center; }
+.em-hero-n { font-size: 1.8rem; font-weight: 700; line-height: 1.15; }
+.em-hero-n span {
+  font-size: 0.8rem; font-weight: 600; color: #8C8C8C;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.em-hero-sub { font-size: 0.85rem; color: #8C8C8C; margin-top: 0.25rem; }
+.em-hero-den { font-size: 0.75rem; color: #8C8C8C; margin-top: 0.3rem; opacity: 0.9; }
+
+.em-inline-btn {
+  font: inherit; font-size: inherit; color: #0066CC; cursor: pointer;
+  background: none; border: 0; padding: 0; text-decoration: underline;
+}
+
+.em-counters { display: flex; gap: 0.5rem; align-self: center; flex-wrap: wrap; }
+.em-counter {
+  min-width: 5.5rem; text-align: center; padding: 0.5rem 0.7rem;
+  border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 6px;
+  background: transparent; color: inherit; font: inherit;
+}
+.em-counter-n { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.em-counter-l { font-size: 0.68rem; color: #8C8C8C; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.em-stat-btn { cursor: pointer; }
+.em-stat-btn:hover { border-color: #0066CC; }
 
 /* Screen-reader-only label: the search box is obvious by its placeholder to
    someone who can see it, and unlabelled to someone who cannot. */
@@ -56,22 +123,63 @@
 .em-good { color: #22C55E; }
 .em-bad  { color: #E8394A; font-weight: 600; }
 
-/* ── Stat tiers ────────────────────────────────────────────────────────────── */
+/* ── Outcome donut ─────────────────────────────────────────────────────────── */
 
-/* Four cards that answer "how did we do", then four that give context. Eight
-   equal cards in one block made the headline compete with the footnotes. */
-.em-stats-more { margin-top: 0.6rem; opacity: 0.92; }
-.em-stats-more .stat-value { font-size: 1.35rem; }
-
-.em-stat-sub { font-size: 0.72rem; color: #8C8C8C; margin-top: 0.2rem; line-height: 1.35; }
-
-/* A card that is also the filter for the rows behind it. */
-.em-stat-btn {
-  font: inherit; text-align: left; cursor: pointer; color: inherit;
-  width: 100%; display: block;
+.em-level-body { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.em-donut-wrap { flex: 0 0 9.5rem; }
+.em-donut { width: 9.5rem; height: 9.5rem; transform: rotate(-90deg); }
+.em-arc-bg { stroke: rgba(127, 127, 127, 0.15); }
+.em-arc { transition: stroke-width .15s ease; }
+.em-donut-v, .em-donut-l {
+  transform: rotate(90deg); transform-origin: 21px 21px;
+  text-anchor: middle; fill: currentColor;
 }
-.em-stat-btn:hover { border-color: #0066CC; }
-.em-stat-go { display: block; font-size: 0.7rem; color: #0066CC; margin-top: 0.3rem; }
+.em-donut-v { font-size: 6px; font-weight: 700; }
+.em-donut-l { font-size: 2.4px; fill: #8C8C8C; text-transform: uppercase; letter-spacing: 0.08em; }
+.em-donut-empty {
+  width: 9.5rem; height: 9.5rem; border-radius: 50%;
+  border: 5px solid rgba(127, 127, 127, 0.15);
+  display: flex; align-items: center; justify-content: center; font-size: 0.8rem;
+}
+
+.em-sl-stopped { stroke: #22C55E; background: #22C55E; }
+.em-sl-pulled  { stroke: #F59E0B; background: #F59E0B; }
+.em-sl-through { stroke: #E8394A; background: #E8394A; }
+.em-sl-unknown { stroke: #B4B4B4; background: #B4B4B4; }
+
+.em-slices { margin-top: 0.7rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.em-sl-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; }
+.em-sl-n { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.em-level-side { display: flex; flex-direction: column; gap: 0.5rem; flex: 1 1 8rem; }
+.em-mini {
+  padding: 0.5rem 0.7rem; border-radius: 6px;
+  border: 1px solid rgba(127, 127, 127, 0.2); border-left-width: 3px;
+}
+.em-mini-n { font-size: 1.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.em-mini-l { font-size: 0.72rem; color: #8C8C8C; }
+.em-mini-bad  { border-left-color: #E8394A; }
+.em-mini-warn { border-left-color: #F59E0B; }
+
+/* ── Highlighted types and amounts ─────────────────────────────────────────── */
+
+.em-hl { display: grid; gap: 0.6rem; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); }
+.em-hl-i { border-left: 1px solid rgba(127, 127, 127, 0.2); padding-left: 0.6rem; }
+.em-hl-i:first-child { border-left: 0; padding-left: 0; }
+.em-hl-l { font-size: 0.75rem; color: #8C8C8C; line-height: 1.3; min-height: 2.1em; }
+.em-hl-n { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.em-amounts { display: flex; flex-direction: column; }
+.em-am {
+  display: flex; align-items: flex-start; gap: 0.6rem;
+  padding: 0.55rem 0; border-top: 1px solid rgba(127, 127, 127, 0.14);
+}
+.em-am:first-child { border-top: 0; }
+.em-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; margin-top: 0.35rem; }
+.em-am-t { flex: 1 1 auto; min-width: 0; }
+.em-am-l { font-size: 0.83rem; font-weight: 600; }
+.em-am-d { font-size: 0.75rem; color: #8C8C8C; line-height: 1.4; }
+.em-am-n { flex: 0 0 auto; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* ── Breakdown grid ────────────────────────────────────────────────────────── */
 
@@ -79,6 +187,9 @@
   display: grid; gap: 0.8rem; margin-top: 0.4rem;
   grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
 }
+.em-grid-2 { grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr)); }
+.em-legend-wrap { flex-wrap: wrap; }
+.em-lg { display: inline-flex; align-items: center; gap: 0.3rem; margin-right: 0.6rem; }
 .em-card {
   padding: 0.2rem 1rem 1rem; border-radius: 6px;
   border: 1px solid rgba(127, 127, 127, 0.18);
