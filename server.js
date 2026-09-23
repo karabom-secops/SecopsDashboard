@@ -5552,11 +5552,22 @@ app.get('/api/email/alerts', requireAuth, async (req, res) => {
      * never interpolated from req.query. The value goes in a placeholder; the
      * column is chosen by this code and nothing else.
      */
-    if (req.query.threatClass) {
+    /*
+     * 'unclassified' and 'unknown' are LABELS, not stored values: the columns
+     * are NULL and computeEmailSummary COALESCEs them for display. Equality
+     * against the label can never match, so the two questions the tab most
+     * wants to ask — "which alerts did we fail to classify" and "which stated
+     * no outcome" — would have come back silently empty.
+     */
+    if (req.query.threatClass === 'unclassified') {
+      where.push('threat_class IS NULL');
+    } else if (req.query.threatClass) {
       params.push(req.query.threatClass);
       where.push(`threat_class = $${params.length}`);
     }
-    if (req.query.disposition) {
+    if (req.query.disposition === 'unknown') {
+      where.push('disposition IS NULL');
+    } else if (req.query.disposition) {
       params.push(req.query.disposition);
       where.push(`disposition = $${params.length}`);
     }

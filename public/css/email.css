@@ -12,6 +12,28 @@
 .em-range { font-size: 0.85rem; color: #8C8C8C; display: flex; align-items: center; gap: 0.5rem; }
 .em-range select { width: auto; }
 
+/* Screen-reader-only label: the search box is obvious by its placeholder to
+   someone who can see it, and unlabelled to someone who cannot. */
+.em-sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+
+/* ── Sync strip ────────────────────────────────────────────────────────────── */
+
+/* "Can I trust these numbers" is the first question, so it is answered above
+   them rather than in a footnote below two hundred alert rows. */
+.em-strip {
+  font-size: 0.8rem; color: #8C8C8C;
+  padding: 0.5rem 0.8rem; margin-bottom: 0.9rem;
+  border-radius: 5px; background: rgba(127, 127, 127, 0.07);
+  border: 1px solid rgba(127, 127, 127, 0.18);
+}
+.em-strip.em-warn {
+  color: #C0392B; background: rgba(232, 57, 74, 0.07);
+  border-color: rgba(232, 57, 74, 0.3);
+}
+
 .em-h {
   margin: 1.6rem 0 0.7rem; font-size: 0.95rem; font-weight: 700;
   letter-spacing: 0.01em;
@@ -34,6 +56,35 @@
 .em-good { color: #22C55E; }
 .em-bad  { color: #E8394A; font-weight: 600; }
 
+/* ── Stat tiers ────────────────────────────────────────────────────────────── */
+
+/* Four cards that answer "how did we do", then four that give context. Eight
+   equal cards in one block made the headline compete with the footnotes. */
+.em-stats-more { margin-top: 0.6rem; opacity: 0.92; }
+.em-stats-more .stat-value { font-size: 1.35rem; }
+
+.em-stat-sub { font-size: 0.72rem; color: #8C8C8C; margin-top: 0.2rem; line-height: 1.35; }
+
+/* A card that is also the filter for the rows behind it. */
+.em-stat-btn {
+  font: inherit; text-align: left; cursor: pointer; color: inherit;
+  width: 100%; display: block;
+}
+.em-stat-btn:hover { border-color: #0066CC; }
+.em-stat-go { display: block; font-size: 0.7rem; color: #0066CC; margin-top: 0.3rem; }
+
+/* ── Breakdown grid ────────────────────────────────────────────────────────── */
+
+.em-grid {
+  display: grid; gap: 0.8rem; margin-top: 0.4rem;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+}
+.em-card {
+  padding: 0.2rem 1rem 1rem; border-radius: 6px;
+  border: 1px solid rgba(127, 127, 127, 0.18);
+}
+.em-card .em-h:first-child { margin-top: 1rem; }
+
 /* ── Trend ─────────────────────────────────────────────────────────────────── */
 
 .em-chart { margin: 0.4rem 0 0.8rem; }
@@ -41,16 +92,25 @@
   width: 100%; height: 130px; display: block;
   background: rgba(127, 127, 127, 0.05); border-radius: 5px;
 }
-.em-bar-total     { fill: rgba(0, 102, 204, 0.28); }
-.em-bar-contained { fill: #0066CC; }
+/* The background bar is the day's total, so the part left showing above the
+   stopped bar is what got through — drawn in the alarming colour, because that
+   remainder is the reason to look at this chart at all. */
+.em-bar-total     { fill: rgba(232, 57, 74, 0.45); }
+.em-bar-contained { fill: #22C55E; }
+
+.em-dates {
+  display: flex; justify-content: space-between;
+  font-size: 0.72rem; color: #8C8C8C; margin-top: 0.25rem;
+  font-variant-numeric: tabular-nums;
+}
 
 .em-legend {
   display: flex; align-items: center; gap: 0.4rem;
   font-size: 0.75rem; color: #8C8C8C; margin-top: 0.4rem;
 }
 .em-key { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-.em-k-total     { background: rgba(0, 102, 204, 0.28); }
-.em-k-contained { background: #0066CC; }
+.em-k-total     { background: rgba(232, 57, 74, 0.45); }
+.em-k-contained { background: #22C55E; }
 .em-axis { margin-left: auto; font-variant-numeric: tabular-nums; }
 
 /* ── Breakdown bars ────────────────────────────────────────────────────────── */
@@ -68,11 +128,56 @@
   font-weight: 600;
 }
 
+/* ── Alert filters ─────────────────────────────────────────────────────────── */
+
+.em-tools {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem;
+  margin: 0.6rem 0 0.5rem;
+}
+.em-f { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: #8C8C8C; }
+.em-f select { width: auto; }
+.em-f-q { flex: 1 1 16rem; min-width: 0; }
+.em-f-q input { width: 100%; }
+
+.em-clear {
+  font: inherit; font-size: 0.78rem; cursor: pointer;
+  padding: 0.3rem 0.6rem; border-radius: 5px;
+  color: #0066CC; background: transparent;
+  border: 1px solid rgba(0, 102, 204, 0.4);
+}
+.em-clear:hover { color: #fff; background: #0066CC; }
+
+/* What the list is showing, and what it is not. Never quiet: a capped list that
+   does not say so is read as a complete one. */
+.em-count {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
+  font-size: 0.78rem; color: #8C8C8C; margin: 0.5rem 0;
+}
+
 /* ── Tables ────────────────────────────────────────────────────────────────── */
 
 .em-table { width: 100%; font-size: 0.82rem; }
 .em-r { text-align: right; font-variant-numeric: tabular-nums; }
 .em-scroll { overflow-x: auto; }
+
+.em-row { cursor: pointer; }
+.em-row:hover { background: rgba(0, 102, 204, 0.05); }
+.em-caret { width: 1.2rem; color: #8C8C8C; }
+
+/* The expanded row: the full subject, wrapped rather than clipped, plus the
+   fields the table has no column for. */
+.em-detail > td { background: rgba(127, 127, 127, 0.05); }
+.em-dl {
+  display: grid; grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: 0.25rem 0.9rem; margin: 0.3rem 0; font-size: 0.8rem;
+}
+.em-dl dt { color: #8C8C8C; }
+.em-dl dd { margin: 0; overflow-wrap: anywhere; }
+
+/* Folded away by default — usually correct and boring, but it must stay
+   reachable, since a missing classifier entry shows up nowhere else. */
+.em-unrec { margin-top: 1.4rem; }
+.em-sum { cursor: pointer; }
 
 /* Subjects are attacker-controlled text and can be arbitrarily long. Clamp the
    column so one crafted subject cannot push the outcome column off screen. */

@@ -13,6 +13,24 @@
  * What this page does report is CONTAINMENT: of the threats whose outcome the
  * alert actually stated, how many were stopped rather than delivered. Its
  * denominator is printed beside it, every time.
+ *
+ * ══ HOW THE PAGE IS ORGANISED, AND WHY ══
+ *
+ * It used to be one long column: eight stat cards, two paragraphs of caveat,
+ * a chart, five stacked breakdowns, then two hundred alert rows. The question
+ * an analyst actually opens this tab with — "did anything reach a mailbox, and
+ * whose?" — was a number near the top that nothing could be done with, and the
+ * answer was somewhere in those two hundred rows.
+ *
+ * So: what happened, then what it was, then which messages. The alert list is
+ * filtered THROUGH THE SERVER (it already took threatClass, disposition and
+ * severity parameters that nothing ever sent), so a filter searches the whole
+ * window rather than the page that happens to be loaded. The counts that can be
+ * acted on are buttons that set those filters.
+ *
+ * Two rules the layout must not break:
+ *   - the containment denominator stays beside the containment rate;
+ *   - nothing is truncated silently. A capped list says it was capped.
  */
 
 window.EmailTab = (function () {
@@ -25,12 +43,24 @@ window.EmailTab = (function () {
 
   function apiUrl(path) { return BASE + 'api/' + path; }
 
+  /* The server caps at 500; this is what the tab asks for, and it is stated on
+     screen whenever it is reached rather than quietly cutting the list off. */
+  var ALERT_LIMIT = 200;
+
   var _summary = null;
   var _alerts  = [];
-  var _types   = [];
   var _days    = 30;
   var _err     = null;
   var _available = true;
+
+  // Alert-list filters. The first three are sent to the server; _q is a
+  // client-side narrowing of what came back, and the count line says so.
+  var _fClass = '';
+  var _fDisp  = '';
+  var _fSev   = '';
+  var _q      = '';
+  var _expanded = {};   // alertId → true
+  var _busy   = false;
 
   // Presentation order for threat classes, most severe first. 'unclassified' is
   // last and is NOT a threat kind — it is the classifier admitting a gap.
@@ -76,6 +106,18 @@ window.EmailTab = (function () {
     return '?' + parts.join('&');
   }
 
+  /** The alert query, with whatever filters are set. */
+  function alertsQs() {
+    var extra = ['limit=' + ALERT_LIMIT];
+    if (_fClass) extra.push('threatClass=' + encodeURIComponent(_fClass));
+    if (_fDisp)  extra.push('disposition=' + encodeURIComponent(_fDisp));
+    if (_fSev)   extra.push('severity=' + encodeURIComponent(_fSev));
+    return qs(extra.join('&'));
+  }
+
+  function serverFiltered() { return !!(_fClass || _fDisp || _fSev); }
+  function anyFilter() { return serverFiltered() || !!String(_q).trim(); }
+
   async function get(path) {
     var res = await fetch(apiUrl(path), { credentials: 'same-origin' });
     var j = await res.json().catch(function () { return null; });
@@ -92,6 +134,13 @@ window.EmailTab = (function () {
     });
   }
 
+  function fmtDay(v) {
+    if (!v) return '';
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return String(v);
+    return d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
+  }
+
   function humanise(v) {
     if (!v) return '—';
     return String(v).replace(/[_-]/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
@@ -99,6 +148,10 @@ window.EmailTab = (function () {
 
   function classLabel(key) {
     return CLASS_LABELS[key] || humanise(key);
+  }
+
+  function dispositionLabel(key) {
+    return DISPOSITION_LABELS[key] || humanise(key);
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
@@ -115,28 +168,53 @@ window.EmailTab = (function () {
     return esc(v) + (suffix || '');
   }
 
+  function statCard(card) {
+    var body =
+      '<div class="stat-label">' + esc(card.label) + '</div>' +
+      '<div class="stat-value">' + card.value + '</div>' +
+      (card.sub ? '<div class="em-stat-sub">' + card.sub + '</div>' : '');
+    /*
+     * A count you can act on is a control. "Reached a mailbox: 3" was a dead
+     * number — the next question is always "which three?", and answering it
+     * meant reading two hundred rows by eye.
+     */
+    if (card.filter) {
+      return '<button type="button" class="stat-card accent-' + card.accent +
+        ' em-stat-btn" data-disposition="' + esc(card.filter) +
+        '" title="Show these alerts">' + body +
+        '<span class="em-stat-go">Show these ›</span></button>';
+    }
+    return '<div class="stat-card accent-' + card.accent + '">' + body + '</div>';
+  }
+
   function statCards(s) {
     var t = s.threats;
     var c = s.containment;
 
-    var cards = [
+    // Two tiers. The first four answer "how did we do"; the rest are context.
+    var lead = [
       { label: 'Email threats detected (' + s.windowDays + 'd)', value: num(t.total), accent: 'blue' },
       { label: 'Stopped', value: num(c.contained), accent: 'green' },
       { label: 'Reached a mailbox', value: num(c.delivered),
-        accent: c.delivered > 0 ? 'red' : 'green' },
-      { label: 'Pulled back after delivery', value: num(c.remediated), accent: 'amber' },
-      { label: 'Containment rate', value: num(c.rate, '%'), accent: 'green' },
+        accent: c.delivered > 0 ? 'red' : 'green',
+        filter: c.delivered > 0 ? 'delivered' : null },
+      { label: 'Containment rate', value: num(c.rate, '%'), accent: 'green',
+        sub: c.knownDisposition
+          ? 'of ' + esc(c.knownDisposition) + ' alert(s) that stated an outcome'
+          : '<span class="em-nd">no outcome was stated</span>' },
+    ];
+
+    var secondary = [
+      { label: 'Pulled back after delivery', value: num(c.remediated), accent: 'amber',
+        filter: c.remediated > 0 ? 'remediated' : null },
       { label: 'People targeted', value: num(t.targetedUsers), accent: 'amber' },
       { label: 'Sending domains', value: num(t.senderDomains), accent: 'blue' },
       { label: 'Unclassified threats', value: num(t.unclassified),
         accent: t.unclassified > 0 ? 'amber' : 'green' },
     ];
 
-    return '<div class="stats-grid">' + cards.map(function (card) {
-      return '<div class="stat-card accent-' + card.accent + '">' +
-        '<div class="stat-label">' + esc(card.label) + '</div>' +
-        '<div class="stat-value">' + card.value + '</div></div>';
-    }).join('') + '</div>';
+    return '<div class="stats-grid em-stats-lead">' + lead.map(statCard).join('') + '</div>' +
+      '<div class="stats-grid em-stats-more">' + secondary.map(statCard).join('') + '</div>';
   }
 
   /**
@@ -177,6 +255,12 @@ window.EmailTab = (function () {
    * page from a string, and a canvas chart in that flow needs destroy/recreate
    * bookkeeping on every re-render. It also means the renderer is assertable in
    * a test without a DOM that can paint.
+   *
+   * The bar behind is the day's total and the bar in front is what was stopped,
+   * so the visible remainder is what was NOT stopped. That remainder is drawn in
+   * the alarming colour and the stopped part in the reassuring one: it used to
+   * be the other way round, with the part that mattered rendered as the faint
+   * background of the part that did not.
    */
   function trendChart(daily) {
     if (!daily || !daily.length) return '';
@@ -194,24 +278,37 @@ window.EmailTab = (function () {
       var x = i * bw;
       var total = (d.count / max) * H;
       var cont  = (d.contained / max) * H;
-      // Detected drawn behind, contained in front: the visible remainder is what
-      // was NOT contained, which is the part worth looking at.
+      var through = Math.max(0, d.count - d.contained);
       return '<rect x="' + (x + bw * 0.12).toFixed(2) + '" y="' + (H - total).toFixed(2) +
              '" width="' + (bw * 0.76).toFixed(2) + '" height="' + total.toFixed(2) +
              '" class="em-bar-total"><title>' + esc(d.date) + ': ' + esc(d.count) +
-             ' detected, ' + esc(d.contained) + ' stopped</title></rect>' +
+             ' detected, ' + esc(d.contained) + ' stopped, ' + esc(through) +
+             ' not stopped or not stated</title></rect>' +
              '<rect x="' + (x + bw * 0.12).toFixed(2) + '" y="' + (H - cont).toFixed(2) +
              '" width="' + (bw * 0.76).toFixed(2) + '" height="' + cont.toFixed(2) +
              '" class="em-bar-contained"></rect>';
     }).join('');
 
+    /*
+     * Dates live in HTML beneath the chart, not inside it: the SVG is stretched
+     * to the panel width (preserveAspectRatio="none"), which would stretch any
+     * text drawn in it out of shape along with the bars.
+     */
+    var first = fmtDay(daily[0].date);
+    var last  = fmtDay(daily[daily.length - 1].date);
+    var mid   = daily.length > 2 ? fmtDay(daily[Math.floor(daily.length / 2)].date) : '';
+
     return '<h3 class="em-h">Daily volume</h3>' +
       '<div class="em-chart">' +
         '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" ' +
-          'role="img" aria-label="Email threats detected per day">' + bars + '</svg>' +
+          'role="img" aria-label="Email threats detected per day, with the share stopped">' +
+          bars + '</svg>' +
+        '<div class="em-dates"><span>' + esc(first) + '</span>' +
+          (mid ? '<span>' + esc(mid) + '</span>' : '') +
+          '<span>' + esc(last) + '</span></div>' +
         '<div class="em-legend">' +
-          '<span class="em-key em-k-total"></span> Detected ' +
           '<span class="em-key em-k-contained"></span> Stopped ' +
+          '<span class="em-key em-k-total"></span> Not stopped or not stated ' +
           '<span class="em-axis">Peak ' + esc(max) + '/day</span>' +
         '</div>' +
       '</div>';
@@ -229,6 +326,11 @@ window.EmailTab = (function () {
             '<span class="em-bar-n">' + esc(r.count) + '</span>' +
           '</div>';
       }).join('') + '</div>';
+  }
+
+  /** One breakdown in its own panel, so four of them can sit in a grid. */
+  function card(html) {
+    return html ? '<section class="em-card">' + html + '</section>' : '';
   }
 
   function byClassBlock(s) {
@@ -269,12 +371,15 @@ window.EmailTab = (function () {
    * Usually correct and boring — backup and patching alerts share this API. It
    * is on the page anyway because the failure it guards against is silent: if
    * Acronis ships a new Advanced Email Security type, the only other symptom is
-   * a chart that quietly stops rising.
+   * a chart that quietly stops rising. Folded shut, because "usually correct and
+   * boring" does not deserve a screen of its own between the reader and the
+   * alerts; the count stays visible on the summary line.
    */
   function unrecognisedBlock(s) {
     var rows = s.unrecognisedTypes || [];
     if (!rows.length) return '';
-    return '<h3 class="em-h">Alert types not read as email security (' + esc(rows.length) + ')</h3>' +
+    return '<details class="em-unrec"><summary class="em-h em-sum">' +
+      'Alert types not read as email security (' + esc(rows.length) + ')</summary>' +
       '<p class="em-note">Acronis raises backup, recovery and patching alerts through the ' +
       'same API, so most of these are correctly excluded. Check the list if a number ' +
       'above looks low — an email-security type missing from the classifier shows up ' +
@@ -282,48 +387,201 @@ window.EmailTab = (function () {
       '<div class="em-types">' + rows.map(function (r) {
         return '<span class="em-type">' + esc(r.label) +
           '<span class="em-type-n">' + esc(r.count) + '</span></span>';
-      }).join('') + '</div>';
+      }).join('') + '</div></details>';
+  }
+
+  // ── The alert list ────────────────────────────────────────────────────────
+
+  function optionList(values, selected, labelFn) {
+    return values.map(function (v) {
+      return '<option value="' + esc(v.value) + '"' +
+        (String(selected) === String(v.value) ? ' selected' : '') + '>' +
+        esc(labelFn ? labelFn(v.value) : v.label) + '</option>';
+    }).join('');
+  }
+
+  /**
+   * Filters over the alert list.
+   *
+   * The options are built from THIS window's own tallies, so the list never
+   * offers a filter that would come back empty — except by way of the free-text
+   * box, which says how many it hid.
+   */
+  function alertTools(s) {
+    var classes = (s.byClass || []).map(function (r) {
+      return { value: r.label, label: classLabel(r.label) + ' (' + r.count + ')' };
+    });
+    var disps = (s.byDisposition || []).map(function (r) {
+      return { value: r.label, label: dispositionLabel(r.label) + ' (' + r.count + ')' };
+    });
+    var sevs = (s.bySeverity || []).map(function (r) {
+      return { value: r.label, label: humanise(r.label) + ' (' + r.count + ')' };
+    });
+
+    return '<div class="em-tools" id="em-alerts-tools">' +
+      '<label class="em-f"><span>Type</span><select id="em-f-class" class="form-input">' +
+        '<option value="">All types</option>' + optionList(classes, _fClass) +
+      '</select></label>' +
+      '<label class="em-f"><span>Outcome</span><select id="em-f-disp" class="form-input">' +
+        '<option value="">All outcomes</option>' + optionList(disps, _fDisp) +
+      '</select></label>' +
+      (sevs.length ? '<label class="em-f"><span>Severity</span><select id="em-f-sev" class="form-input">' +
+        '<option value="">All severities</option>' + optionList(sevs, _fSev) +
+      '</select></label>' : '') +
+      '<label class="em-f em-f-q"><span class="em-sr">Search alerts</span>' +
+        '<input type="search" id="em-q" class="form-input" autocomplete="off" ' +
+          'placeholder="Search recipient, sender or subject…" value="' + esc(_q) + '"></label>' +
+      '<button type="button" class="em-clear" id="em-clear"' +
+        (anyFilter() ? '' : ' hidden') + '>Clear filters</button>' +
+      '</div>';
+  }
+
+  /** Rows left after the client-side search box. */
+  function visibleAlerts() {
+    var q = String(_q).trim().toLowerCase();
+    if (!q) return _alerts;
+    return _alerts.filter(function (a) {
+      return [a.recipient, a.sender, a.subject, a.alertType, a.threatClass, a.disposition]
+        .filter(Boolean).join(' ').toLowerCase().indexOf(q) >= 0;
+    });
+  }
+
+  /**
+   * What the list is showing, and what it is not.
+   *
+   * The old header said "Recent alerts (200)" whether the window held 200 or
+   * 2,000 — a cap presented as a total. Every number here is stated against
+   * something.
+   */
+  function alertCount(rows) {
+    var total = _summary && _summary.threats ? _summary.threats.total : null;
+    var bits = [];
+
+    if (serverFiltered()) {
+      bits.push('Showing ' + rows.length + ' matching alert' + (rows.length === 1 ? '' : 's'));
+    } else if (total !== null && _alerts.length < total) {
+      bits.push('Showing the most recent ' + _alerts.length + ' of ' + total);
+    } else {
+      bits.push('Showing ' + rows.length + ' alert' + (rows.length === 1 ? '' : 's'));
+    }
+
+    if (_alerts.length >= ALERT_LIMIT) {
+      bits.push('capped at ' + ALERT_LIMIT + ' — narrow the window or the filters to see the rest');
+    }
+    if (String(_q).trim() && rows.length !== _alerts.length) {
+      bits.push('the search hid ' + (_alerts.length - rows.length) + ' of the ' + _alerts.length + ' loaded');
+    }
+
+    return '<div class="em-count">' + esc(bits.join(' · ')) +
+      (anyFilter() ? ' <button type="button" class="em-clear" id="em-clear-2">Clear filters</button>' : '') +
+      '</div>';
+  }
+
+  function alertRow(a, i) {
+    var disp = a.disposition;
+    var dispCls = disp === 'delivered' ? 'em-bad' : disp ? 'em-good' : 'em-nd';
+    var id = a.alertId != null ? String(a.alertId) : String(i);
+    var open = !!_expanded[id];
+
+    var main = '<tr class="em-row' + (open ? ' is-open' : '') + '" data-alert="' + esc(id) + '">' +
+      '<td class="em-caret">' + (open ? '▾' : '▸') + '</td>' +
+      '<td>' + esc(fmtDate(a.createdAt)) + '</td>' +
+      '<td>' + esc(classLabel(a.threatClass || 'unclassified')) + '</td>' +
+      '<td>' + esc(a.recipient || '—') + '</td>' +
+      '<td>' + esc(a.sender || '—') + '</td>' +
+      '<td class="em-subject">' + esc(a.subject || '—') + '</td>' +
+      // An alert with no stated outcome says so, rather than showing a blank
+      // cell that reads as "nothing happened".
+      '<td class="' + dispCls + '">' +
+        esc(DISPOSITION_LABELS[disp] || (disp ? humanise(disp) : 'Not stated')) + '</td>' +
+    '</tr>';
+
+    if (!open) return main;
+
+    /*
+     * The subject is clamped in the row because it is attacker-authored and can
+     * be arbitrarily long. Clamping it was all the page ever did with it, so the
+     * full text was unreadable; here it wraps, still escaped.
+     */
+    var fields = [
+      ['Subject', a.subject || '—'],
+      ['Recipient', a.recipient || '—'],
+      ['Sender', a.sender || '—'],
+      ['Acronis alert type', a.alertType || '—'],
+      ['Severity', a.severity ? humanise(a.severity) : '—'],
+      ['Status', a.status ? humanise(a.status) : '—'],
+      ['First seen', fmtDate(a.createdAt)],
+      ['Last updated', fmtDate(a.updatedAt)],
+      ['Resolved', a.resolvedAt ? fmtDate(a.resolvedAt) : 'Not resolved'],
+      ['Alert id', a.alertId || '—'],
+    ];
+
+    return main + '<tr class="em-detail"><td></td><td colspan="6"><dl class="em-dl">' +
+      fields.map(function (f) {
+        return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>';
+      }).join('') + '</dl></td></tr>';
   }
 
   function alertsTable() {
+    var rows = visibleAlerts();
+
     if (!_alerts.length) {
-      return '<h3 class="em-h">Recent alerts</h3>' +
-        '<div class="em-note">No email alerts in this window.</div>';
+      return alertCount(rows) +
+        '<div class="em-note">' +
+        (serverFiltered()
+          ? 'No alert in this window matches these filters.'
+          : 'No email alerts in this window.') + '</div>';
     }
-    return '<h3 class="em-h">Recent alerts (' + esc(_alerts.length) + ')</h3>' +
+    if (!rows.length) {
+      return alertCount(rows) +
+        '<div class="em-note">Nothing in the loaded alerts matches that search.</div>';
+    }
+
+    return alertCount(rows) +
       '<div class="em-scroll"><table class="data-table em-table"><thead><tr>' +
-        '<th>When</th><th>Type</th><th>Recipient</th><th>Sender</th>' +
+        '<th></th><th>When</th><th>Type</th><th>Recipient</th><th>Sender</th>' +
         '<th>Subject</th><th>Outcome</th>' +
       '</tr></thead><tbody>' +
-      _alerts.map(function (a) {
-        var disp = a.disposition;
-        var dispCls = disp === 'delivered' ? 'em-bad'
-                    : disp ? 'em-good' : 'em-nd';
-        return '<tr>' +
-          '<td>' + esc(fmtDate(a.createdAt)) + '</td>' +
-          '<td>' + esc(classLabel(a.threatClass || 'unclassified')) + '</td>' +
-          '<td>' + esc(a.recipient || '—') + '</td>' +
-          '<td>' + esc(a.sender || '—') + '</td>' +
-          '<td class="em-subject">' + esc(a.subject || '—') + '</td>' +
-          // An alert with no stated outcome says so, rather than showing a blank
-          // cell that reads as "nothing happened".
-          '<td class="' + dispCls + '">' +
-            esc(DISPOSITION_LABELS[disp] || (disp ? humanise(disp) : 'Not stated')) + '</td>' +
-        '</tr>';
-      }).join('') + '</tbody></table></div>';
+      rows.map(alertRow).join('') + '</tbody></table></div>';
   }
 
-  function syncNote(s) {
+  function alertsBlock(s) {
+    return '<h3 class="em-h">Alerts</h3>' +
+      '<p class="em-note">Every alert Acronis raised in this window. The three ' +
+      'dropdowns filter on the server, so they search the whole window; the ' +
+      'search box narrows what is loaded below. Click a row for the full subject.</p>' +
+      alertTools(s) +
+      '<div id="em-alerts-panel">' + alertsTable() + '</div>';
+  }
+
+  // ── Chrome ────────────────────────────────────────────────────────────────
+
+  /**
+   * Whether these numbers were ever collected.
+   *
+   * A client whose Acronis integration has never run has no alerts, and every
+   * counter on this page would read 0 — "no threats" rather than "we have not
+   * looked". Same rule as everywhere else here: not recorded is not none.
+   */
+  function neverCollected(s) {
+    return !s || !s.sync || !s.sync.last_synced_at;
+  }
+
+  function syncStrip(s) {
     var sync = s && s.sync;
     if (!sync) {
-      return '<div class="em-note em-warn">No Acronis integration has been synced for ' +
-        'this client. Configure it under Admin &rarr; Integrations.</div>';
+      return '<div class="em-strip em-warn">⚠ No Acronis integration is configured for ' +
+        'this client. Set it up under Admin &rarr; Integrations.</div>';
     }
-    var when = sync.last_synced_at ? fmtDate(sync.last_synced_at) : 'never';
+    if (!sync.last_synced_at) {
+      return '<div class="em-strip em-warn">⚠ Configured, but nothing has been collected yet. ' +
+        'Press Sync Now on the Acronis card under Admin &rarr; Integrations.</div>';
+    }
     var bad = sync.last_sync_status && sync.last_sync_status !== 'ok';
-    return '<div class="em-note' + (bad ? ' em-warn' : '') + '">Last synced ' + esc(when) +
-      (sync.last_sync_status ? ' &middot; ' + esc(sync.last_sync_status) : '') +
-      (sync.last_sync_message ? ' &middot; ' + esc(sync.last_sync_message) : '') + '</div>';
+    return '<div class="em-strip' + (bad ? ' em-warn' : '') + '">' +
+      (bad ? '✗' : '✓') + ' Last synced ' + esc(fmtDate(sync.last_synced_at)) +
+      (bad && sync.last_sync_message ? ' — ' + esc(sync.last_sync_message) : '') +
+      '</div>';
   }
 
   function rangePicker() {
@@ -358,27 +616,82 @@ window.EmailTab = (function () {
         'configure the Acronis integration under Admin &rarr; Integrations.</div>';
     } else if (!_summary) {
       body = '<div class="em-note">Select a client to see their email security posture.</div>';
+    } else if (neverCollected(_summary)) {
+      // Deliberately NOT the stat cards: eight zeros would be a claim about this
+      // client's mail, and nothing has been read to support it.
+      body = syncStrip(_summary) +
+        '<div class="em-note">Nothing has been collected for this client yet, so there ' +
+        'are no figures to show. This is not the same as a month with no threats — ' +
+        'once a sync has run, a quiet month will show zeros here.</div>';
     } else {
-      body = statCards(_summary) +
+      body = syncStrip(_summary) +
+        statCards(_summary) +
         denominatorNote(_summary) +
         trendChart(_summary.daily) +
-        byClassBlock(_summary) +
-        breakdown('By outcome', _summary.byDisposition, function (l) {
-          return DISPOSITION_LABELS[l] || humanise(l);
-        }) +
-        breakdown('By severity', _summary.bySeverity, humanise) +
-        targetedBlock(_summary) +
-        breakdown('Top sending domains', _summary.topSenderDomains) +
-        alertsTable() +
-        unrecognisedBlock(_summary) +
-        syncNote(_summary);
+        '<div class="em-grid">' +
+          card(byClassBlock(_summary)) +
+          card(breakdown('By outcome', _summary.byDisposition, dispositionLabel)) +
+          card(breakdown('By severity', _summary.bySeverity, humanise)) +
+          card(breakdown('Top sending domains', _summary.topSenderDomains)) +
+        '</div>' +
+        card(targetedBlock(_summary)) +
+        alertsBlock(_summary) +
+        unrecognisedBlock(_summary);
     }
 
     host.innerHTML = head +
-      '<div class="em-toolbar">' + rangePicker() + '</div>' +
+      '<div class="em-toolbar">' + rangePicker() +
+        '<button type="button" class="btn btn-sm" id="em-refresh">Refresh</button>' +
+      '</div>' +
       '<div class="em-body">' + body + '</div>';
 
     wire();
+  }
+
+  /** Redraw only the list, so the filter controls keep focus and caret. */
+  function renderAlertsPanel() {
+    var panel = document.getElementById('em-alerts-panel');
+    if (!panel) return;
+    panel.innerHTML = alertsTable();
+    var clear = document.getElementById('em-clear');
+    if (clear) clear.hidden = !anyFilter();
+    wireAlertRows();
+  }
+
+  function wireAlertRows() {
+    document.querySelectorAll('#tab-email .em-row').forEach(function (tr) {
+      tr.onclick = function () {
+        var id = tr.dataset.alert;
+        if (_expanded[id]) delete _expanded[id]; else _expanded[id] = true;
+        renderAlertsPanel();
+      };
+    });
+    ['em-clear', 'em-clear-2'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.onclick = clearFilters;
+    });
+  }
+
+  function clearFilters() {
+    _fClass = ''; _fDisp = ''; _fSev = ''; _q = '';
+    reloadAlerts();
+  }
+
+  /** Re-fetch the alert list with the current filters, then redraw just it. */
+  async function reloadAlerts() {
+    if (_busy) return;
+    _busy = true;
+    var panel = document.getElementById('em-alerts-panel');
+    if (panel) panel.innerHTML = '<div class="em-note">Loading alerts…</div>';
+    try {
+      _alerts = (await get('email/alerts' + alertsQs())) || [];
+    } catch (err) {
+      _alerts = [];
+    } finally {
+      _busy = false;
+    }
+    // The selects show the filter state, so they are redrawn with it.
+    render();
   }
 
   function wire() {
@@ -386,9 +699,37 @@ window.EmailTab = (function () {
     if (sel) {
       sel.onchange = function () {
         _days = parseInt(sel.value, 10) || 30;
+        _expanded = {};
         loadAndRender();
       };
     }
+
+    var refresh = document.getElementById('em-refresh');
+    if (refresh) refresh.onclick = function () { loadAndRender(); };
+
+    var fc = document.getElementById('em-f-class');
+    if (fc) fc.onchange = function () { _fClass = fc.value; reloadAlerts(); };
+    var fd = document.getElementById('em-f-disp');
+    if (fd) fd.onchange = function () { _fDisp = fd.value; reloadAlerts(); };
+    var fs = document.getElementById('em-f-sev');
+    if (fs) fs.onchange = function () { _fSev = fs.value; reloadAlerts(); };
+
+    // Typing never re-renders the input it is typed into.
+    var q = document.getElementById('em-q');
+    if (q) q.oninput = function () { _q = q.value; renderAlertsPanel(); };
+
+    document.querySelectorAll('#tab-email .em-stat-btn').forEach(function (b) {
+      b.onclick = function () {
+        _fDisp = b.dataset.disposition;
+        _fClass = ''; _fSev = ''; _q = '';
+        reloadAlerts().then(function () {
+          var el = document.getElementById('em-alerts-panel');
+          if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      };
+    });
+
+    wireAlertRows();
   }
 
   async function loadAndRender() {
@@ -412,7 +753,7 @@ window.EmailTab = (function () {
 
       // The alert list is supporting detail. Losing it must not blank the
       // headline numbers that did load.
-      try { _alerts = _available ? (await get('email/alerts' + qs())) || [] : []; }
+      try { _alerts = _available ? (await get('email/alerts' + alertsQs())) || [] : []; }
       catch (err) { _alerts = []; }
 
       render();
@@ -434,8 +775,20 @@ window.EmailTab = (function () {
     _unrecognisedBlock: unrecognisedBlock,
     _trendChart: trendChart,
     _classLabel: classLabel,
+    _alertsQs: alertsQs,
+    _alertCount: alertCount,
+    _neverCollected: neverCollected,
+    _syncStrip: syncStrip,
     _setSummary: function (s) { _summary = s; },
     _setAlerts: function (a) { _alerts = a; },
     _setAvailable: function (v) { _available = v; },
+    _setFilters: function (f) {
+      f = f || {};
+      _fClass = f.threatClass || '';
+      _fDisp  = f.disposition || '';
+      _fSev   = f.severity || '';
+      _q      = f.q || '';
+      if (f.expanded) _expanded = f.expanded;
+    },
   };
 })();
